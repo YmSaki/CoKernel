@@ -51,6 +51,16 @@ else
   fail "Docker Compose plugin not found"
 fi
 
+if docker info >/dev/null 2>&1; then
+  runtimes="$(docker info --format '{{json .Runtimes}}' 2>/dev/null || true)"
+  if [[ "${runtimes}" == *'"nvidia"'* ]]; then
+    ok "NVIDIA runtime registered with Docker"
+  else
+    fail "NVIDIA runtime is not registered with Docker"
+    echo "[INFO] Docker runtimes: ${runtimes:-unavailable}"
+  fi
+fi
+
 if command -v nvidia-smi >/dev/null 2>&1; then
   if nvidia-smi >/dev/null 2>&1; then
     ok "NVIDIA GPU visible from WSL"
@@ -80,11 +90,24 @@ if docker info >/dev/null 2>&1; then
     gpu_test_image="${configured:-${gpu_test_image}}"
   fi
 
-  echo "[INFO] testing GPU access in Docker (${gpu_test_image})"
-  if docker run --rm --gpus all "${gpu_test_image}" nvidia-smi >/dev/null 2>&1; then
+  echo "[INFO] testing GPU access in Docker with explicit NVIDIA runtime (${gpu_test_image})"
+  gpu_test_output="$(docker run --rm --runtime=nvidia --gpus all "${gpu_test_image}" nvidia-smi 2>&1)"
+  gpu_test_code=$?
+  if [[ "${gpu_test_code}" -eq 0 ]]; then
     ok "GPU visible inside Docker container"
   else
-    fail "GPU test container failed; check NVIDIA Container Toolkit configuration"
+    fail "GPU test container failed with NVIDIA runtime (exit ${gpu_test_code})"
+    printf '%s\n' "${gpu_test_output}" | sed 's/^/[GPU]  /'
+    echo "[INFO] /etc/docker/daemon.json:"
+    if [[ -r /etc/docker/daemon.json ]]; then
+      sed 's/^/[INFO] /' /etc/docker/daemon.json
+    else
+      echo "[INFO] unreadable"
+    fi
+    echo "[INFO] Docker runtimes: $(docker info --format '{{json .Runtimes}}' 2>/dev/null || echo unavailable)"
+    if command -v nvidia-ctk >/dev/null 2>&1; then
+      echo "[INFO] nvidia-ctk: $(nvidia-ctk --version 2>&1 | head -n 1)"
+    fi
   fi
 fi
 
@@ -95,4 +118,4 @@ if [[ "${failures}" -gt 0 ]]; then
 fi
 
 echo
- echo "Doctor result: healthy (${warnings} warning(s))."
+echo "Doctor result: healthy (${warnings} warning(s))."

@@ -17,6 +17,7 @@ services:
         target: /workspace
     ports:
       - "127.0.0.1:${JUPYTER_PORT:-8888}:8888"
+    runtime: nvidia
     gpus: all
     healthcheck:
       test:
