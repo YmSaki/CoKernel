@@ -56,27 +56,13 @@ function Test-WslDistroExists {
     return (Get-WslDistros) -contains $Name
 }
 
-function Invoke-Wsl {
-    param(
-        [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [switch]$AllowFailure
-    )
-
-    & wsl.exe @Arguments
-    $code = $LASTEXITCODE
-    if (-not $AllowFailure -and $code -ne 0) {
-        throw "wsl.exe failed with exit code $code. Arguments: $($Arguments -join ' ')"
-    }
-    return $code
-}
-
 function Invoke-WslBash {
     param(
         [Parameter(Mandatory = $true)][string]$User,
         [Parameter(Mandatory = $true)][string]$Command
     )
 
-    & wsl.exe -d $DistroName -u $User -- bash -lc $Command
+    & wsl.exe -d $DistroName -u $User --cd / -- bash -lc $Command
     if ($LASTEXITCODE -ne 0) {
         throw "WSL command failed for user '$User': $Command"
     }
@@ -87,7 +73,7 @@ function Get-DefaultLinuxUser {
     $candidate = $candidate -replace "[^a-z0-9_-]", "-"
     $candidate = $candidate -replace "^[^a-z_]+", ""
     $candidate = $candidate -replace "-+", "-"
-    $candidate = $candidate.Trim("-", "_")
+    $candidate = $candidate -replace "^[-_]+|[-_]+$", ""
 
     if ([string]::IsNullOrWhiteSpace($candidate)) {
         $candidate = "cokernel"
@@ -118,31 +104,31 @@ function Register-ResumeAfterLogon {
 function Ensure-WslPlatform {
     Write-Step "Checking WSL platform"
 
-    $wslState = Get-WindowsFeatureState "Microsoft-Windows-Subsystem-Linux"
-    $vmState = Get-WindowsFeatureState "VirtualMachinePlatform"
+    & wsl.exe --status *> $null
+    $wslReady = ($LASTEXITCODE -eq 0)
 
-    if ($wslState -ne "Enabled" -or $vmState -ne "Enabled") {
+    if (-not $wslReady) {
         Write-Host "Enabling WSL and Virtual Machine Platform..."
         & wsl.exe --install --no-distribution
         if ($LASTEXITCODE -ne 0) {
             throw "wsl --install --no-distribution failed with exit code $LASTEXITCODE."
         }
+    }
 
-        $wslState = Get-WindowsFeatureState "Microsoft-Windows-Subsystem-Linux"
-        $vmState = Get-WindowsFeatureState "VirtualMachinePlatform"
-        if ($wslState -ne "Enabled" -or $vmState -ne "Enabled") {
-            Register-ResumeAfterLogon
-            Write-Host ""
-            Write-Host "Windows must restart before CoKernel setup can continue." -ForegroundColor Yellow
-            Write-Host "The installer is registered to resume after your next sign-in."
-            if ($RestartNow) {
-                Restart-Computer -Force
-            }
-            else {
-                Write-Host "Restart Windows, then accept the UAC prompt when CoKernel resumes."
-            }
-            exit 3010
+    $wslState = Get-WindowsFeatureState "Microsoft-Windows-Subsystem-Linux"
+    $vmState = Get-WindowsFeatureState "VirtualMachinePlatform"
+    if ($wslState -match "Pending" -or $vmState -match "Pending" -or $wslState -eq "Disabled" -or $vmState -eq "Disabled") {
+        Register-ResumeAfterLogon
+        Write-Host ""
+        Write-Host "Windows must restart before CoKernel setup can continue." -ForegroundColor Yellow
+        Write-Host "The installer is registered to resume after your next sign-in."
+        if ($RestartNow) {
+            Restart-Computer -Force
         }
+        else {
+            Write-Host "Restart Windows, then accept the UAC prompt when CoKernel resumes."
+        }
+        exit 3010
     }
 
     & wsl.exe --update
@@ -158,7 +144,11 @@ function Ensure-WslPlatform {
 
 function Ensure-CoKernelDistro {
     if (Test-WslDistroExists $DistroName) {
-        Write-Step "Using existing WSL distribution '$DistroName'"
+        & wsl.exe -d $DistroName -u root --cd / -- test -f /etc/cokernel-managed
+        if ($LASTEXITCODE -ne 0) {
+            throw "A WSL distribution named '$DistroName' already exists but was not created by CoKernel. Refusing to modify it. Use another -DistroName or remove/rename that distro yourself."
+        }
+        Write-Step "Resuming existing CoKernel WSL distribution '$DistroName'"
         return
     }
 
@@ -174,7 +164,7 @@ function Ensure-CoKernelDistro {
         }
     }
 
-    $args = @(
+    $installArgs = @(
         "--install", $Distribution,
         "--name", $DistroName,
         "--location", $InstallLocation,
@@ -182,11 +172,12 @@ function Ensure-CoKernelDistro {
         "--no-launch"
     )
 
-    & wsl.exe @args
+    & wsl.exe @installArgs
     $code = $LASTEXITCODE
     if ($code -ne 0 -and -not (Test-WslDistroExists $DistroName)) {
         Write-Warning "Store-backed WSL install failed. Retrying with --web-download."
-        & wsl.exe @args --web-download
+        $webArgs = $installArgs + @("--web-download")
+        & wsl.exe @webArgs
         if ($LASTEXITCODE -ne 0 -and -not (Test-WslDistroExists $DistroName)) {
             throw "Failed to install $Distribution as $DistroName."
         }
@@ -206,7 +197,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y sudo git ca-certificates
 if ! id -u '$LinuxUser' >/dev/null 2>&1; then
-  useradd --create-home --shell /bin/bash '$LinuxUser'
+  useradd --create-home --user-group --shell /bin/bash '$LinuxUser'
 fi
 usermod -aG sudo '$LinuxUser'
 printf '%s ALL=(ALL) NOPASSWD:ALL\n' '$LinuxUser' > /etc/sudoers.d/90-cokernel-user
@@ -221,33 +212,33 @@ function Seed-Repository {
     Write-Step "Copying this CoKernel checkout into the WSL ext4 filesystem"
 
     $target = "/home/$LinuxUser/src/CoKernel"
-    $seeded = & wsl.exe -d $DistroName -u root -- test -f /var/lib/cokernel/repo-seeded
+    & wsl.exe -d $DistroName -u root --cd / -- test -f /var/lib/cokernel/repo-seeded
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Repository is already seeded at $target; preserving the WSL copy."
         return
     }
 
     $sourceWindows = (Resolve-Path $PSScriptRoot).Path
-    $sourceLinux = (& wsl.exe -d $DistroName -u root -- wslpath -u $sourceWindows)
+    $sourceLinux = (& wsl.exe -d $DistroName -u root --cd / -- wslpath -u $sourceWindows)
     if ($LASTEXITCODE -ne 0) {
         throw "Could not translate the Windows repository path into WSL."
     }
     $sourceLinux = ($sourceLinux | Select-Object -First 1).Trim()
 
-    & wsl.exe -d $DistroName -u root -- mkdir -p "/home/$LinuxUser/src"
+    & wsl.exe -d $DistroName -u root --cd / -- mkdir -p "/home/$LinuxUser/src"
     if ($LASTEXITCODE -ne 0) { throw "Could not create WSL source directory." }
 
-    & wsl.exe -d $DistroName -u root -- test -e $target
+    & wsl.exe -d $DistroName -u root --cd / -- test -e $target
     if ($LASTEXITCODE -eq 0) {
         throw "Target already exists but was not marked as seeded: $target. Refusing to overwrite it."
     }
 
-    & wsl.exe -d $DistroName -u root -- cp -a $sourceLinux $target
+    & wsl.exe -d $DistroName -u root --cd / -- cp -a $sourceLinux $target
     if ($LASTEXITCODE -ne 0) { throw "Failed to copy the CoKernel repository into WSL." }
 
-    & wsl.exe -d $DistroName -u root -- rm -f "$target/.env" "$target/.env.local"
-    & wsl.exe -d $DistroName -u root -- chown -R "$LinuxUser`:$LinuxUser" $target
-    & wsl.exe -d $DistroName -u root -- touch /var/lib/cokernel/repo-seeded
+    & wsl.exe -d $DistroName -u root --cd / -- rm -f "$target/.env" "$target/.env.local"
+    & wsl.exe -d $DistroName -u root --cd / -- chown -R "$LinuxUser`:$LinuxUser" $target
+    & wsl.exe -d $DistroName -u root --cd / -- touch /var/lib/cokernel/repo-seeded
 
     $normalize = @"
 set -euo pipefail
@@ -265,7 +256,7 @@ function Configure-WslIsolation {
     Write-Host "Restarting only the '$DistroName' WSL VM so systemd/isolation settings take effect..."
     & wsl.exe --terminate $DistroName
     Start-Sleep -Seconds 2
-    & wsl.exe -d $DistroName -u $LinuxUser -- true
+    & wsl.exe -d $DistroName -u $LinuxUser --cd / -- true
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to restart the CoKernel WSL distribution."
     }
@@ -278,7 +269,7 @@ function Bootstrap-LinuxRuntime {
     Write-Host "Refreshing the WSL VM so Docker group membership is active..."
     & wsl.exe --terminate $DistroName
     Start-Sleep -Seconds 2
-    & wsl.exe -d $DistroName -u $LinuxUser -- true
+    & wsl.exe -d $DistroName -u $LinuxUser --cd / -- true
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to restart the CoKernel WSL distribution after Docker setup."
     }
@@ -341,6 +332,6 @@ catch {
     Write-Host "CoKernel installation failed:" -ForegroundColor Red
     Write-Host $_.Exception.Message -ForegroundColor Red
     Write-Host ""
-    Write-Host "The installer is idempotent and does not unregister existing distros. Fix the reported issue and run install.cmd again."
+    Write-Host "The installer is idempotent and never unregisters a WSL distro. Fix the reported issue and run install.cmd again."
     exit 1
 }
