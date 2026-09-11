@@ -19,14 +19,14 @@ MCP_PORT="$(get_env MCP_PORT)"
 MCP_PORT="${MCP_PORT:-4040}"
 
 printf '[test] Jupyter service... '
-docker compose exec -T jupyter python -c 'import jupyterlab, sys; print(jupyterlab.__version__)' >/dev/null
+docker compose exec -T jupyter python -c 'import jupyterlab; print(jupyterlab.__version__)' >/dev/null
 echo OK
 
 printf '[test] uv workspace kernel... '
 docker compose exec -T jupyter sh -lc 'test -x /workspace/.venv/bin/python && /workspace/.venv/bin/python -c "import ipykernel"'
 echo OK
 
-printf '[test] GPU from workbench... '
+printf '[test] GPU device exposed to workbench... '
 docker compose exec -T jupyter sh -lc 'test -e /dev/dxg || command -v nvidia-smi >/dev/null 2>&1'
 echo OK
 
@@ -34,21 +34,38 @@ printf '[test] MCP health... '
 curl -fsS "http://127.0.0.1:${MCP_PORT}/api/healthz" >/dev/null
 echo OK
 
-printf '[test] MCP authentication boundary... '
-status="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${MCP_PORT}/mcp" || true)"
-if [[ "${status}" == "401" || "${status}" == "403" || "${status}" == "405" ]]; then
-  echo OK
-else
-  echo "unexpected HTTP ${status} (continuing; MCP transport may reject GET differently)"
-fi
+printf '[test] CoKernel MCP extension installed... '
+docker compose exec -T mcp python - <<'PY' >/dev/null
+from importlib.metadata import entry_points
+points = entry_points(group="jupyter_mcp_server.extensions")
+assert any(ep.name == "zz-cokernel-session-attach" for ep in points), points
+PY
+echo OK
 
-printf '[test] MCP authenticated endpoint reachable... '
-status="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${MCP_TOKEN}" "http://127.0.0.1:${MCP_PORT}/mcp" || true)"
-if [[ "${status}" =~ ^(200|202|400|405)$ ]]; then
+printf '[test] MCP rejects missing bearer token... '
+status="$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{}' \
+  "http://127.0.0.1:${MCP_PORT}/mcp" || true)"
+if [[ "${status}" == "401" || "${status}" == "403" ]]; then
   echo OK
 else
-  echo "unexpected HTTP ${status}"
+  echo "expected 401/403, got HTTP ${status}"
   exit 1
 fi
+
+printf '[test] MCP accepts bearer token before protocol validation... '
+status="$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer ${MCP_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{}' \
+  "http://127.0.0.1:${MCP_PORT}/mcp" || true)"
+if [[ "${status}" == "401" || "${status}" == "403" || "${status}" == "000" ]]; then
+  echo "authentication or connectivity failed with HTTP ${status}"
+  exit 1
+fi
+echo "OK (HTTP ${status}; malformed MCP body is intentional)"
 
 echo "CoKernel smoke test passed."

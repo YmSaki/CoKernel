@@ -19,6 +19,12 @@ jobs:
       - name: Shellcheck
         run: shellcheck up.sh down.sh logs.sh scripts/*.sh
 
+      - name: Compile MCP extension
+        run: python -m compileall -q mcp-extension/cokernel_mcp_extension
+
+      - name: Test same-kernel session resolver
+        run: PYTHONPATH=mcp-extension python -m unittest discover -s mcp-extension/tests -v
+
       - name: Prepare non-secret CI environment
         run: |
           cp .env.example .env
@@ -27,3 +33,6 @@ jobs:
 
       - name: Validate Compose model
         run: docker compose --profile tunnel config >/dev/null
+
+      - name: Build MCP image
+        run: docker compose build mcp
