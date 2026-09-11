@@ -10,10 +10,30 @@ if [[ "$(id -u)" -eq 0 ]]; then
   exit 1
 fi
 
-# shellcheck source=/etc/os-release
-. /etc/os-release
-if [[ "${ID:-}" != "ubuntu" ]]; then
-  echo "Unsupported distribution: ${ID:-unknown}. Ubuntu 24.04 is the primary target."
+read_os_release_value() {
+  local key="$1"
+  awk -F= -v key="${key}" '
+    $1 == key {
+      value = substr($0, index($0, "=") + 1)
+      gsub(/^"|"$/, "", value)
+      print value
+      exit
+    }
+  ' /etc/os-release
+}
+
+OS_ID="$(read_os_release_value ID)"
+VERSION_CODENAME="$(read_os_release_value VERSION_CODENAME)"
+UBUNTU_CODENAME="$(read_os_release_value UBUNTU_CODENAME)"
+CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME}}"
+
+if [[ "${OS_ID}" != "ubuntu" ]]; then
+  echo "Unsupported distribution: ${OS_ID:-unknown}. Ubuntu 24.04 is the primary target."
+  exit 1
+fi
+
+if [[ -z "${CODENAME}" ]]; then
+  echo "Could not determine the Ubuntu codename from /etc/os-release."
   exit 1
 fi
 
@@ -36,7 +56,7 @@ fi
 sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
 Types: deb
 URIs: https://download.docker.com/linux/ubuntu
-Suites: ${UBUNTU_CODENAME:-$VERSION_CODENAME}
+Suites: ${CODENAME}
 Components: stable
 Architectures: $(dpkg --print-architecture)
 Signed-By: /etc/apt/keyrings/docker.asc
