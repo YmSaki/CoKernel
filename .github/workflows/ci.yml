@@ -36,3 +36,6 @@ jobs:
 
       - name: Build MCP image
         run: docker compose build mcp
+
+      - name: Verify pinned tunnel image exists
+        run: docker compose --profile tunnel pull tunnel

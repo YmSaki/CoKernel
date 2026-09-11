@@ -76,6 +76,8 @@ git clone https://github.com/YmSaki/CoKernel.git
 cd CoKernel
 ```
 
+Because this repository is private, configure Git authentication inside the dedicated WSL distribution before relying on daily `git pull`. Do not depend on Windows Git Credential Manager after Windows interop is disabled. A WSL-local credential or repository-scoped read-only SSH deploy key is appropriate; it is not mounted into the CoKernel containers.
+
 ### 1. Enable the dedicated WSL configuration
 
 If systemd is not already active, run this first. Only do it in a WSL distribution dedicated to CoKernel:
@@ -205,7 +207,7 @@ Control-path dependencies are intentionally pinned:
 - uv: `0.12.12`
 - Datalayer Jupyter MCP Server: `2.1.12`
 - CoKernel MCP extension: `0.1.0`
-- OpenAI tunnel-client: `v0.0.8--context-conduit-emerald`
+- OpenAI tunnel-client: `v0.0.13`
 
 ## Project docs
 

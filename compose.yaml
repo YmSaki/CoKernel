@@ -69,7 +69,7 @@ services:
       - no-new-privileges:true
 
   tunnel:
-    image: ${TUNNEL_CLIENT_IMAGE:-ghcr.io/openai/tunnel-client:v0.0.8--context-conduit-emerald}
+    image: ${TUNNEL_CLIENT_IMAGE:-ghcr.io/openai/tunnel-client:v0.0.13}
     profiles:
       - tunnel
     restart: unless-stopped
