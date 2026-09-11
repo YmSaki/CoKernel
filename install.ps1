@@ -59,12 +59,15 @@ function Test-WslDistroExists {
 function Invoke-WslBash {
     param(
         [Parameter(Mandatory = $true)][string]$User,
-        [Parameter(Mandatory = $true)][string]$Command
+        [Parameter(Mandatory = $true)][string]$Command,
+        [string]$Step = "running Linux command"
     )
 
+    Write-Host "[WSL] $Step"
     & wsl.exe -d $DistroName -u $User --cd / -- bash -lc $Command
-    if ($LASTEXITCODE -ne 0) {
-        throw "WSL command failed for user '$User': $Command"
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        throw "WSL step '$Step' failed for user '$User' with exit code $code. See the diagnostic output immediately above and in install.log."
     }
 }
 
@@ -196,23 +199,43 @@ function Ensure-CoKernelDistro {
 }
 
 function Ensure-LinuxUser {
-    Write-Step "Creating dedicated Linux user '$LinuxUser'"
+    Write-Step "Preparing Ubuntu and dedicated Linux user '$LinuxUser'"
 
-    $command = @"
+    Invoke-WslBash -User "root" -Step "initializing CoKernel management state" -Command @"
 set -euo pipefail
 mkdir -p /var/lib/cokernel
 touch /etc/cokernel-managed
+"@
+
+    Invoke-WslBash -User "root" -Step "updating Ubuntu package metadata" -Command @"
+set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
+"@
+
+    Invoke-WslBash -User "root" -Step "installing base Ubuntu packages (sudo, git, ca-certificates)" -Command @"
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 apt-get install -y sudo git ca-certificates
+"@
+
+    Invoke-WslBash -User "root" -Step "creating Linux user '$LinuxUser'" -Command @"
+set -euo pipefail
 if ! id -u '$LinuxUser' >/dev/null 2>&1; then
   useradd --create-home --user-group --shell /bin/bash '$LinuxUser'
 fi
+"@
+
+    Invoke-WslBash -User "root" -Step "adding Linux user '$LinuxUser' to sudo group" -Command @"
+set -euo pipefail
 usermod -aG sudo '$LinuxUser'
+"@
+
+    Invoke-WslBash -User "root" -Step "configuring bootstrap sudo policy for '$LinuxUser'" -Command @"
+set -euo pipefail
 printf '%s ALL=(ALL) NOPASSWD:ALL\n' '$LinuxUser' > /etc/sudoers.d/90-cokernel-user
 chmod 0440 /etc/sudoers.d/90-cokernel-user
 "@
-    Invoke-WslBash -User "root" -Command $command
 }
 
 function Seed-Repository {
@@ -253,12 +276,12 @@ cd '$target'
 find . -type f \( -name '*.sh' -o -name '*.py' -o -name '*.yaml' -o -name '*.yml' -o -name '*.Dockerfile' -o -name 'Dockerfile' \) -exec sed -i 's/\r$//' {} +
 chmod +x up.sh down.sh logs.sh scripts/*.sh
 "@
-    Invoke-WslBash -User $LinuxUser -Command $normalize
+    Invoke-WslBash -User $LinuxUser -Step "normalizing repository files inside WSL" -Command $normalize
 }
 
 function Configure-WslIsolation {
     Write-Step "Applying CoKernel WSL isolation settings"
-    Invoke-WslBash -User $LinuxUser -Command "cd ~/src/CoKernel && ./scripts/harden-wsl.sh --yes"
+    Invoke-WslBash -User $LinuxUser -Step "applying WSL isolation policy" -Command "cd ~/src/CoKernel && ./scripts/harden-wsl.sh --yes"
 
     Write-Host "Restarting only the '$DistroName' WSL VM so systemd/isolation settings take effect..."
     & wsl.exe --terminate $DistroName
@@ -271,7 +294,7 @@ function Configure-WslIsolation {
 
 function Bootstrap-LinuxRuntime {
     Write-Step "Installing Docker Engine and NVIDIA Container Toolkit inside CoKernel WSL"
-    Invoke-WslBash -User $LinuxUser -Command "cd ~/src/CoKernel && ./scripts/bootstrap-ubuntu.sh"
+    Invoke-WslBash -User $LinuxUser -Step "installing Docker/NVIDIA runtime" -Command "cd ~/src/CoKernel && ./scripts/bootstrap-ubuntu.sh"
 
     Write-Host "Refreshing the WSL VM so Docker group membership is active..."
     & wsl.exe --terminate $DistroName
@@ -284,12 +307,12 @@ function Bootstrap-LinuxRuntime {
 
 function Validate-And-Start {
     Write-Step "Creating local secrets and validating the installation"
-    Invoke-WslBash -User $LinuxUser -Command "cd ~/src/CoKernel && ./scripts/init-env.sh"
-    Invoke-WslBash -User $LinuxUser -Command "cd ~/src/CoKernel && ./scripts/doctor.sh"
+    Invoke-WslBash -User $LinuxUser -Step "creating CoKernel local secrets" -Command "cd ~/src/CoKernel && ./scripts/init-env.sh"
+    Invoke-WslBash -User $LinuxUser -Step "running CoKernel doctor" -Command "cd ~/src/CoKernel && ./scripts/doctor.sh"
 
     if (-not $NoStart) {
         Write-Step "Starting CoKernel"
-        Invoke-WslBash -User $LinuxUser -Command "cd ~/src/CoKernel && ./up.sh"
+        Invoke-WslBash -User $LinuxUser -Step "starting CoKernel services" -Command "cd ~/src/CoKernel && ./up.sh"
     }
 }
 
