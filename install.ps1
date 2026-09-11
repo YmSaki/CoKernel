@@ -136,10 +136,12 @@ function Ensure-WslPlatform {
         Write-Warning "wsl --update failed. Continuing with the installed WSL version."
     }
 
-    $help = (& wsl.exe --help 2>&1 | Out-String)
-    if ($help -notmatch "--name" -or $help -notmatch "--location") {
-        throw "This WSL version is too old for CoKernel's named/location install. Run 'wsl --update', restart Windows, and run install.cmd again."
-    }
+    # Do not parse `wsl.exe --help` to detect features. When native WSL output is
+    # redirected/piped, some WSL builds emit UTF-16LE text that Windows PowerShell
+    # 5.1 decodes incorrectly. The result depends on localization and is not fixed
+    # reliably by changing the console code page. The actual named/location install
+    # below is the authoritative capability check.
+    Write-Host "WSL platform is ready; named/location support will be validated by the install command itself."
 }
 
 function Ensure-CoKernelDistro {
@@ -179,7 +181,7 @@ function Ensure-CoKernelDistro {
         $webArgs = $installArgs + @("--web-download")
         & wsl.exe @webArgs
         if ($LASTEXITCODE -ne 0 -and -not (Test-WslDistroExists $DistroName)) {
-            throw "Failed to install $Distribution as $DistroName."
+            throw "Failed to install $Distribution as $DistroName using WSL named/location install. See the diagnostic log above for wsl.exe output."
         }
     }
 
