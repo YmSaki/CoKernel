@@ -21,10 +21,10 @@ if [[ "$(cat /proc/sys/kernel/osrelease 2>/dev/null)" == *WSL2* ]] || grep -qi m
   ok "WSL2 kernel detected"
 fi
 
-if [[ -d /mnt/c ]]; then
+if mountpoint -q /mnt/c 2>/dev/null; then
   warn "/mnt/c is mounted; recommended dedicated-WSL isolation is not active"
 else
-  ok "Windows C: is not auto-mounted"
+  ok "Windows C: is not mounted"
 fi
 
 if command -v cmd.exe >/dev/null 2>&1 || command -v powershell.exe >/dev/null 2>&1; then
@@ -86,7 +86,7 @@ fi
 if docker info >/dev/null 2>&1; then
   gpu_test_image="nvidia/cuda:12.8.1-base-ubuntu24.04"
   if [[ -f .env ]]; then
-    configured="$(awk -F= '$1 == "GPU_TEST_IMAGE" {sub(/^[^=]*=/, ""); print; exit}' .env)"
+    configured="$(awk -F= '$1 == "GPU_TEST_IMAGE" {sub(/^[^=]*=/, ""); print; exit}' .env | tr -d '\r\n')"
     gpu_test_image="${configured:-${gpu_test_image}}"
   fi
 
