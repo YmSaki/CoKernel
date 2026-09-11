@@ -2,7 +2,7 @@
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${ROOT_DIR}"
+cd "${ROOT_DIR}" || exit 1
 
 failures=0
 warnings=0
@@ -90,9 +90,9 @@ fi
 
 if [[ "${failures}" -gt 0 ]]; then
   echo
-echo "Doctor result: ${failures} failure(s), ${warnings} warning(s)."
+  echo "Doctor result: ${failures} failure(s), ${warnings} warning(s)."
   exit 1
 fi
 
 echo
-echo "Doctor result: healthy (${warnings} warning(s))."
+ echo "Doctor result: healthy (${warnings} warning(s))."

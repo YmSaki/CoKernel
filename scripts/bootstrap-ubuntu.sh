@@ -10,6 +10,7 @@ if [[ "$(id -u)" -eq 0 ]]; then
   exit 1
 fi
 
+# shellcheck source=/etc/os-release
 . /etc/os-release
 if [[ "${ID:-}" != "ubuntu" ]]; then
   echo "Unsupported distribution: ${ID:-unknown}. Ubuntu 24.04 is the primary target."
@@ -78,5 +79,5 @@ sudo docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi
 
 echo
 echo "Bootstrap complete."
-echo "A WSL restart is recommended so docker group membership is refreshed."
-echo "Next: ./scripts/harden-wsl.sh (dedicated CoKernel WSL only)."
+echo "Restart this WSL distribution so docker group membership is refreshed."
+echo "If you have not hardened this dedicated distro yet, run ./scripts/harden-wsl.sh before that restart."
