@@ -186,6 +186,11 @@ function Ensure-CoKernelDistro {
     if (-not (Test-WslDistroExists $DistroName)) {
         throw "WSL did not register distribution '$DistroName'."
     }
+
+    & wsl.exe -d $DistroName -u root --cd / -- bash -lc "mkdir -p /var/lib/cokernel && touch /etc/cokernel-managed"
+    if ($LASTEXITCODE -ne 0) {
+        throw "The CoKernel WSL distro was installed, but its management marker could not be created."
+    }
 }
 
 function Ensure-LinuxUser {
@@ -193,6 +198,8 @@ function Ensure-LinuxUser {
 
     $command = @"
 set -euo pipefail
+mkdir -p /var/lib/cokernel
+touch /etc/cokernel-managed
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y sudo git ca-certificates
@@ -202,8 +209,6 @@ fi
 usermod -aG sudo '$LinuxUser'
 printf '%s ALL=(ALL) NOPASSWD:ALL\n' '$LinuxUser' > /etc/sudoers.d/90-cokernel-user
 chmod 0440 /etc/sudoers.d/90-cokernel-user
-mkdir -p /var/lib/cokernel
-touch /etc/cokernel-managed
 "@
     Invoke-WslBash -User "root" -Command $command
 }
