@@ -32,7 +32,7 @@ function Ensure-Elevated {
     $arguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-File", ('\"{0}\"' -f $PSCommandPath)
+        "-File", ('"{0}"' -f $PSCommandPath)
     )
     Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $arguments
     exit 0
