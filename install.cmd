@@ -1,13 +1,15 @@
 @echo off
 setlocal
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p = Start-Process powershell.exe -Verb RunAs -PassThru -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File ""%~dp0install.ps1""'; exit $p.ExitCode"
 set "exit_code=%ERRORLEVEL%"
 
-if not "%exit_code%"=="0" (
-  echo.
+echo.
+if "%exit_code%"=="0" (
+  echo CoKernel installer finished successfully.
+) else (
   echo CoKernel installer exited with code %exit_code%.
-  pause
 )
-
+echo.
+pause
 exit /b %exit_code%
