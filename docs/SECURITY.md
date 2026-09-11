@@ -13,7 +13,7 @@ Trusted:
 - Windows host and its NVIDIA driver
 - WSL implementation and kernel
 - Docker Engine / container runtime
-- CoKernel repository configuration
+- CoKernel repository configuration and Windows bootstrap
 - OpenAI Secure MCP Tunnel control path
 
 Partially trusted / potentially destructive:
@@ -22,6 +22,20 @@ Partially trusted / potentially destructive:
 - Python packages installed into the workspace
 - commands initiated through MCP
 - AI-generated code
+
+## Windows bootstrap boundary
+
+`install.cmd` / `install.ps1` are host provisioning tools, not runtime tools. They execute with Windows Administrator privileges because WSL feature enablement and distribution provisioning can require elevation.
+
+The installer is intentionally non-destructive:
+
+- it never calls `wsl --unregister`;
+- it refuses to modify an existing distro named `CoKernel` unless CoKernel's management marker is present;
+- it refuses to overwrite an unexpected repository path inside WSL;
+- it copies the source checkout into WSL before Windows-drive mounts/interoperability are disabled;
+- it removes copied `.env`/`.env.local` before generating runtime secrets inside WSL.
+
+The automated installer creates a dedicated WSL user with passwordless `sudo`. This is an operator-convenience choice at the **WSL host layer**, not a container privilege. That WSL account, its home directory, and its credentials are not mounted into Jupyter/MCP containers. If a stricter WSL host policy is desired, replace passwordless sudo after provisioning with a local password or root-only administrative workflow.
 
 ## Host isolation
 
@@ -84,6 +98,8 @@ Do not reuse one value for multiple roles.
 The runtime OpenAI key should be restricted to Tunnels Read + Use. OpenAI admin keys are not runtime secrets and must not be placed in CoKernel `.env`.
 
 `.env` is local-only and git-ignored.
+
+GitHub credentials used for `git pull` stay at the WSL host layer. Do not mount `~/.ssh`, GitHub CLI credentials, PAT files, or credential stores into the workbench containers.
 
 ## Dependency risk
 

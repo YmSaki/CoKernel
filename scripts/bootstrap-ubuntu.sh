@@ -45,7 +45,7 @@ fi
 
 echo "[1/4] Installing Docker Engine prerequisites"
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl gnupg
+sudo apt-get install -y ca-certificates curl gnupg git
 sudo install -m 0755 -d /etc/apt/keyrings
 
 if [[ ! -f /etc/apt/keyrings/docker.asc ]]; then
