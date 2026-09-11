@@ -64,7 +64,14 @@ function Invoke-WslBash {
     )
 
     Write-Host "[WSL] $Step"
-    & wsl.exe -d $DistroName -u $User --cd / -- bash -lc $Command
+
+    # Windows PowerShell here-strings use CRLF. Passing them verbatim to
+    # `bash -lc` makes Bash see option names such as `pipefail\r`, which fails
+    # before the real command runs. Normalize all generated Linux command text
+    # to LF before crossing the WSL boundary.
+    $normalizedCommand = $Command -replace "`r", ""
+
+    & wsl.exe -d $DistroName -u $User --cd / -- bash -lc $normalizedCommand
     $code = $LASTEXITCODE
     if ($code -ne 0) {
         throw "WSL step '$Step' failed for user '$User' with exit code $code. See the diagnostic output immediately above and in install.log."
