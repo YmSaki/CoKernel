@@ -11,6 +11,10 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   cp "${EXAMPLE_FILE}" "${ENV_FILE}"
 fi
 
+# The initial repository seed may come from a Windows checkout. Normalize an
+# existing .env as well as a newly copied one before any value is parsed so a
+# trailing CR never becomes part of tokens, image references, ports, or paths.
+sed -i 's/\r$//' "${ENV_FILE}"
 chmod 600 "${ENV_FILE}"
 
 generate_token() {
