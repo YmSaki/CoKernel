@@ -82,7 +82,7 @@ try {
         throw "Could not restore WSL repository ownership to $linuxUser."
     }
 
-    & wsl.exe -d $DistroName -u $linuxUser --cd $target -- bash -lc "find . -type f \\( -name '*.sh' -o -name '*.py' -o -name '*.yaml' -o -name '*.yml' -o -name '*.Dockerfile' -o -name 'Dockerfile' \\) -exec sed -i 's/\\r$//' {} + && chmod +x up.sh down.sh logs.sh scripts/*.sh"
+    & wsl.exe -d $DistroName -u $linuxUser --cd $target -- bash -lc "find . -type f \\( -name '*.sh' -o -name '*.py' -o -name '*.yaml' -o -name '*.yml' -o -name '*.Dockerfile' -o -name 'Dockerfile' -o -name '.env.example' \\) -exec sed -i 's/\\r$//' {} + && chmod +x up.sh down.sh logs.sh scripts/*.sh"
     if ($LASTEXITCODE -ne 0) {
         throw "Could not normalize synchronized repository files inside WSL."
     }
@@ -94,6 +94,9 @@ finally {
         & wsl.exe -d $DistroName -u root --cd / -- umount $mountPoint
         if ($LASTEXITCODE -ne 0) {
             Write-Warning "Could not unmount temporary installer mount $mountPoint."
+        }
+        else {
+            & wsl.exe -d $DistroName -u root --cd / -- rmdir $mountPoint 2>$null
         }
     }
 }
