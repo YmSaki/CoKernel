@@ -45,19 +45,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Parse PowerShell installer
+      - name: Parse PowerShell installers
         shell: powershell
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path .\install.ps1),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            exit 1
+          foreach ($file in @('.\install.ps1', '.\install-elevated.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file: $($_.Message)" }
+              exit 1
+            }
           }
 
       - name: Check bootstrap entrypoints
@@ -65,5 +67,6 @@ jobs:
         run: |
           if (-not (Test-Path .\install.cmd)) { throw 'install.cmd missing' }
           if (-not (Test-Path .\install.ps1)) { throw 'install.ps1 missing' }
+          if (-not (Test-Path .\install-elevated.ps1)) { throw 'install-elevated.ps1 missing' }
           if (-not (Test-Path .\scripts\harden-wsl.sh)) { throw 'harden-wsl.sh missing' }
           if (-not (Test-Path .\scripts\bootstrap-ubuntu.sh)) { throw 'bootstrap-ubuntu.sh missing' }
