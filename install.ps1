@@ -32,7 +32,7 @@ function Ensure-Elevated {
     $arguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-File", ('"{0}"' -f $PSCommandPath)
+        "-File", ('\"{0}\"' -f $PSCommandPath)
     )
     Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $arguments
     exit 0
@@ -66,9 +66,7 @@ function Invoke-WslBash {
     Write-Host "[WSL] $Step"
 
     # Windows PowerShell here-strings use CRLF. Passing them verbatim to
-    # `bash -lc` makes Bash see option names such as `pipefail\r`, which fails
-    # before the real command runs. Normalize all generated Linux command text
-    # to LF before crossing the WSL boundary.
+    # `bash -lc` makes Bash see option names such as `pipefail\r`.
     $normalizedCommand = $Command -replace "`r", ""
 
     & wsl.exe -d $DistroName -u $User --cd / -- bash -lc $normalizedCommand
@@ -76,6 +74,19 @@ function Invoke-WslBash {
     if ($code -ne 0) {
         throw "WSL step '$Step' failed for user '$User' with exit code $code. See the diagnostic output immediately above and in install.log."
     }
+}
+
+function Convert-WindowsDrivePathToWsl {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    if ($fullPath -notmatch '^([A-Za-z]):\\(.*)$') {
+        throw "CoKernel source checkout must be on a local Windows drive for first-time seeding. Unsupported path: $fullPath"
+    }
+
+    $drive = $Matches[1].ToLowerInvariant()
+    $rest = $Matches[2] -replace '\\', '/'
+    return "/mnt/$drive/$rest"
 }
 
 function Get-DefaultLinuxUser {
@@ -146,11 +157,6 @@ function Ensure-WslPlatform {
         Write-Warning "wsl --update failed. Continuing with the installed WSL version."
     }
 
-    # Do not parse `wsl.exe --help` to detect features. When native WSL output is
-    # redirected/piped, some WSL builds emit UTF-16LE text that Windows PowerShell
-    # 5.1 decodes incorrectly. The result depends on localization and is not fixed
-    # reliably by changing the console code page. The actual named/location install
-    # below is the authoritative capability check.
     Write-Host "WSL platform is ready; named/location support will be validated by the install command itself."
 }
 
@@ -256,11 +262,16 @@ function Seed-Repository {
     }
 
     $sourceWindows = (Resolve-Path $PSScriptRoot).Path
-    $sourceLinux = (& wsl.exe -d $DistroName -u root --cd / -- wslpath -u $sourceWindows)
+    $sourceLinux = Convert-WindowsDrivePathToWsl -Path $sourceWindows
+    Write-Host "Source checkout inside WSL: $sourceLinux"
+
+    # Avoid `wslpath` here. Windows PowerShell 5.1 can strip backslashes while
+    # forwarding a Windows path through wsl.exe, turning C:\foo\bar into
+    # C:foobar. Deterministic drive-letter conversion avoids that quoting layer.
+    & wsl.exe -d $DistroName -u root --cd / -- test -d $sourceLinux
     if ($LASTEXITCODE -ne 0) {
-        throw "Could not translate the Windows repository path into WSL."
+        throw "Windows checkout is not visible at '$sourceLinux' inside WSL. Windows-drive automount must remain enabled until repository seeding completes."
     }
-    $sourceLinux = ($sourceLinux | Select-Object -First 1).Trim()
 
     & wsl.exe -d $DistroName -u root --cd / -- mkdir -p "/home/$LinuxUser/src"
     if ($LASTEXITCODE -ne 0) { throw "Could not create WSL source directory." }
