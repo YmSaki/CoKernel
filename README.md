@@ -8,13 +8,45 @@ The primary target is a Windows 11 workstation with an NVIDIA GPU. CoKernel runs
 
 > Status: experimental v0.1 bootstrap. One workstation, one shared Jupyter environment, one GPU pool.
 
+## Quick start on Windows
+
+Clone or check out this repository on Windows, then run:
+
+```text
+install.cmd
+```
+
+That is the preferred first-time installation path. The installer requests Administrator privileges and then:
+
+1. enables/updates WSL when needed;
+2. creates a dedicated `CoKernel` Ubuntu 24.04 WSL2 distro;
+3. creates the Linux user and copies this checkout onto the WSL ext4 filesystem;
+4. disables Windows-drive automount and Windows executable interop inside that distro;
+5. installs Docker Engine, Git, and NVIDIA Container Toolkit;
+6. validates GPU/container access;
+7. starts Jupyter + MCP.
+
+If enabling WSL requires a Windows reboot, setup registers itself to resume after the next sign-in. The installer never calls `wsl --unregister` and refuses to overwrite an unrelated WSL distro or unexpected repository path.
+
+After installation:
+
+```text
+JupyterLab: http://localhost:8888
+WSL shell:  wsl -d CoKernel
+Repo:       ~/src/CoKernel
+```
+
+See [`docs/WINDOWS_INSTALL.md`](docs/WINDOWS_INSTALL.md) for the complete flow, restart behavior, safety rules, and advanced parameters.
+
+Because this repository is private, configure GitHub authentication once inside the dedicated WSL distro before relying on `git pull`. The Git/SSH credential stays at the WSL host layer and is never mounted into the Jupyter/MCP containers.
+
 ## Architecture
 
 ```text
 Windows 11
 └─ WSL2: dedicated CoKernel Ubuntu
-   ├─ Windows drives: not auto-mounted (recommended)
-   ├─ Windows interop: disabled (recommended)
+   ├─ Windows drives: not auto-mounted
+   ├─ Windows interop: disabled
    └─ Docker Engine + NVIDIA Container Toolkit
       └─ Compose project: cokernel
          ├─ jupyter
@@ -49,7 +81,7 @@ Upstream Jupyter MCP Server creates a new kernel when `kernel_id` is omitted fro
 
 CoKernel ships a small MCP extension that queries Jupyter `/api/sessions` and resolves the existing kernel for the requested notebook. If exactly one matching kernel is not found, it fails with an actionable error instead of guessing or creating another one.
 
-The intended interaction is therefore:
+The intended interaction is:
 
 1. Open `research.ipynb` in JupyterLab and let its kernel start.
 2. Ask the AI to use/connect to `research.ipynb`.
@@ -58,90 +90,47 @@ The intended interaction is therefore:
 
 ## Prerequisites
 
-- Windows 11 with current WSL2
-- NVIDIA GPU supported by CUDA on WSL
-- Current NVIDIA Windows driver with WSL CUDA support
-- A dedicated Ubuntu 24.04 WSL distribution (strongly recommended)
-- Internet access during bootstrap/build
-- For ChatGPT access: an OpenAI Secure MCP Tunnel ID and a restricted runtime API key with Tunnels Read + Use
+For the automated Windows path:
 
-Do **not** install a Linux NVIDIA display/kernel driver inside WSL. The Windows NVIDIA driver provides the GPU to WSL.
+- Windows 11 is the primary target;
+- Windows 10 build 19041+ is accepted by the installer;
+- NVIDIA GPU supported by CUDA on WSL;
+- current NVIDIA **Windows** driver with WSL CUDA support;
+- Internet access during bootstrap/build.
 
-## First-time setup
+For ChatGPT access through the tunnel, also provide:
 
-Clone this repository **inside the WSL ext4 filesystem**, for example under `~/src`. Do not clone it under `/mnt/c` because the recommended hardening disables Windows-drive automounting.
+- an OpenAI Secure MCP Tunnel ID;
+- a restricted runtime API key with Tunnels Read + Use.
 
-```bash
-git clone https://github.com/YmSaki/CoKernel.git
-cd CoKernel
-```
+Do **not** install a Linux NVIDIA display/kernel driver inside WSL. The Windows NVIDIA driver provides the GPU to WSL; CoKernel installs NVIDIA Container Toolkit only.
 
-Because this repository is private, configure Git authentication inside the dedicated WSL distribution before relying on daily `git pull`. Do not depend on Windows Git Credential Manager after Windows interop is disabled. A WSL-local credential or repository-scoped read-only SSH deploy key is appropriate; it is not mounted into the CoKernel containers.
+## Tunnel setup
 
-### 1. Enable the dedicated WSL configuration
+The Windows bootstrap intentionally succeeds without OpenAI tunnel credentials. Jupyter + MCP can be validated locally first.
 
-If systemd is not already active, run this first. Only do it in a WSL distribution dedicated to CoKernel:
-
-```bash
-./scripts/harden-wsl.sh
-```
-
-It configures `/etc/wsl.conf` to enable systemd while disabling Windows-drive automount and Windows executable interop. Then terminate that WSL distribution from PowerShell and reopen it:
-
-```powershell
-wsl --terminate <your-cokernel-distro-name>
-```
-
-### 2. Install Docker Engine and NVIDIA Container Toolkit
-
-```bash
-./scripts/bootstrap-ubuntu.sh
-```
-
-The script installs Docker Engine from Docker's official Ubuntu repository and NVIDIA Container Toolkit from NVIDIA's repository. It does not install an NVIDIA Linux driver. Restart the WSL distribution once afterward so Docker group membership is refreshed.
-
-### 3. Create local secrets
-
-```bash
-./scripts/init-env.sh
-```
-
-`JUPYTER_TOKEN` and `MCP_TOKEN` are generated locally. `.env` is git-ignored.
-
-For ChatGPT connectivity, edit `.env` and set:
+Afterward, edit `~/src/CoKernel/.env` inside the dedicated WSL distro and set:
 
 ```dotenv
 CONTROL_PLANE_TUNNEL_ID=tunnel_...
 CONTROL_PLANE_API_KEY=sk-...
 ```
 
-Use a **restricted runtime key** for the long-lived tunnel process. Do not put an OpenAI admin key in `.env`.
+Use a restricted runtime key for the long-lived tunnel process. Do not put an OpenAI admin key in `.env`.
 
-### 4. Verify the machine
-
-```bash
-./scripts/doctor.sh
-```
-
-The doctor checks WSL2, Docker Compose, the WSL isolation settings, NVIDIA visibility, and a GPU-enabled test container.
-
-### 5. Start CoKernel
+Then run:
 
 ```bash
+cd ~/src/CoKernel
 ./up.sh
 ```
 
-Then open:
-
-```text
-http://localhost:8888
-```
-
-If both OpenAI tunnel variables are present, `up.sh` also starts the tunnel profile. If absent, Jupyter + MCP still start locally.
-
 ## Daily use
 
+Inside the dedicated WSL distro:
+
 ```bash
+cd ~/src/CoKernel
 git pull
 ./up.sh
 ```
@@ -153,7 +142,7 @@ Useful commands:
 ```bash
 ./down.sh             # stop services
 ./logs.sh             # follow all logs
-./scripts/doctor.sh   # re-run host checks
+./scripts/doctor.sh   # host/GPU/runtime checks
 ./scripts/smoke-test.sh
 ```
 
@@ -177,6 +166,22 @@ uv add torch
 uv sync
 ```
 
+## Manual WSL setup
+
+The automated `install.cmd` path is preferred. For debugging or custom installations, the Linux-side pieces remain independently usable:
+
+```bash
+./scripts/harden-wsl.sh
+# terminate/reopen this dedicated WSL distro
+./scripts/bootstrap-ubuntu.sh
+# terminate/reopen again for docker-group membership
+./scripts/init-env.sh
+./scripts/doctor.sh
+./up.sh
+```
+
+Run these only in a WSL distro dedicated to CoKernel. The hardening step disables Windows-drive automount and Windows executable interop.
+
 ## Services
 
 | Service | Host exposure | Purpose |
@@ -198,7 +203,9 @@ Windows host
       -> /workspace + GPU
 ```
 
-The Jupyter container does not receive the Docker socket, Windows drives, your home directory, SSH keys, or cluster credentials. See [`docs/SECURITY.md`](docs/SECURITY.md).
+The Jupyter container does not receive the Docker socket, Windows drives, your WSL home directory, SSH keys, or cluster credentials. The automated installer uses a passwordless-sudo account at the **WSL host layer** for maintainability; that account is not mounted or exposed to the Jupyter/MCP containers.
+
+See [`docs/SECURITY.md`](docs/SECURITY.md) for the threat model.
 
 ## Version pins
 
@@ -211,6 +218,7 @@ Control-path dependencies are intentionally pinned:
 
 ## Project docs
 
+- [`docs/WINDOWS_INSTALL.md`](docs/WINDOWS_INSTALL.md)
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - [`docs/SECURITY.md`](docs/SECURITY.md)
 - [`AGENTS.md`](AGENTS.md)
