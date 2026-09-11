@@ -50,6 +50,16 @@ jobs:
           sed -i 's/^JUPYTER_TOKEN=$/JUPYTER_TOKEN=ci-jupyter-token/' .env
           sed -i 's/^MCP_TOKEN=$/MCP_TOKEN=ci-mcp-token/' .env
 
+      - name: Verify CRLF env repair
+        run: |
+          sed -i 's/$/\r/' .env
+          ./scripts/init-env.sh
+          if grep -q $'\r' .env; then
+            echo '.env still contains CR characters after init-env.sh'
+            exit 1
+          fi
+          test "$(awk -F= '$1 == "GPU_TEST_IMAGE" {print $2}' .env)" = "nvidia/cuda:12.8.1-base-ubuntu24.04"
+
       - name: Validate Compose model
         run: docker compose --profile tunnel config >/dev/null
 
