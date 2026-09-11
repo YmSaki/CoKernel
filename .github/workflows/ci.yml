@@ -13,6 +13,25 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Verify normalized Windows-script blobs
+        run: |
+          python - <<'PY'
+          import subprocess
+          files = subprocess.check_output(
+              ['git', 'ls-files', '*.cmd', '*.ps1'], text=True
+          ).splitlines()
+          bad = []
+          for path in files:
+              blob = subprocess.check_output(['git', 'show', f'HEAD:{path}'])
+              if b'\r' in blob:
+                  bad.append(path)
+          if bad:
+              raise SystemExit(
+                  'Tracked Windows-script blobs must be LF-normalized; .gitattributes '
+                  'will materialize CRLF on Windows. Bad files: ' + ', '.join(bad)
+              )
+          PY
+
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
