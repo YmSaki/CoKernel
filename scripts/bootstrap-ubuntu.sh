@@ -77,6 +77,13 @@ sudo apt-get install -y nvidia-container-toolkit
 sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 
+if ! sudo docker info --format '{{json .Runtimes}}' | grep -q '"nvidia"'; then
+  echo "NVIDIA runtime is not registered with Docker after nvidia-ctk configuration."
+  echo "Docker runtimes:"
+  sudo docker info --format '{{json .Runtimes}}' || true
+  exit 1
+fi
+
 if ! id -nG "${USER}" | grep -qw docker; then
   echo "[3/4] Adding ${USER} to docker group"
   sudo usermod -aG docker "${USER}"
@@ -95,7 +102,10 @@ else
   exit 1
 fi
 
-sudo docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi
+# Explicitly select the NVIDIA runtime. Recent NVIDIA Container Toolkit releases
+# can auto-detect non-legacy modes where Docker's --gpus hook path alone is not
+# sufficient. CoKernel uses the registered NVIDIA runtime explicitly in production.
+sudo docker run --rm --runtime=nvidia --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi
 
 echo
 echo "Bootstrap complete."
