@@ -1,0 +1,11 @@
+.env
+.env.local
+*.log
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+
+# Default local workspace is runtime/user state, not CoKernel infrastructure.
+workspace/*
+!workspace/.gitkeep

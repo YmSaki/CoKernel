@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Shellcheck
+        run: shellcheck up.sh down.sh logs.sh scripts/*.sh
+
+      - name: Compile MCP extension
+        run: python -m compileall -q mcp-extension/cokernel_mcp_extension
+
+      - name: Test same-kernel session resolver
+        run: PYTHONPATH=mcp-extension python -m unittest discover -s mcp-extension/tests -v
+
+      - name: Prepare non-secret CI environment
+        run: |
+          cp .env.example .env
+          sed -i 's/^JUPYTER_TOKEN=$/JUPYTER_TOKEN=ci-jupyter-token/' .env
+          sed -i 's/^MCP_TOKEN=$/MCP_TOKEN=ci-mcp-token/' .env
+
+      - name: Validate Compose model
+        run: docker compose --profile tunnel config >/dev/null
+
+      - name: Build MCP image
+        run: docker compose build mcp
+
+      - name: Verify pinned tunnel image exists
+        run: docker compose --profile tunnel pull tunnel

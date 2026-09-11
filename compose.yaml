@@ -1,0 +1,90 @@
+name: cokernel
+
+services:
+  jupyter:
+    build:
+      context: .
+      dockerfile: docker/jupyter.Dockerfile
+    image: cokernel/jupyter:local
+    init: true
+    restart: unless-stopped
+    environment:
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:?Run ./scripts/init-env.sh first}
+      COKERNEL_SYNC_WORKSPACE: ${COKERNEL_SYNC_WORKSPACE:-1}
+    volumes:
+      - type: bind
+        source: ${WORKSPACE_DIR:-./workspace}
+        target: /workspace
+    ports:
+      - "127.0.0.1:${JUPYTER_PORT:-8888}:8888"
+    gpus: all
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import os, urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8888/api?token=' + os.environ['JUPYTER_TOKEN'], timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  mcp:
+    build:
+      context: .
+      dockerfile: docker/mcp.Dockerfile
+    image: cokernel/mcp:local
+    init: true
+    restart: unless-stopped
+    command:
+      - start
+      - --transport
+      - streamable-http
+      - --port
+      - "4040"
+    environment:
+      JUPYTER_URL: http://jupyter:8888
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:?Run ./scripts/init-env.sh first}
+      MCP_TOKEN: ${MCP_TOKEN:?Run ./scripts/init-env.sh first}
+      ALLOW_IMG_OUTPUT: "true"
+      START_NEW_CODE_SANDBOX: "false"
+    ports:
+      - "127.0.0.1:${MCP_PORT:-4040}:4040"
+    depends_on:
+      jupyter:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:4040/api/healthz', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+
+  tunnel:
+    image: ${TUNNEL_CLIENT_IMAGE:-ghcr.io/openai/tunnel-client:v0.0.13}
+    profiles:
+      - tunnel
+    restart: unless-stopped
+    environment:
+      CONTROL_PLANE_TUNNEL_ID: ${CONTROL_PLANE_TUNNEL_ID:-}
+      CONTROL_PLANE_API_KEY: ${CONTROL_PLANE_API_KEY:-}
+      MCP_SERVER_URL: http://mcp:4040/mcp
+      MCP_EXTRA_HEADERS: "Authorization: env:COKERNEL_MCP_AUTHORIZATION"
+      MCP_DISCOVERY_EXTRA_HEADERS: "Authorization: env:COKERNEL_MCP_AUTHORIZATION"
+      COKERNEL_MCP_AUTHORIZATION: "Bearer ${MCP_TOKEN:?Run ./scripts/init-env.sh first}"
+      HEALTH_LISTEN_ADDR: 0.0.0.0:8080
+    ports:
+      - "127.0.0.1:${TUNNEL_HEALTH_PORT:-8080}:8080"
+    depends_on:
+      mcp:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
