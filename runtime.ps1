@@ -93,8 +93,8 @@ function Start-Keepalive {
     # ordinary WSL client attached for as long as CoKernel should remain online.
     # flock makes this idempotent: concurrent start attempts leave only one holder.
     $argumentString = @(
-        '-d', ('"{0}"' -f $DistroName).Replace('\"', '"'),
-        '-u', ('"{0}"' -f $linuxUser).Replace('\"', '"'),
+        '-d', ('"{0}"' -f $DistroName),
+        '-u', ('"{0}"' -f $linuxUser),
         '--cd', '/',
         '--',
         '/usr/bin/flock', '-n', $KeepaliveLock,
