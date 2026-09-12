@@ -89,6 +89,24 @@ if [[ "${status}" == "401" || "${status}" == "403" || "${status}" == "421" || "$
 fi
 echo "OK (HTTP ${status}; malformed MCP body is intentional)"
 
+# OpenAI tunnel-client addresses the service by its private Compose DNS name,
+# so Jupyter MCP receives Host: mcp:4040 instead of a localhost Host header.
+# Reproduce that exact HTTP-layer condition through the L4 loopback proxy.
+printf '[test] MCP accepts tunnel-client Host header... '
+status="$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H 'Host: mcp:4040' \
+  -H "Authorization: Bearer ${MCP_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{}' \
+  "http://127.0.0.1:${MCP_PORT}/mcp" || true)"
+if [[ "${status}" == "401" || "${status}" == "403" || "${status}" == "421" || "${status}" == "000" ]]; then
+  echo "tunnel-client Host header was rejected with HTTP ${status}"
+  docker compose logs --tail=100 mcp || true
+  exit 1
+fi
+echo "OK (HTTP ${status}; Host: mcp:4040)"
+
 printf '[test] CoKernel MCP extension installed... '
 docker compose exec -T mcp python - <<'PY' >/dev/null
 from importlib.metadata import entry_points
