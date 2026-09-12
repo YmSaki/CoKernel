@@ -13,12 +13,12 @@ $KeepaliveLock = "/tmp/cokernel-runtime.keepalive.lock"
 function Get-WslDistros {
     param([switch]$RunningOnly)
 
-    $args = @("--list", "--quiet")
+    $listArgs = @("--list", "--quiet")
     if ($RunningOnly) {
-        $args = @("--list", "--running", "--quiet")
+        $listArgs = @("--list", "--running", "--quiet")
     }
 
-    $output = & wsl.exe @args 2>$null
+    $output = & wsl.exe @listArgs 2>$null
     if ($LASTEXITCODE -ne 0) {
         return @()
     }
@@ -93,8 +93,8 @@ function Start-Keepalive {
     # ordinary WSL client attached for as long as CoKernel should remain online.
     # flock makes this idempotent: concurrent start attempts leave only one holder.
     $argumentString = @(
-        '-d', ('"{0}"' -f $DistroName),
-        '-u', ('"{0}"' -f $linuxUser),
+        '-d', ('"{0}"' -f $DistroName).Replace('\"', '"'),
+        '-u', ('"{0}"' -f $linuxUser).Replace('\"', '"'),
         '--cd', '/',
         '--',
         '/usr/bin/flock', '-n', $KeepaliveLock,
