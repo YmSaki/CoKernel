@@ -33,6 +33,13 @@ public sealed class CoKernelRuntimeService
         }, timeout: TimeSpan.FromMinutes(4), cancellationToken: cancellationToken);
     }
 
+    public Task<CommandResult> ReconcileAsync(CancellationToken cancellationToken = default) =>
+        _runner.RunAsync("wsl.exe", new[]
+        {
+            "-d", "CoKernel", "--cd", "/", "--", "bash", "-lc",
+            "cd ~/src/CoKernel && ./scripts/reconcile.sh"
+        }, timeout: TimeSpan.FromMinutes(3), cancellationToken: cancellationToken);
+
     public Task<CommandResult> StopAsync(CancellationToken cancellationToken = default) =>
         _runner.RunAsync("powershell.exe", new[]
         {
