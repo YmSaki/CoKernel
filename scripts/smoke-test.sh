@@ -11,9 +11,12 @@ fi
 
 get_env() {
   local key="$1"
-  awk -F= -v key="${key}" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' .env
+  awk -F= -v key="${key}" '$1 == key {sub(/^[^=]*=/, ""); gsub(/\r/, ""); print; exit}' .env
 }
 
+JUPYTER_TOKEN="$(get_env JUPYTER_TOKEN)"
+JUPYTER_PORT="$(get_env JUPYTER_PORT)"
+JUPYTER_PORT="${JUPYTER_PORT:-8888}"
 MCP_TOKEN="$(get_env MCP_TOKEN)"
 MCP_PORT="$(get_env MCP_PORT)"
 MCP_PORT="${MCP_PORT:-4040}"
@@ -30,8 +33,17 @@ printf '[test] GPU device exposed to workbench... '
 docker compose exec -T jupyter sh -lc 'test -e /dev/dxg || command -v nvidia-smi >/dev/null 2>&1'
 echo OK
 
-printf '[test] MCP health... '
-curl -fsS "http://127.0.0.1:${MCP_PORT}/api/healthz" >/dev/null
+printf '[test] WSL loopback proxy sockets... '
+systemctl is-active --quiet cokernel-jupyter-proxy.socket
+systemctl is-active --quiet cokernel-mcp-proxy.socket
+echo OK
+
+printf '[test] Jupyter through WSL loopback proxy... '
+curl -fsS --max-time 5 "http://127.0.0.1:${JUPYTER_PORT}/api?token=${JUPYTER_TOKEN}" >/dev/null
+echo OK
+
+printf '[test] MCP health through WSL loopback proxy... '
+curl -fsS --max-time 5 "http://127.0.0.1:${MCP_PORT}/api/healthz" >/dev/null
 echo OK
 
 printf '[test] CoKernel MCP extension installed... '
