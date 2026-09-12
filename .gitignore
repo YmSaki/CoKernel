@@ -9,3 +9,8 @@ __pycache__/
 # Default local workspace is runtime/user state, not CoKernel infrastructure.
 workspace/*
 !workspace/.gitkeep
+
+# CoKernel Desktop build/package outputs.
+apps/desktop/**/bin/
+apps/desktop/**/obj/
+dist/
