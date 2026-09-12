@@ -111,6 +111,7 @@ jobs:
             '.\sync-wsl-repo.ps1',
             '.\update.ps1',
             '.\runtime.ps1',
+            '.\runtime-keeper.ps1',
             '.\verify-windows-loopback.ps1'
           )) {
             $tokens = $null
@@ -139,6 +140,7 @@ jobs:
             '.\stop.cmd',
             '.\status.cmd',
             '.\runtime.ps1',
+            '.\runtime-keeper.ps1',
             '.\sync-wsl-repo.ps1',
             '.\verify-windows-loopback.ps1',
             '.\scripts\harden-wsl.sh',
