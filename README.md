@@ -25,7 +25,8 @@ install.cmd
 5. installs Docker Engine, Git, and NVIDIA Container Toolkit;
 6. configures a real WSL loopback socket bridge in front of Docker-published ports;
 7. validates GPU/container access;
-8. starts Jupyter + MCP, waits for health, and verifies Windows localhost reachability.
+8. starts Jupyter + MCP and a hidden Windows-side WSL runtime keeper;
+9. waits for health and verifies Windows localhost reachability.
 
 If enabling WSL requires a Windows reboot, setup registers itself to resume after the next sign-in. The installer never calls `wsl --unregister` and refuses to overwrite an unrelated WSL distro or unexpected repository path.
 
@@ -38,6 +39,21 @@ Repo:       ~/src/CoKernel
 ```
 
 See [`docs/WINDOWS_INSTALL.md`](docs/WINDOWS_INSTALL.md) for the complete flow, restart behavior, safety rules, and advanced parameters.
+
+## Runtime lifecycle on Windows
+
+WSL systemd services do **not** keep a WSL instance alive on their own. A server-oriented CoKernel installation therefore keeps one ordinary hidden `wsl.exe` client attached while the runtime should stay online. The keeper does no work itself; it simply prevents WSL from declaring the dedicated distro idle while Docker, Jupyter, MCP, and the tunnel run in the background.
+
+Use these Windows entrypoints:
+
+```text
+start.cmd    # keep WSL alive, start CoKernel services, verify localhost
+stop.cmd     # stop containers and terminate the dedicated CoKernel WSL distro
+status.cmd   # show whether the runtime and persistent WSL client are active
+update.cmd   # pull/update/rebuild, then leave the runtime online
+```
+
+The keeper lasts until `stop.cmd`, Windows sign-out, Windows shutdown/restart, or an explicit `wsl --terminate CoKernel` / `wsl --shutdown`. After a Windows restart, run `start.cmd` when you want CoKernel online again.
 
 ## Updating an existing installation
 
@@ -53,10 +69,11 @@ update.cmd
 2. runs `git pull --ff-only` on the Windows checkout;
 3. re-executes the freshly pulled updater so new migrations apply immediately;
 4. synchronizes the checkout into WSL ext4 while preserving `.env`, `.env.local`, and `workspace/`;
-5. applies idempotent WSL/runtime/network migrations;
-6. rebuilds and starts CoKernel;
-7. runs smoke tests inside WSL;
-8. verifies that Windows can actually connect to the public localhost ports.
+5. starts or reuses the persistent Windows-side WSL runtime keeper;
+6. applies idempotent WSL/runtime/network migrations;
+7. rebuilds and starts CoKernel;
+8. runs smoke tests inside WSL;
+9. verifies that Windows can actually connect to the public localhost ports.
 
 Use `install.cmd` again when you want a repair/convergence pass over the WSL/Docker/NVIDIA prerequisites. Use `update.cmd` for routine software updates.
 
@@ -64,6 +81,8 @@ Use `install.cmd` again when you want a repair/convergence pass over the WSL/Doc
 
 ```text
 Windows 11
+├─ hidden wsl.exe runtime keeper
+│     └─ keeps dedicated CoKernel WSL alive while services should stay online
 │
 │  http://localhost:8888
 │  localhostForwarding
@@ -108,6 +127,7 @@ The explicit WSL socket-proxy layer is intentional. Docker can implement a loopb
 6. Windows files, Docker socket, SSH keys, and cluster credentials are not mounted into the workbench.
 7. GPU access is explicitly granted only to the Jupyter compute container.
 8. Docker backend ports stay on WSL loopback; Windows reaches CoKernel only through explicit WSL loopback proxy sockets.
+9. Background Linux services are not treated as sufficient to keep WSL alive; Windows owns the runtime lifetime explicitly.
 
 ### Why CoKernel wraps `use_notebook`
 
@@ -152,11 +172,10 @@ CONTROL_PLANE_API_KEY=sk-...
 
 Use a restricted runtime key for the long-lived tunnel process. Do not put an OpenAI admin key in `.env`.
 
-Then run:
+Then, from the Windows checkout, run:
 
-```bash
-cd ~/src/CoKernel
-./up.sh
+```text
+start.cmd
 ```
 
 A successful tunnel startup reports `Tunnel: enabled (ready)`. The Windows-facing diagnostic endpoint is `http://localhost:8080/readyz`. The tunnel admin UI remains loopback-restricted inside its own container and is intentionally not exposed through CoKernel's WSL proxy.
@@ -165,29 +184,28 @@ The tunnel client reaches Jupyter MCP over the private Compose network as `http:
 
 ## Daily use
 
-For routine updates from Windows:
+From the Windows checkout:
 
 ```text
-update.cmd
+start.cmd     # start current installed version and keep it online
+status.cmd    # inspect runtime lifetime state
+stop.cmd      # cleanly stop CoKernel
+update.cmd    # pull latest code, migrate/rebuild, and keep it online
 ```
 
-To start the already-installed current version without pulling an update:
+Inside an already-running dedicated WSL distro, the Linux entrypoints remain useful for diagnostics:
 
 ```bash
-wsl -d CoKernel
 cd ~/src/CoKernel
 ./up.sh
+./down.sh
+./logs.sh
+./scripts/doctor.sh
+./scripts/smoke-test.sh
+./scripts/configure-wsl-loopback-proxy.sh
 ```
 
-Useful commands inside the dedicated WSL distro:
-
-```bash
-./down.sh                                  # stop services
-./logs.sh                                  # follow all logs
-./scripts/doctor.sh                        # host/GPU/runtime checks
-./scripts/smoke-test.sh                    # service + proxy checks
-./scripts/configure-wsl-loopback-proxy.sh  # reconcile Windows/WSL bridge
-```
+Running `./up.sh` alone does not create the Windows-side runtime keeper. For unattended/background operation from Windows, use `start.cmd` or `update.cmd`.
 
 ## Workspace
 
