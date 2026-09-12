@@ -69,6 +69,31 @@ jobs:
       - name: Build MCP image
         run: docker compose build mcp
 
+      - name: Verify tunnel Host transport security
+        run: |
+          docker run --rm -i --entrypoint python cokernel/mcp:local - <<'PY'
+          from cokernel_mcp_extension.plugin import configure_cokernel_transport_security
+
+          class DummyMCP:
+              def streamable_http_app(self, *args, **kwargs):
+                  return kwargs
+
+          mcp = DummyMCP()
+          configure_cokernel_transport_security(mcp)
+          wrapped = mcp.streamable_http_app
+          kwargs = wrapped(stateless_http=True)
+          security = kwargs["transport_security"]
+
+          assert security.enable_dns_rebinding_protection is True
+          assert "mcp" in security.allowed_hosts
+          assert "mcp:*" in security.allowed_hosts
+          assert "127.0.0.1:*" in security.allowed_hosts
+          assert "http://localhost:*" in security.allowed_origins
+
+          configure_cokernel_transport_security(mcp)
+          assert mcp.streamable_http_app is wrapped
+          PY
+
       - name: Verify pinned tunnel image exists
         run: docker compose --profile tunnel pull tunnel
 
