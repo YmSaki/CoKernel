@@ -60,8 +60,15 @@ function Get-CoKernelLinuxUser {
 function Test-KeepaliveHeld {
     param([Parameter(Mandatory = $true)][string]$LinuxUser)
 
-    & wsl.exe -d $DistroName -u $LinuxUser --cd / -- \
-        /usr/bin/flock -n $KeepaliveLock /usr/bin/true *> $null
+    $probeArgs = @(
+        "-d", $DistroName,
+        "-u", $LinuxUser,
+        "--cd", "/",
+        "--",
+        "/usr/bin/flock", "-n", $KeepaliveLock,
+        "/usr/bin/true"
+    )
+    & wsl.exe @probeArgs *> $null
     $code = $LASTEXITCODE
 
     if ($code -eq 0) {
@@ -94,12 +101,7 @@ function Start-Keepalive {
         '/usr/bin/sleep', 'infinity'
     ) -join ' '
 
-    $process = Start-Process \
-        -FilePath "wsl.exe" \
-        -ArgumentList $argumentString \
-        -WindowStyle Hidden \
-        -PassThru
-
+    $process = Start-Process -FilePath "wsl.exe" -ArgumentList $argumentString -WindowStyle Hidden -PassThru
     Start-Sleep -Milliseconds 750
 
     if ($process.HasExited -and -not (Test-KeepaliveHeld -LinuxUser $linuxUser)) {
@@ -127,8 +129,14 @@ function Stop-Runtime {
     $linuxUser = Get-CoKernelLinuxUser
 
     Write-Host "Stopping CoKernel containers..."
-    & wsl.exe -d $DistroName -u $linuxUser --cd / -- bash -lc \
-        "cd ~/src/CoKernel && ./down.sh" 2>&1 | Write-Host
+    $stopArgs = @(
+        "-d", $DistroName,
+        "-u", $linuxUser,
+        "--cd", "/",
+        "--",
+        "bash", "-lc", "cd ~/src/CoKernel && ./down.sh"
+    )
+    & wsl.exe @stopArgs
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "CoKernel containers did not stop cleanly; terminating the dedicated WSL distro anyway."
     }
