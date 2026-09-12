@@ -45,6 +45,11 @@ validate_port() {
   fi
 }
 
+port_is_listening() {
+  local port="$1"
+  ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)$port$"
+}
+
 JUPYTER_PORT="$(get_env JUPYTER_PORT 8888)"
 MCP_PORT="$(get_env MCP_PORT 4040)"
 TUNNEL_HEALTH_PORT="$(get_env TUNNEL_HEALTH_PORT 8080)"
@@ -76,6 +81,38 @@ if [[ "${JUPYTER_PORT}" == "${MCP_PORT}" || \
   exit 1
 fi
 
+# Stop any prior CoKernel socket units before checking port ownership. On the
+# first migration from the old Compose model, Docker itself may still occupy
+# the public ports. If so, stop only the existing CoKernel project once so the
+# real systemd listeners can claim those ports. Future starts keep containers
+# running because Docker uses the separate backend ports.
+for unit in \
+  cokernel-jupyter-proxy \
+  cokernel-mcp-proxy \
+  cokernel-tunnel-health-proxy; do
+  sudo systemctl stop "${unit}.socket" "${unit}.service" >/dev/null 2>&1 || true
+done
+
+busy_public_port=false
+for port in "${JUPYTER_PORT}" "${MCP_PORT}" "${TUNNEL_HEALTH_PORT}"; do
+  if port_is_listening "${port}"; then
+    busy_public_port=true
+  fi
+done
+
+if [[ "${busy_public_port}" == "true" ]] && docker compose ps -q 2>/dev/null | grep -q .; then
+  echo "[cokernel] migrating old Docker public-port bindings to private backend ports"
+  docker compose --profile tunnel down --remove-orphans || docker compose down --remove-orphans
+fi
+
+for port in "${JUPYTER_PORT}" "${MCP_PORT}" "${TUNNEL_HEALTH_PORT}"; do
+  if port_is_listening "${port}"; then
+    echo "Public CoKernel port ${port} is already owned by another process."
+    ss -ltnp 2>/dev/null | grep -E "(^|:)${port}[[:space:]]" || true
+    exit 1
+  fi
+done
+
 write_proxy_units() {
   local name="$1"
   local description="$2"
@@ -85,7 +122,6 @@ write_proxy_units() {
 
   socket_tmp="$(mktemp)"
   service_tmp="$(mktemp)"
-  trap 'rm -f "${socket_tmp:-}" "${service_tmp:-}"' RETURN
 
   cat >"${socket_tmp}" <<EOF
 [Unit]
@@ -113,12 +149,9 @@ ProtectSystem=strict
 ProtectHome=true
 EOF
 
-  sudo systemctl stop "${name}.socket" "${name}.service" >/dev/null 2>&1 || true
   sudo install -m 0644 "${socket_tmp}" "/etc/systemd/system/${name}.socket"
   sudo install -m 0644 "${service_tmp}" "/etc/systemd/system/${name}.service"
-
   rm -f "${socket_tmp}" "${service_tmp}"
-  trap - RETURN
 }
 
 write_proxy_units \
