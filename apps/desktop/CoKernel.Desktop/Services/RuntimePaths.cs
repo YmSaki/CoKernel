@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace CoKernel.Desktop.Services;
 
 public sealed class RuntimePaths
