@@ -72,7 +72,7 @@ class CoKernelSessionAttachExtension(JupyterMCPExtension):
     def manifest(self) -> PluginManifest:
         return PluginManifest(
             name="cokernel-session-attach",
-            version="0.1.0",
+            version="0.1.1",
             description=(
                 "Attach MCP notebook connections to an existing Jupyter session kernel "
                 "and configure CoKernel transport security."
