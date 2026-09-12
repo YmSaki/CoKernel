@@ -112,7 +112,8 @@ jobs:
             '.\update.ps1',
             '.\runtime.ps1',
             '.\runtime-keeper.ps1',
-            '.\verify-windows-loopback.ps1'
+            '.\verify-windows-loopback.ps1',
+            '.\apps\desktop\publish.ps1'
           )) {
             $tokens = $null
             $errors = $null
@@ -127,7 +128,7 @@ jobs:
             }
           }
 
-      - name: Check bootstrap, update, and runtime entrypoints
+      - name: Check bootstrap, update, runtime, and desktop entrypoints
         shell: powershell
         run: |
           foreach ($file in @(
@@ -146,7 +147,37 @@ jobs:
             '.\scripts\harden-wsl.sh',
             '.\scripts\bootstrap-ubuntu.sh',
             '.\scripts\configure-wsl-loopback-proxy.sh',
-            '.\scripts\update.sh'
+            '.\scripts\set-tunnel-config.sh',
+            '.\scripts\update.sh',
+            '.\apps\desktop\CoKernel.Desktop\CoKernel.Desktop.csproj',
+            '.\installer\windows\CoKernel.iss'
           )) {
             if (-not (Test-Path $file)) { throw "$file missing" }
           }
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build CoKernel Desktop
+        shell: powershell
+        run: dotnet build .\apps\desktop\CoKernel.Desktop\CoKernel.Desktop.csproj -c Release
+
+      - name: Publish CoKernel Desktop
+        shell: powershell
+        run: .\apps\desktop\publish.ps1
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --no-progress -y
+
+      - name: Build CoKernelSetup.exe
+        shell: powershell
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" .\installer\windows\CoKernel.iss'
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoKernelSetup-win-x64
+          path: dist/installer/CoKernelSetup.exe
+          if-no-files-found: error
