@@ -35,6 +35,25 @@ if [[ -n "${TUNNEL_ID}" && -n "${TUNNEL_KEY}" ]]; then
   echo "[cokernel] starting Jupyter + MCP + Secure MCP Tunnel"
   docker compose --profile tunnel up -d --build --wait --wait-timeout 180
   TUNNEL_STATE="enabled"
+
+  # Docker Compose can only wait for the tunnel container to be running because
+  # tunnel-client does not expose a container healthcheck here. /readyz is the
+  # authoritative signal that the runtime is actually ready to accept tunneled
+  # connector traffic. Probe it through the same WSL loopback bridge Windows
+  # uses so startup also validates that path.
+  tunnel_ready_url="http://127.0.0.1:${TUNNEL_HEALTH_PORT}/readyz"
+  echo "[cokernel] waiting for Secure MCP Tunnel readiness"
+  deadline=$((SECONDS + 60))
+  until curl -fsS --max-time 3 "${tunnel_ready_url}" >/dev/null 2>&1; do
+    if (( SECONDS >= deadline )); then
+      echo "Secure MCP Tunnel did not become ready within 60 seconds."
+      echo "Readiness endpoint: ${tunnel_ready_url}"
+      docker compose --profile tunnel logs --tail=100 tunnel || true
+      exit 1
+    fi
+    sleep 2
+  done
+  TUNNEL_STATE="enabled (ready)"
 else
   echo "[cokernel] starting Jupyter + MCP (tunnel credentials are not configured)"
   docker compose up -d --build --wait --wait-timeout 180
@@ -45,8 +64,9 @@ echo
 echo "CoKernel is healthy."
 echo "  JupyterLab: http://localhost:${JUPYTER_PORT}"
 echo "  Tunnel:     ${TUNNEL_STATE}"
-if [[ "${TUNNEL_STATE}" == "enabled" ]]; then
-  echo "  Tunnel UI:  http://localhost:${TUNNEL_HEALTH_PORT}/ui"
+if [[ "${TUNNEL_STATE}" == "enabled (ready)" ]]; then
+  echo "  Tunnel readiness: http://localhost:${TUNNEL_HEALTH_PORT}/readyz"
+  echo "  Tunnel admin UI:  intentionally not exposed through the WSL proxy"
 fi
 echo
 echo "Use ./logs.sh if a service later becomes unhealthy."
