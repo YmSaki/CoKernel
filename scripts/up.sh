@@ -24,6 +24,13 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+# Docker can publish a port to WSL's 127.0.0.1 through NAT rules without
+# creating a userspace listening socket. WSL localhostForwarding mirrors real
+# listening sockets to Windows, so keep a systemd socket-proxy in front of the
+# private Docker backend ports. This is idempotent and also applies migrations
+# when an existing installation is started after an update.
+"${ROOT_DIR}/scripts/configure-wsl-loopback-proxy.sh"
+
 if [[ -n "${TUNNEL_ID}" && -n "${TUNNEL_KEY}" ]]; then
   echo "[cokernel] starting Jupyter + MCP + Secure MCP Tunnel"
   docker compose --profile tunnel up -d --build --wait --wait-timeout 180
