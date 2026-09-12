@@ -139,9 +139,10 @@ EOF
 [Unit]
 Description=${description} proxy to Docker backend
 Requires=${name}.socket
-After=network.target
+After=${name}.socket network.target
 
 [Service]
+Type=notify
 ExecStart=${PROXY_BIN} 127.0.0.1:${backend_port}
 NoNewPrivileges=true
 PrivateTmp=true
