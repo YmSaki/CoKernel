@@ -86,6 +86,12 @@ services:
       MCP_DISCOVERY_EXTRA_HEADERS: "Authorization: env:COKERNEL_MCP_AUTHORIZATION"
       COKERNEL_MCP_AUTHORIZATION: "Bearer ${MCP_TOKEN:?Run ./scripts/init-env.sh first}"
       HEALTH_LISTEN_ADDR: 0.0.0.0:8080
+      # CoKernel intentionally does not use OAuth for MCP authentication. The
+      # tunnel client still performs protected-resource metadata discovery as a
+      # startup diagnostic. If Docker restores the tunnel container before MCP
+      # has rebound :4040, let that listener come up instead of permanently
+      # recording a connection-refused discovery failure.
+      MCP_STARTUP_WAIT_TIMEOUT: ${MCP_STARTUP_WAIT_TIMEOUT:-90s}
     ports:
       - "127.0.0.1:${TUNNEL_HEALTH_BACKEND_PORT:-18080}:8080"
     depends_on:
