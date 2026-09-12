@@ -1,8 +1,8 @@
-using System.Diagnostics;
 using System.Windows;
 using CoKernel.Desktop.Infrastructure;
 using CoKernel.Desktop.Models;
 using CoKernel.Desktop.Services;
+using WpfMessageBox = System.Windows.MessageBox;
 
 namespace CoKernel.Desktop.ViewModels;
 
@@ -179,7 +179,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var kernels = await _runtime.GetActiveKernelCountAsync();
         if (kernels > 0)
         {
-            var answer = MessageBox.Show(
+            var answer = WpfMessageBox.Show(
                 $"{kernels} active Jupyter kernel(s) will be interrupted by the update. Update now?",
                 "CoKernel update", MessageBoxButton.YesNo, MessageBoxImage.Warning);
             if (answer != MessageBoxResult.Yes) return;
@@ -207,7 +207,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             var path = await _diagnostics.ExportAsync();
-            MessageBox.Show($"Diagnostics exported to:\n{path}", "CoKernel", MessageBoxButton.OK, MessageBoxImage.Information);
+            WpfMessageBox.Show($"Diagnostics exported to:\n{path}", "CoKernel", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex) { LastError = ex.Message; }
     }
