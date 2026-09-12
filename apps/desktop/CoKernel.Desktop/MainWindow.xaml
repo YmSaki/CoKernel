@@ -1,0 +1,133 @@
+<Window x:Class="CoKernel.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CoKernel" Height="760" Width="1060" MinHeight="620" MinWidth="880"
+        Background="#0D1117" Foreground="#E6EDF3" WindowStartupLocation="CenterScreen">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="0,0,0,16">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Text="CoKernel" FontSize="30" FontWeight="SemiBold"/>
+                <TextBlock Text="Linux GPU compute for Windows" Foreground="#8B949E"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+                <TextBlock Text="Runtime" Foreground="#8B949E" HorizontalAlignment="Right"/>
+                <TextBlock Text="{Binding RuntimeState}" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+            </StackPanel>
+        </DockPanel>
+
+        <TabControl Grid.Row="1" Background="#0D1117" Foreground="#E6EDF3" BorderBrush="#30363D">
+            <TabItem Header="Overview">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12">
+                        <WrapPanel Margin="0,0,0,14">
+                            <Button Content="Start" Command="{Binding StartCommand}"/>
+                            <Button Content="Stop" Command="{Binding StopCommand}"/>
+                            <Button Content="Restart" Command="{Binding RestartCommand}"/>
+                            <Button Content="Open Jupyter" Click="OpenJupyter_Click"/>
+                            <Button Content="Refresh" Command="{Binding RefreshCommand}"/>
+                            <Button Content="Update" Command="{Binding UpdateCommand}"/>
+                            <Button Content="Repair" Command="{Binding RepairCommand}"/>
+                        </WrapPanel>
+
+                        <TextBlock Text="Services" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,8"/>
+                        <UniformGrid Columns="3" Margin="0,0,0,18">
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="5" Padding="14">
+                                <StackPanel><TextBlock Text="WSL" Foreground="#8B949E"/><TextBlock Text="{Binding WslStatus}" FontSize="18"/></StackPanel>
+                            </Border>
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="5" Padding="14">
+                                <StackPanel><TextBlock Text="Docker" Foreground="#8B949E"/><TextBlock Text="{Binding DockerStatus}" FontSize="18"/></StackPanel>
+                            </Border>
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="5" Padding="14">
+                                <StackPanel><TextBlock Text="Jupyter" Foreground="#8B949E"/><TextBlock Text="{Binding JupyterStatus}" FontSize="18"/></StackPanel>
+                            </Border>
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="5" Padding="14">
+                                <StackPanel><TextBlock Text="MCP" Foreground="#8B949E"/><TextBlock Text="{Binding McpStatus}" FontSize="18"/></StackPanel>
+                            </Border>
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="5" Padding="14">
+                                <StackPanel><TextBlock Text="Tunnel" Foreground="#8B949E"/><TextBlock Text="{Binding TunnelStatus}" FontSize="18"/></StackPanel>
+                            </Border>
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="5" Padding="14">
+                                <StackPanel><TextBlock Text="Active kernels" Foreground="#8B949E"/><TextBlock Text="{Binding KernelText}" FontSize="18"/></StackPanel>
+                            </Border>
+                        </UniformGrid>
+
+                        <TextBlock Text="Resources" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,8"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="5" Padding="16">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding GpuName}" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                                    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <StackPanel><TextBlock Text="GPU" Foreground="#8B949E"/><TextBlock Text="{Binding GpuText}" FontSize="18"/></StackPanel>
+                                        <StackPanel Grid.Column="1"><TextBlock Text="VRAM" Foreground="#8B949E"/><TextBlock Text="{Binding VramText}" FontSize="18"/></StackPanel>
+                                    </Grid>
+                                    <Grid Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <StackPanel><TextBlock Text="Temperature" Foreground="#8B949E"/><TextBlock Text="{Binding GpuTempText}" FontSize="18"/></StackPanel>
+                                        <StackPanel Grid.Column="1"><TextBlock Text="Power" Foreground="#8B949E"/><TextBlock Text="{Binding GpuPowerText}" FontSize="18"/></StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Column="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="5" Padding="16">
+                                <StackPanel>
+                                    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <StackPanel><TextBlock Text="CPU" Foreground="#8B949E"/><TextBlock Text="{Binding CpuText}" FontSize="18"/></StackPanel>
+                                        <StackPanel Grid.Column="1"><TextBlock Text="Windows RAM" Foreground="#8B949E"/><TextBlock Text="{Binding MemoryText}" FontSize="18"/></StackPanel>
+                                    </Grid>
+                                    <Grid Margin="0,14,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <StackPanel><TextBlock Text="WSL RAM" Foreground="#8B949E"/><TextBlock Text="{Binding WslMemoryText}" FontSize="18"/></StackPanel>
+                                        <StackPanel Grid.Column="1"><TextBlock Text="System storage" Foreground="#8B949E"/><TextBlock Text="{Binding StorageText}" FontSize="18"/></StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Logs">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Button Content="Refresh logs" Command="{Binding LogsCommand}" HorizontalAlignment="Left"/>
+                    <TextBox Grid.Row="1" Text="{Binding Logs}" Margin="4,10,4,4" Background="#010409" Foreground="#C9D1D9" BorderBrush="#30363D"
+                             FontFamily="Consolas" FontSize="12" IsReadOnly="True" TextWrapping="NoWrap" AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Tunnel">
+                <StackPanel Margin="18" MaxWidth="720" HorizontalAlignment="Left">
+                    <TextBlock Text="Secure MCP Tunnel" FontSize="20" FontWeight="SemiBold"/>
+                    <TextBlock Text="The API key is encrypted with Windows DPAPI for the current user and injected into WSL only when needed." TextWrapping="Wrap" Foreground="#8B949E" Margin="0,4,0,18"/>
+                    <TextBlock Text="Tunnel ID"/>
+                    <TextBox x:Name="TunnelIdBox" Text="{Binding TunnelId, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,12" Padding="8"/>
+                    <TextBlock Text="Runtime API key"/>
+                    <PasswordBox x:Name="TunnelKeyBox" Margin="0,4,0,6" Padding="8"/>
+                    <TextBlock Text="Leave blank to keep the stored key. Clear the Tunnel ID and save to disable the tunnel." Foreground="#8B949E" TextWrapping="Wrap"/>
+                    <Button Content="Save tunnel settings" Click="SaveTunnel_Click" HorizontalAlignment="Left" Margin="0,14,0,0"/>
+                </StackPanel>
+            </TabItem>
+
+            <TabItem Header="Settings">
+                <StackPanel Margin="18" MaxWidth="700" HorizontalAlignment="Left">
+                    <TextBlock Text="Desktop settings" FontSize="20" FontWeight="SemiBold"/>
+                    <CheckBox Content="Start CoKernel Desktop automatically when I sign in" IsChecked="{Binding AutoStart}" Margin="0,18,0,8"/>
+                    <Button Content="Save settings" Command="{Binding SaveSettingsCommand}" HorizontalAlignment="Left"/>
+                    <Separator Margin="0,18"/>
+                    <TextBlock Text="Diagnostics" FontSize="18" FontWeight="SemiBold"/>
+                    <TextBlock Text="Exports a redacted support bundle to your Desktop. Secrets and bearer tokens are removed." Foreground="#8B949E" TextWrapping="Wrap" Margin="0,4,0,8"/>
+                    <Button Content="Export diagnostic bundle" Command="{Binding DiagnosticsCommand}" HorizontalAlignment="Left"/>
+                </StackPanel>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" Background="#161B22" BorderBrush="#30363D" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,12,0,0">
+            <TextBlock Text="{Binding LastError}" Foreground="#FF7B72" TextWrapping="Wrap"/>
+        </Border>
+    </Grid>
+</Window>
