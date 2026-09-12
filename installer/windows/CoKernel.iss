@@ -43,8 +43,8 @@ Name: "{autodesktop}\CoKernel"; Filename: "{app}\{#MyAppExeName}"; Tasks: deskto
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Run]
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\runtime\install-desktop.ps1"""; WorkingDir: "{app}\runtime"; Description: "Provision the CoKernel WSL/Linux GPU runtime"; Flags: postinstall skipifsilent
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch CoKernel Desktop"; Flags: nowait postinstall skipifsilent
-Filename: "{app}\runtime\install.cmd"; Description: "Provision or repair the CoKernel WSL runtime now"; Flags: postinstall shellexec skipifsilent unchecked
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
