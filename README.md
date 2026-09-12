@@ -159,6 +159,10 @@ cd ~/src/CoKernel
 ./up.sh
 ```
 
+A successful tunnel startup reports `Tunnel: enabled (ready)`. The Windows-facing diagnostic endpoint is `http://localhost:8080/readyz`. The tunnel admin UI remains loopback-restricted inside its own container and is intentionally not exposed through CoKernel's WSL proxy.
+
+The tunnel client reaches Jupyter MCP over the private Compose network as `http://mcp:4040/mcp`. CoKernel keeps MCP Python SDK DNS-rebinding protection enabled and explicitly allowlists only the private `mcp` service host in addition to localhost hosts; it does not disable Host validation globally.
+
 ## Daily use
 
 For routine updates from Windows:
@@ -229,7 +233,7 @@ Run these only in a WSL distro dedicated to CoKernel. The hardening step disable
 |---|---:|---:|---|
 | `jupyter` | `127.0.0.1:8888` | `127.0.0.1:18888` | Browser UI, collaborative notebook documents, kernels, GPU execution |
 | `mcp` | `127.0.0.1:4040` | `127.0.0.1:14040` | Pinned Jupyter MCP Server + CoKernel same-kernel extension |
-| `tunnel` | `127.0.0.1:8080` | `127.0.0.1:18080` | Secure MCP Tunnel health/UI; optional profile |
+| `tunnel` | `127.0.0.1:8080` | `127.0.0.1:18080` | Secure MCP Tunnel readiness/diagnostics; optional profile |
 
 Both layers bind to loopback only. The public WSL listeners exist so Windows WSL localhost forwarding sees real sockets; Docker never needs to bind these services to `0.0.0.0`.
 
@@ -254,7 +258,7 @@ Control-path dependencies are intentionally pinned:
 
 - uv: `0.12.12`
 - Datalayer Jupyter MCP Server: `2.1.12`
-- CoKernel MCP extension: `0.1.0`
+- CoKernel MCP extension: `0.1.1`
 - OpenAI tunnel-client: `v0.0.13`
 
 ## Project docs
