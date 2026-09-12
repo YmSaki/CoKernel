@@ -9,6 +9,8 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $KeepaliveLock = "/tmp/cokernel-runtime.keepalive.lock"
+$KeeperScript = Join-Path $PSScriptRoot "runtime-keeper.ps1"
+$KeeperLog = Join-Path $env:LOCALAPPDATA "CoKernel\runtime-keeper.log"
 
 function Get-WslDistros {
     param([switch]$RunningOnly)
@@ -80,6 +82,14 @@ function Test-KeepaliveHeld {
     throw "Could not inspect the CoKernel WSL keepalive lock (exit code $code)."
 }
 
+function Get-KeeperLogTail {
+    if (-not (Test-Path -LiteralPath $KeeperLog)) {
+        return "No runtime keeper log was created."
+    }
+
+    return ((Get-Content -LiteralPath $KeeperLog -Tail 30) -join [Environment]::NewLine)
+}
+
 function Start-Keepalive {
     Assert-ManagedDistro
     $linuxUser = Get-CoKernelLinuxUser
@@ -89,30 +99,56 @@ function Start-Keepalive {
         return
     }
 
-    # systemd services do not keep a WSL instance alive by themselves. Keep one
-    # ordinary WSL client attached for as long as CoKernel should remain online.
-    # flock makes this idempotent: concurrent start attempts leave only one holder.
-    $argumentString = @(
-        '-d', ('"{0}"' -f $DistroName),
-        '-u', ('"{0}"' -f $linuxUser),
-        '--cd', '/',
-        '--',
-        '/usr/bin/flock', '-n', $KeepaliveLock,
-        '/usr/bin/sleep', 'infinity'
+    if (-not (Test-Path -LiteralPath $KeeperScript)) {
+        throw "Missing runtime keeper script: $KeeperScript. Run update.cmd to synchronize the latest CoKernel files."
+    }
+
+    # Validate the Linux commands before detaching anything. This makes a
+    # stripped-down Ubuntu image fail with a useful message rather than a
+    # mysterious Windows child-process exit code.
+    & wsl.exe -d $DistroName -u $linuxUser --cd / -- sh -lc "test -x /usr/bin/flock && test -x /usr/bin/tail"
+    if ($LASTEXITCODE -ne 0) {
+        throw "CoKernel runtime keeper requires /usr/bin/flock and /usr/bin/tail inside the managed WSL distro."
+    }
+
+    $keeperDir = Split-Path -Parent $KeeperLog
+    New-Item -ItemType Directory -Path $keeperDir -Force | Out-Null
+    Remove-Item -LiteralPath $KeeperLog -Force -ErrorAction SilentlyContinue
+
+    # Launch a hidden Windows PowerShell process and let *that* process invoke
+    # wsl.exe synchronously. Directly launching wsl.exe with Start-Process is
+    # unreliable on some WSL builds because the relay process can exit before
+    # the detached Linux command has established a durable Windows client.
+    # Keeping the PowerShell host alive gives WSL an ordinary attached client.
+    $runnerArgs = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", ('"{0}"' -f $KeeperScript),
+        "-DistroName", ('"{0}"' -f $DistroName),
+        "-LinuxUser", ('"{0}"' -f $linuxUser),
+        "-KeepaliveLock", ('"{0}"' -f $KeepaliveLock),
+        "-LogPath", ('"{0}"' -f $KeeperLog)
     ) -join ' '
 
-    $process = Start-Process -FilePath "wsl.exe" -ArgumentList $argumentString -WindowStyle Hidden -PassThru
-    Start-Sleep -Milliseconds 750
+    $runner = Start-Process -FilePath "powershell.exe" -ArgumentList $runnerArgs -WindowStyle Hidden -PassThru
 
-    if ($process.HasExited -and -not (Test-KeepaliveHeld -LinuxUser $linuxUser)) {
-        throw "The CoKernel WSL runtime keeper exited immediately with code $($process.ExitCode)."
-    }
+    $deadline = (Get-Date).AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 250
 
-    if (-not (Test-KeepaliveHeld -LinuxUser $linuxUser)) {
-        throw "The CoKernel WSL runtime keeper did not acquire its lifetime lock."
-    }
+        if (Test-KeepaliveHeld -LinuxUser $linuxUser) {
+            Write-Host "CoKernel WSL runtime keeper started (Windows PID $($runner.Id))."
+            return
+        }
 
-    Write-Host "CoKernel WSL runtime keeper started (Windows PID $($process.Id))."
+        if ($runner.HasExited) {
+            $tail = Get-KeeperLogTail
+            throw "The CoKernel WSL runtime keeper host exited before acquiring the lifetime lock. Runner exit code: $($runner.ExitCode).`nRuntime keeper log:`n$tail"
+        }
+    } while ((Get-Date) -lt $deadline)
+
+    $tail = Get-KeeperLogTail
+    throw "The CoKernel WSL runtime keeper did not acquire its lifetime lock within 8 seconds.`nRuntime keeper log:`n$tail"
 }
 
 function Stop-Runtime {
