@@ -61,7 +61,10 @@ jobs:
           test "$(awk -F= '$1 == "GPU_TEST_IMAGE" {print $2}' .env)" = "nvidia/cuda:12.8.1-base-ubuntu24.04"
 
       - name: Validate Compose model
-        run: docker compose --profile tunnel config >/dev/null
+        run: |
+          docker compose --profile tunnel config >/dev/null
+          docker compose config | grep -q 'published: "18888"'
+          docker compose config | grep -q 'published: "14040"'
 
       - name: Build MCP image
         run: docker compose build mcp
@@ -74,10 +77,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Parse PowerShell installers
+      - name: Parse PowerShell entrypoints
         shell: powershell
         run: |
-          foreach ($file in @('.\install.ps1', '.\install-elevated.ps1', '.\sync-wsl-repo.ps1')) {
+          foreach ($file in @(
+            '.\install.ps1',
+            '.\install-elevated.ps1',
+            '.\sync-wsl-repo.ps1',
+            '.\update.ps1',
+            '.\verify-windows-loopback.ps1'
+          )) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
@@ -91,12 +100,21 @@ jobs:
             }
           }
 
-      - name: Check bootstrap entrypoints
+      - name: Check bootstrap and update entrypoints
         shell: powershell
         run: |
-          if (-not (Test-Path .\install.cmd)) { throw 'install.cmd missing' }
-          if (-not (Test-Path .\install.ps1)) { throw 'install.ps1 missing' }
-          if (-not (Test-Path .\install-elevated.ps1)) { throw 'install-elevated.ps1 missing' }
-          if (-not (Test-Path .\sync-wsl-repo.ps1)) { throw 'sync-wsl-repo.ps1 missing' }
-          if (-not (Test-Path .\scripts\harden-wsl.sh)) { throw 'harden-wsl.sh missing' }
-          if (-not (Test-Path .\scripts\bootstrap-ubuntu.sh)) { throw 'bootstrap-ubuntu.sh missing' }
+          foreach ($file in @(
+            '.\install.cmd',
+            '.\install.ps1',
+            '.\install-elevated.ps1',
+            '.\update.cmd',
+            '.\update.ps1',
+            '.\sync-wsl-repo.ps1',
+            '.\verify-windows-loopback.ps1',
+            '.\scripts\harden-wsl.sh',
+            '.\scripts\bootstrap-ubuntu.sh',
+            '.\scripts\configure-wsl-loopback-proxy.sh',
+            '.\scripts\update.sh'
+          )) {
+            if (-not (Test-Path $file)) { throw "$file missing" }
+          }

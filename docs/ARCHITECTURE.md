@@ -15,11 +15,11 @@ Windows 11                tunnel-client
 Browser                       |
   | localhost                 | private Compose network
   v                           v
-WSL2 -------------------- Jupyter MCP :4040
+WSL localhost proxy ------ Jupyter MCP :4040
   |                            |
   |                            | Jupyter REST/WebSocket/Yjs
   v                            v
-JupyterLab :8888 ---------- Jupyter Server
+Docker backend ---------- Jupyter Server :8888
                                |
                          /api/sessions
                                |
@@ -38,17 +38,47 @@ JupyterLab :8888 ---------- Jupyter Server
 
 WSL2 is the first isolation boundary. The recommended dedicated distro disables DrvFs automount and Windows executable interop. GPU paravirtualization remains enabled.
 
+Windows and WSL have distinct loopback interfaces. WSL `localhostForwarding` can mirror real TCP listeners created inside WSL to Windows `localhost`, but Docker may implement a published loopback port through Linux NAT rules without creating such a listener. CoKernel therefore does not depend on Docker's loopback publish being discovered directly by WSL.
+
 ### WSL2 -> Docker
 
 Docker is the second isolation boundary. The Jupyter container receives only a workspace bind mount and GPU access. It does not receive the Docker socket or host credentials.
 
+Docker publishes only private WSL-loopback backend ports:
+
+```text
+Jupyter: 127.0.0.1:18888 -> container :8888
+MCP:     127.0.0.1:14040 -> container :4040
+Tunnel:  127.0.0.1:18080 -> container :8080
+```
+
+### WSL loopback bridge
+
+CoKernel installs systemd socket units backed by `systemd-socket-proxyd`. These units own real userspace-visible WSL loopback sockets:
+
+```text
+127.0.0.1:8888 -> 127.0.0.1:18888
+127.0.0.1:4040 -> 127.0.0.1:14040
+127.0.0.1:8080 -> 127.0.0.1:18080
+```
+
+WSL `localhostForwarding` then mirrors the public sockets to Windows. This preserves the intended `http://localhost:8888` UX without binding Docker services to `0.0.0.0` or requiring a stable WSL VM IP.
+
 ### Human path
 
-`jupyter` publishes container port 8888 to `127.0.0.1` in WSL. WSL localhost forwarding makes that available to the Windows browser as `http://localhost:8888`.
+The browser path is:
+
+```text
+Windows localhost:8888
+  -> WSL localhostForwarding
+  -> systemd socket proxy :8888
+  -> Docker backend 127.0.0.1:18888
+  -> Jupyter container :8888
+```
 
 ### AI path
 
-`mcp` is reachable on the private Compose network and additionally binds to WSL loopback for local diagnostics. `tunnel-client` addresses `http://mcp:4040/mcp` directly. No inbound Internet listener is required.
+`mcp` is reachable on the private Compose network and additionally through the WSL loopback bridge for local diagnostics. `tunnel-client` addresses `http://mcp:4040/mcp` directly on the Compose network. No inbound Internet listener is required.
 
 The tunnel runtime injects a static MCP `Authorization` header from an environment-backed secret reference. The MCP bearer token is not stored in checked-in configuration.
 
@@ -90,19 +120,22 @@ At startup, CoKernel runs `uv sync` when enabled and registers `/workspace/.venv
 
 ## GPU path
 
-The Windows NVIDIA driver exposes the GPU to WSL through GPU paravirtualization. Docker Engine inside WSL uses NVIDIA Container Toolkit. Compose grants the Jupyter service GPU access with `gpus: all`.
+The Windows NVIDIA driver exposes the GPU to WSL through GPU paravirtualization. Docker Engine inside WSL uses NVIDIA Container Toolkit. Compose explicitly selects the `nvidia` runtime and grants the Jupyter service GPU access with `gpus: all`.
 
 No Linux NVIDIA kernel/display driver is installed in WSL.
 
 ## Startup model
 
-`./up.sh` is the stable operator interface.
+`./up.sh` is the stable operator interface for the already-installed current version.
 
 1. Ensure `.env` exists and local tokens have been generated.
 2. Confirm Docker is reachable.
-3. Build/start Jupyter and the CoKernel-patched Jupyter MCP service.
-4. If both OpenAI tunnel credentials are configured, activate the Compose `tunnel` profile.
-5. Jupyter becomes healthy before MCP starts; MCP becomes healthy before the tunnel starts.
+3. Reconcile the WSL systemd loopback proxy sockets.
+4. Build/start Jupyter and the CoKernel-patched Jupyter MCP service.
+5. If both OpenAI tunnel credentials are configured, activate the Compose `tunnel` profile.
+6. Wait until the Compose services reach healthy/running state before returning success.
+
+For software upgrades, `update.cmd` is the preferred Windows entrypoint. It pulls, synchronizes, applies migrations, starts services, runs smoke tests, and verifies Windows localhost connectivity. `install.cmd` remains the first-install and repair/convergence entrypoint.
 
 ## Future extensions
 

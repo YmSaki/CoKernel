@@ -16,15 +16,16 @@ Clone or check out this repository on Windows, then run:
 install.cmd
 ```
 
-That is the preferred first-time installation path. The installer requests Administrator privileges and then:
+`install.cmd` is the **first-install and repair/convergence** entrypoint. It requests Administrator privileges and then:
 
 1. enables/updates WSL when needed;
 2. creates a dedicated `CoKernel` Ubuntu 24.04 WSL2 distro;
 3. creates the Linux user and copies this checkout onto the WSL ext4 filesystem;
 4. disables Windows-drive automount and Windows executable interop inside that distro;
 5. installs Docker Engine, Git, and NVIDIA Container Toolkit;
-6. validates GPU/container access;
-7. starts Jupyter + MCP.
+6. configures a real WSL loopback socket bridge in front of Docker-published ports;
+7. validates GPU/container access;
+8. starts Jupyter + MCP, waits for health, and verifies Windows localhost reachability.
 
 If enabling WSL requires a Windows reboot, setup registers itself to resume after the next sign-in. The installer never calls `wsl --unregister` and refuses to overwrite an unrelated WSL distro or unexpected repository path.
 
@@ -38,32 +39,64 @@ Repo:       ~/src/CoKernel
 
 See [`docs/WINDOWS_INSTALL.md`](docs/WINDOWS_INSTALL.md) for the complete flow, restart behavior, safety rules, and advanced parameters.
 
-Because this repository is private, configure GitHub authentication once inside the dedicated WSL distro before relying on `git pull`. The Git/SSH credential stays at the WSL host layer and is never mounted into the Jupyter/MCP containers.
+## Updating an existing installation
+
+For normal upgrades, run from the Windows checkout:
+
+```text
+update.cmd
+```
+
+`update.cmd` is the **steady-state updater**. It does not create or replace WSL. It:
+
+1. refuses to overwrite tracked local Git changes;
+2. runs `git pull --ff-only` on the Windows checkout;
+3. re-executes the freshly pulled updater so new migrations apply immediately;
+4. synchronizes the checkout into WSL ext4 while preserving `.env`, `.env.local`, and `workspace/`;
+5. applies idempotent WSL/runtime/network migrations;
+6. rebuilds and starts CoKernel;
+7. runs smoke tests inside WSL;
+8. verifies that Windows can actually connect to the public localhost ports.
+
+Use `install.cmd` again when you want a repair/convergence pass over the WSL/Docker/NVIDIA prerequisites. Use `update.cmd` for routine software updates.
 
 ## Architecture
 
 ```text
 Windows 11
-└─ WSL2: dedicated CoKernel Ubuntu
-   ├─ Windows drives: not auto-mounted
-   ├─ Windows interop: disabled
-   └─ Docker Engine + NVIDIA Container Toolkit
-      └─ Compose project: cokernel
-         ├─ jupyter
-         │  ├─ JupyterLab :8888
-         │  ├─ jupyter-collaboration
-         │  ├─ uv workspace
-         │  └─ live notebook kernel -> NVIDIA GPU
-         ├─ mcp
-         │  ├─ Jupyter MCP Server :4040
-         │  └─ CoKernel same-kernel extension
-         └─ tunnel
-            └─ OpenAI Secure MCP Tunnel -> mcp:4040/mcp
+│
+│  http://localhost:8888
+│  localhostForwarding
+▼
+WSL2: dedicated CoKernel Ubuntu
+├─ Windows drives: not auto-mounted
+├─ Windows interop: disabled
+├─ systemd socket proxy (real loopback listener)
+│  ├─ 127.0.0.1:8888  -> 127.0.0.1:18888
+│  ├─ 127.0.0.1:4040  -> 127.0.0.1:14040
+│  └─ 127.0.0.1:8080  -> 127.0.0.1:18080
+└─ Docker Engine + NVIDIA Container Toolkit
+   └─ Compose project: cokernel
+      ├─ jupyter
+      │  ├─ Docker backend 127.0.0.1:18888 -> container :8888
+      │  ├─ JupyterLab
+      │  ├─ jupyter-collaboration
+      │  ├─ uv workspace
+      │  └─ live notebook kernel -> NVIDIA GPU
+      ├─ mcp
+      │  ├─ Docker backend 127.0.0.1:14040 -> container :4040
+      │  ├─ Jupyter MCP Server
+      │  └─ CoKernel same-kernel extension
+      └─ tunnel
+         ├─ Docker backend 127.0.0.1:18080 -> container :8080
+         └─ OpenAI Secure MCP Tunnel -> mcp:4040/mcp
 
-Human:   Windows browser -> http://localhost:8888
+Human:   Windows browser -> Windows localhost -> WSL socket proxy -> Docker -> Jupyter
 AI:      ChatGPT -> Secure MCP Tunnel -> Jupyter MCP -> same Jupyter session/kernel
 Storage: WORKSPACE_DIR -> /workspace
 ```
+
+The explicit WSL socket-proxy layer is intentional. Docker can implement a loopback published port through Linux NAT rules without creating the userspace listening socket that WSL `localhostForwarding` expects. CoKernel therefore keeps Docker on private WSL-loopback backend ports and gives Windows a real WSL listener on the public ports.
 
 ## Design invariants
 
@@ -74,6 +107,7 @@ Storage: WORKSPACE_DIR -> /workspace
 5. The MCP port is never exposed beyond localhost; ChatGPT reaches it through Secure MCP Tunnel.
 6. Windows files, Docker socket, SSH keys, and cluster credentials are not mounted into the workbench.
 7. GPU access is explicitly granted only to the Jupyter compute container.
+8. Docker backend ports stay on WSL loopback; Windows reaches CoKernel only through explicit WSL loopback proxy sockets.
 
 ### Why CoKernel wraps `use_notebook`
 
@@ -127,23 +161,28 @@ cd ~/src/CoKernel
 
 ## Daily use
 
-Inside the dedicated WSL distro:
+For routine updates from Windows:
+
+```text
+update.cmd
+```
+
+To start the already-installed current version without pulling an update:
 
 ```bash
+wsl -d CoKernel
 cd ~/src/CoKernel
-git pull
 ./up.sh
 ```
 
-That is the intended steady-state workflow.
-
-Useful commands:
+Useful commands inside the dedicated WSL distro:
 
 ```bash
-./down.sh             # stop services
-./logs.sh             # follow all logs
-./scripts/doctor.sh   # host/GPU/runtime checks
-./scripts/smoke-test.sh
+./down.sh                                  # stop services
+./logs.sh                                  # follow all logs
+./scripts/doctor.sh                        # host/GPU/runtime checks
+./scripts/smoke-test.sh                    # service + proxy checks
+./scripts/configure-wsl-loopback-proxy.sh  # reconcile Windows/WSL bridge
 ```
 
 ## Workspace
@@ -176,21 +215,23 @@ The automated `install.cmd` path is preferred. For debugging or custom installat
 ./scripts/bootstrap-ubuntu.sh
 # terminate/reopen again for docker-group membership
 ./scripts/init-env.sh
+./scripts/configure-wsl-loopback-proxy.sh
 ./scripts/doctor.sh
 ./up.sh
+./scripts/smoke-test.sh
 ```
 
 Run these only in a WSL distro dedicated to CoKernel. The hardening step disables Windows-drive automount and Windows executable interop.
 
 ## Services
 
-| Service | Host exposure | Purpose |
-|---|---:|---|
-| `jupyter` | `127.0.0.1:8888` | Browser UI, collaborative notebook documents, kernels, GPU execution |
-| `mcp` | `127.0.0.1:4040` | Pinned Jupyter MCP Server + CoKernel same-kernel extension |
-| `tunnel` | `127.0.0.1:8080` | Secure MCP Tunnel health/UI; optional profile |
+| Service | Windows public localhost | Private WSL Docker backend | Purpose |
+|---|---:|---:|---|
+| `jupyter` | `127.0.0.1:8888` | `127.0.0.1:18888` | Browser UI, collaborative notebook documents, kernels, GPU execution |
+| `mcp` | `127.0.0.1:4040` | `127.0.0.1:14040` | Pinned Jupyter MCP Server + CoKernel same-kernel extension |
+| `tunnel` | `127.0.0.1:8080` | `127.0.0.1:18080` | Secure MCP Tunnel health/UI; optional profile |
 
-All published ports bind to loopback only.
+Both layers bind to loopback only. The public WSL listeners exist so Windows WSL localhost forwarding sees real sockets; Docker never needs to bind these services to `0.0.0.0`.
 
 ## Security model
 

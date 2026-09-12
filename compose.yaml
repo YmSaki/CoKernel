@@ -15,8 +15,12 @@ services:
       - type: bind
         source: ${WORKSPACE_DIR:-./workspace}
         target: /workspace
+    # Docker's loopback publish inside WSL is not itself a real userspace
+    # listening socket that WSL localhostForwarding can reliably mirror to
+    # Windows. Publish to a private WSL-loopback backend port; systemd's
+    # socket proxy owns the public JUPYTER_PORT and makes it visible to Windows.
     ports:
-      - "127.0.0.1:${JUPYTER_PORT:-8888}:8888"
+      - "127.0.0.1:${JUPYTER_BACKEND_PORT:-18888}:8888"
     runtime: nvidia
     gpus: all
     healthcheck:
@@ -52,7 +56,7 @@ services:
       ALLOW_IMG_OUTPUT: "true"
       START_NEW_CODE_SANDBOX: "false"
     ports:
-      - "127.0.0.1:${MCP_PORT:-4040}:4040"
+      - "127.0.0.1:${MCP_BACKEND_PORT:-14040}:4040"
     depends_on:
       jupyter:
         condition: service_healthy
@@ -83,7 +87,7 @@ services:
       COKERNEL_MCP_AUTHORIZATION: "Bearer ${MCP_TOKEN:?Run ./scripts/init-env.sh first}"
       HEALTH_LISTEN_ADDR: 0.0.0.0:8080
     ports:
-      - "127.0.0.1:${TUNNEL_HEALTH_PORT:-8080}:8080"
+      - "127.0.0.1:${TUNNEL_HEALTH_BACKEND_PORT:-18080}:8080"
     depends_on:
       mcp:
         condition: service_healthy
