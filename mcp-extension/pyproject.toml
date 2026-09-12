@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cokernel-mcp-extension"
-version = "0.1.0"
-description = "CoKernel same-kernel invariants for Jupyter MCP Server"
+version = "0.1.1"
+description = "CoKernel same-kernel and transport invariants for Jupyter MCP Server"
 requires-python = ">=3.12"
 dependencies = [
   "jupyter-mcp-server==2.1.12",
