@@ -110,6 +110,7 @@ jobs:
             '.\install-elevated.ps1',
             '.\sync-wsl-repo.ps1',
             '.\update.ps1',
+            '.\runtime.ps1',
             '.\verify-windows-loopback.ps1'
           )) {
             $tokens = $null
@@ -125,7 +126,7 @@ jobs:
             }
           }
 
-      - name: Check bootstrap and update entrypoints
+      - name: Check bootstrap, update, and runtime entrypoints
         shell: powershell
         run: |
           foreach ($file in @(
@@ -134,6 +135,10 @@ jobs:
             '.\install-elevated.ps1',
             '.\update.cmd',
             '.\update.ps1',
+            '.\start.cmd',
+            '.\stop.cmd',
+            '.\status.cmd',
+            '.\runtime.ps1',
             '.\sync-wsl-repo.ps1',
             '.\verify-windows-loopback.ps1',
             '.\scripts\harden-wsl.sh',

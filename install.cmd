@@ -18,6 +18,12 @@ set "exit_code=%ERRORLEVEL%"
 if not "%exit_code%"=="0" goto installer_failed
 
 echo.
+echo Keeping the dedicated CoKernel WSL runtime online...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0runtime.ps1" -Action Start
+set "exit_code=%ERRORLEVEL%"
+if not "%exit_code%"=="0" goto runtime_failed
+
+echo.
 echo Verifying Windows localhost access to CoKernel...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0verify-windows-loopback.ps1"
 set "exit_code=%ERRORLEVEL%"
@@ -25,6 +31,7 @@ if not "%exit_code%"=="0" goto acceptance_failed
 
 echo.
 echo CoKernel installer finished successfully.
+echo Runtime:    persistent until stop.cmd, Windows sign-out, or shutdown
 echo JupyterLab: http://localhost:8888
 goto done
 
@@ -36,6 +43,12 @@ echo Diagnostic log: %LOCALAPPDATA%\CoKernel\install.log
 echo ---------------- CoKernel diagnostic tail ----------------
 powershell.exe -NoProfile -Command "$p = Join-Path $env:LOCALAPPDATA 'CoKernel\install.log'; if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Tail 100 } else { Write-Host 'No diagnostic log was created. The failure happened before the elevated installer wrapper started.' }"
 echo ----------------------------------------------------------
+goto done
+
+:runtime_failed
+echo.
+echo CoKernel services were installed, but the persistent WSL runtime keeper could not start.
+echo Run start.cmd after fixing the reported lifetime error.
 goto done
 
 :acceptance_failed

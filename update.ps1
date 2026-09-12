@@ -7,18 +7,6 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-function Invoke-Checked {
-    param(
-        [Parameter(Mandatory = $true)][scriptblock]$Command,
-        [Parameter(Mandatory = $true)][string]$FailureMessage
-    )
-
-    & $Command
-    if ($LASTEXITCODE -ne 0) {
-        throw "$FailureMessage (exit code $LASTEXITCODE)."
-    }
-}
-
 if (-not $AfterPull) {
     Write-Host "CoKernel update" -ForegroundColor Green
     Write-Host "  Windows checkout: $PSScriptRoot"
@@ -64,6 +52,12 @@ if ($LASTEXITCODE -ne 0 -or -not $passwd) {
 }
 $linuxUser = (($passwd | Select-Object -First 1) -split ':')[0]
 
+Write-Host "==> Keeping the dedicated WSL runtime online after this updater exits"
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "runtime.ps1") -Action Start -DistroName $DistroName
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not start the persistent CoKernel WSL runtime keeper."
+}
+
 Write-Host "==> Applying CoKernel migrations, rebuilding services, and running smoke tests"
 & wsl.exe -d $DistroName -u $linuxUser --cd / -- bash -lc "cd ~/src/CoKernel && ./scripts/update.sh"
 if ($LASTEXITCODE -ne 0) {
@@ -78,4 +72,5 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "CoKernel update completed successfully." -ForegroundColor Green
+Write-Host "Runtime:    persistent until stop.cmd, Windows sign-out, or shutdown"
 Write-Host "JupyterLab: http://localhost:8888"
