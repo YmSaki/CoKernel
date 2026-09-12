@@ -15,6 +15,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly StartupService _startup;
     private DesktopSettings _settings;
     private bool _refreshing;
+    private bool _recovering;
+    private int _unhealthySamples;
+    private int _recoveryAttempt;
+    private DateTimeOffset _nextRecoveryAt = DateTimeOffset.MinValue;
     private RuntimeHealth _lastHealth = RuntimeHealth.Stopped;
 
     private string _runtimeState = "Stopped";
@@ -112,14 +116,64 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var statusTask = _runtime.GetStatusAsync();
             var metricsTask = _metrics.GetAsync();
             await Task.WhenAll(statusTask, metricsTask);
-            Apply(statusTask.Result, metricsTask.Result);
-            LastError = "";
+            var status = statusTask.Result;
+            Apply(status, metricsTask.Result);
+
+            if (status.Overall == RuntimeHealth.Healthy ||
+                string.Equals(_settings.DesiredRuntimeState, "STOPPED", StringComparison.OrdinalIgnoreCase))
+            {
+                _unhealthySamples = 0;
+                _recoveryAttempt = 0;
+                _nextRecoveryAt = DateTimeOffset.MinValue;
+                if (!_recovering) LastError = "";
+            }
+            else
+            {
+                _unhealthySamples++;
+                if (_unhealthySamples >= 3 && !_recovering && DateTimeOffset.Now >= _nextRecoveryAt &&
+                    string.Equals(_settings.DesiredRuntimeState, "RUNNING", StringComparison.OrdinalIgnoreCase))
+                {
+                    _ = RecoverAsync(status);
+                }
+            }
         }
         catch (Exception ex)
         {
             LastError = ex.Message;
         }
         finally { _refreshing = false; }
+    }
+
+    private async Task RecoverAsync(ComponentSnapshot observed)
+    {
+        if (_recovering) return;
+        _recovering = true;
+        RuntimeState = "Recovering";
+        try
+        {
+            CommandResult result;
+            if (!observed.WslRunning || !observed.DockerReady)
+                result = await _runtime.StartAsync();
+            else
+                result = await _runtime.ReconcileAsync();
+
+            if (!result.Success)
+                throw new InvalidOperationException(result.Combined.Trim());
+
+            _unhealthySamples = 0;
+            _recoveryAttempt = 0;
+            _nextRecoveryAt = DateTimeOffset.MinValue;
+            LastError = "";
+        }
+        catch (Exception ex)
+        {
+            _recoveryAttempt++;
+            var delays = new[] { 5, 15, 30, 60, 120 };
+            var delay = delays[Math.Min(_recoveryAttempt - 1, delays.Length - 1)];
+            _nextRecoveryAt = DateTimeOffset.Now.AddSeconds(delay);
+            LastError = $"Automatic recovery attempt {_recoveryAttempt} failed; retrying in {delay}s. {ex.Message}";
+        }
+        finally { _recovering = false; }
     }
 
     public async Task StartAsync()
@@ -139,6 +193,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (!result.Success) throw new InvalidOperationException(result.Combined.Trim());
             _settings.DesiredRuntimeState = "RUNNING";
             _settingsStore.Save(_settings);
+            _unhealthySamples = 0;
+            _recoveryAttempt = 0;
         }
         catch (Exception ex) { LastError = ex.Message; }
         await RefreshAsync();
@@ -150,10 +206,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         LastError = "";
         try
         {
-            var result = await _runtime.StopAsync();
-            if (!result.Success) throw new InvalidOperationException(result.Combined.Trim());
             _settings.DesiredRuntimeState = "STOPPED";
             _settingsStore.Save(_settings);
+            var result = await _runtime.StopAsync();
+            if (!result.Success) throw new InvalidOperationException(result.Combined.Trim());
+            _unhealthySamples = 0;
+            _recoveryAttempt = 0;
         }
         catch (Exception ex) { LastError = ex.Message; }
         await RefreshAsync();
@@ -168,6 +226,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (!result.Success) throw new InvalidOperationException(result.Combined.Trim());
             _settings.DesiredRuntimeState = "RUNNING";
             _settingsStore.Save(_settings);
+            _unhealthySamples = 0;
+            _recoveryAttempt = 0;
             LastError = "";
         }
         catch (Exception ex) { LastError = ex.Message; }
