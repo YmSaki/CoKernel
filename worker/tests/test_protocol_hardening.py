@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import struct
 import threading
 
 import pytest
@@ -12,6 +13,7 @@ from cokernel_worker.protocol import (
     MAX_REQUEST_ID_CHARS,
     PROTOCOL_V1,
     WorkerLoop,
+    WorkerProtocolError,
     _bounded_text,
     receive_frame,
     send_frame,
@@ -60,6 +62,29 @@ def stop_loop(server, client, thread):
     client.close()
     server.close()
     assert not thread.is_alive()
+
+
+def test_worker_send_rejects_non_finite_json_numbers() -> None:
+    server, client = socket.socketpair()
+    try:
+        with pytest.raises(WorkerProtocolError, match="worker payload is not valid JSON"):
+            send_frame(client, {"value": float("nan")})
+    finally:
+        client.close()
+        server.close()
+
+
+@pytest.mark.parametrize("constant", [b"NaN", b"Infinity", b"-Infinity"])
+def test_worker_receive_rejects_non_standard_json_constants(constant: bytes) -> None:
+    server, client = socket.socketpair()
+    try:
+        payload = b'{"value":' + constant + b"}"
+        client.sendall(struct.pack(">I", len(payload)) + payload)
+        with pytest.raises(WorkerProtocolError, match="frame is not valid UTF-8 JSON"):
+            receive_frame(server)
+    finally:
+        client.close()
+        server.close()
 
 
 @pytest.mark.parametrize("payload", [None, [], "", 0, False])
