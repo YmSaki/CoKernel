@@ -149,6 +149,7 @@ def encode_json(value: Any) -> bytes:
     return json.dumps(
         value,
         ensure_ascii=False,
+        allow_nan=False,
         separators=(",", ":"),
     ).encode("utf-8")
 
