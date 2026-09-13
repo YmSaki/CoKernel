@@ -12,6 +12,7 @@ import IPython
 
 from .execution import ExecutionEngine
 from .inspection import InspectionError, get_variable, list_variables
+from .output_limits import OperationOutputBudget, OutputLimits, encode_json
 
 PROTOCOL_V1 = 1
 DEFAULT_MAX_FRAME_BYTES = 8 * 1024 * 1024
@@ -27,9 +28,10 @@ def send_frame(
     *,
     max_bytes: int = DEFAULT_MAX_FRAME_BYTES,
 ) -> None:
-    payload = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    try:
+        payload = encode_json(message)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise WorkerProtocolError("worker payload is not valid JSON") from error
     if len(payload) > max_bytes:
         raise WorkerProtocolError(f"frame exceeds maximum size: {len(payload)} bytes")
     sock.sendall(struct.pack(">I", len(payload)) + payload)
@@ -69,9 +71,17 @@ def _receive_exact(sock: socket.socket, size: int) -> bytes | None:
 
 
 class WorkerLoop:
-    def __init__(self, session_id: str, engine: ExecutionEngine | None = None) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        engine: ExecutionEngine | None = None,
+        *,
+        output_limits: OutputLimits | None = None,
+    ) -> None:
         self.session_id = session_id
         self.engine = engine or ExecutionEngine()
+        self.output_limits = output_limits or OutputLimits()
+        self.output_limits.validate(max_frame_bytes=DEFAULT_MAX_FRAME_BYTES)
 
     def run(self, sock: socket.socket) -> None:
         self._send_event(
@@ -117,6 +127,11 @@ class WorkerLoop:
                             "reset",
                             "shutdown",
                         ],
+                        "output_limits": {
+                            "max_event_bytes": self.output_limits.max_event_bytes,
+                            "max_operation_bytes": self.output_limits.max_operation_bytes,
+                            "max_blob_bytes": self.output_limits.max_blob_bytes,
+                        },
                     },
                 )
                 return False
@@ -162,20 +177,46 @@ class WorkerLoop:
         self._send_event(sock, "execution_started", {"operation_id": operation_id})
         outcome = self.engine.execute(source, cell_id=cell_id)
         sequence = 0
+        budget = OperationOutputBudget(self.output_limits)
 
-        def output(event: str, data: dict[str, Any]) -> None:
+        def output(
+            event: str,
+            data: dict[str, Any],
+            *,
+            source_omitted_bytes: int = 0,
+            source_reason: str | None = None,
+        ) -> None:
             nonlocal sequence
-            sequence += 1
-            self._send_event(
-                sock,
+            next_sequence = sequence + 1
+            message = budget.prepare_event(
                 event,
-                {"operation_id": operation_id, "sequence": sequence, **data},
+                {
+                    "operation_id": operation_id,
+                    "sequence": next_sequence,
+                    **data,
+                },
+                build_message=self._event_message,
+                source_omitted_bytes=source_omitted_bytes,
+                source_reason=source_reason,
             )
+            if message is not None:
+                send_frame(sock, message)
+                sequence = next_sequence
 
-        if outcome.stdout:
-            output("stdout", {"text": outcome.stdout})
-        if outcome.stderr:
-            output("stderr", {"text": outcome.stderr})
+        if outcome.stdout or outcome.stdout_truncated_bytes:
+            output(
+                "stdout",
+                {"text": outcome.stdout},
+                source_omitted_bytes=outcome.stdout_truncated_bytes,
+                source_reason="stream_capture_limit",
+            )
+        if outcome.stderr or outcome.stderr_truncated_bytes:
+            output(
+                "stderr",
+                {"text": outcome.stderr},
+                source_omitted_bytes=outcome.stderr_truncated_bytes,
+                source_reason="stream_capture_limit",
+            )
         for display in outcome.displays:
             output("display_data", asdict(display))
         if outcome.final_result is not None:
@@ -205,6 +246,9 @@ class WorkerLoop:
                 "status": status,
                 "execution_count": outcome.execution_count,
                 "output_count": sequence,
+                "output_truncated": budget.truncated,
+                "output_omitted_bytes": budget.omitted_bytes,
+                "output_truncation_reasons": sorted(budget.reasons),
             },
         )
         self._send_response(
@@ -214,6 +258,8 @@ class WorkerLoop:
                 "operation_id": operation_id,
                 "status": status,
                 "execution_count": outcome.execution_count,
+                "output_truncated": budget.truncated,
+                "output_omitted_bytes": budget.omitted_bytes,
             },
         )
 
@@ -263,19 +309,19 @@ class WorkerLoop:
             },
         )
 
+    def _event_message(self, event: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "protocol": PROTOCOL_V1,
+            "type": "event",
+            "session_id": self.session_id,
+            "event": event,
+            "payload": payload,
+        }
+
     def _send_event(
         self, sock: socket.socket, event: str, payload: dict[str, Any]
     ) -> None:
-        send_frame(
-            sock,
-            {
-                "protocol": PROTOCOL_V1,
-                "type": "event",
-                "session_id": self.session_id,
-                "event": event,
-                "payload": payload,
-            },
-        )
+        send_frame(sock, self._event_message(event, payload))
 
 
 def connect_and_run(socket_path: str, session_id: str) -> None:
