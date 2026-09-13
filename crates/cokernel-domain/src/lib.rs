@@ -100,6 +100,34 @@ pub enum OperationStatus {
     Cancelled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ExecutionOrigin {
+    Human,
+    Mcp,
+    Internal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ExecutionKind {
+    ExecuteCell,
+    ExecuteCodeInternal,
+    Interrupt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FailureClassification {
+    OomSuspected,
+    ProcessSignal,
+    PythonException,
+    CudaOrNativeFailureSuspected,
+    RuntimeRestart,
+    ManualTermination,
+    Unknown,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub project_id: ProjectId,
@@ -126,6 +154,33 @@ pub struct ExecutionSession {
     pub started_at: DateTime<Utc>,
     pub current_operation_id: Option<OperationId>,
     pub queue_depth: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionOperation {
+    pub operation_id: OperationId,
+    pub session_id: SessionId,
+    pub origin: ExecutionOrigin,
+    pub kind: ExecutionKind,
+    pub cell_id: Option<String>,
+    pub requested_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub status: OperationStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailureRecord {
+    pub failure_id: FailureId,
+    pub component: String,
+    pub session_id: Option<SessionId>,
+    pub operation_id: Option<OperationId>,
+    pub timestamp: DateTime<Utc>,
+    pub exit_code: Option<i32>,
+    pub signal: Option<i32>,
+    pub last_stderr: String,
+    pub classification: FailureClassification,
+    pub confidence: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
