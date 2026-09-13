@@ -1,513 +1,251 @@
 # CoKernel v1 Conceptual Design
 
-Status: **design baseline**  
-Scope: **CoKernel Desktop v1.0**  
-Out of scope: multi-node Fabric scheduling, headless remote Node mode, kernel live migration
+Status: **implementation baseline**
 
-## 1. Purpose
+## 1. Core concept
 
-CoKernel v1 turns a Windows PC with an NVIDIA GPU into a managed Linux GPU workstation by installing one Windows application.
-
-The user should experience CoKernel as a Windows product. WSL2, Ubuntu, Docker, systemd, Jupyter, MCP, and Secure MCP Tunnel are implementation details hidden behind the application except in diagnostics/developer mode.
-
-Core promise:
-
-> Install CoKernel on Windows, get a self-managed Linux GPU notebook environment that both a human and an AI can use through the same live Jupyter kernel.
-
-v1 is a **fresh product install**, not an in-place upgrade of the experimental v0.1 runtime. v0.1 runtime state is not a compatibility boundary.
-
-## 2. Product boundary
+CoKernel v1 turns a Windows NVIDIA GPU PC into a managed Linux compute environment whose primary user model is:
 
 ```text
-Windows 11
-│
-├─ CoKernel Desktop UI
-│    ├─ dashboard
-│    ├─ workspace/runtime controls
-│    ├─ tunnel settings
-│    ├─ logs/diagnostics
-│    └─ update/repair UX
-│
-├─ CoKernel Host
-│    ├─ desired-state controller
-│    ├─ WSL lifetime owner
-│    ├─ health supervisor
-│    ├─ metrics aggregator
-│    ├─ secret broker
-│    └─ update/repair coordinator
-│
-└─ WSL2 distro: CoKernel
-     ├─ Linux runtime management surface
-     ├─ Docker Engine + NVIDIA Container Toolkit
-     ├─ WSL loopback bridge
-     └─ Compose application stack
-          ├─ jupyter
-          ├─ mcp
-          └─ tunnel
+Machine Runtime
+  -> Project
+     -> Project Environment (uv)
+     -> NotebookDocument (.ipynb)
+        -> ExecutionSession
 ```
 
-### 2.1 Windows is the control plane
+Human UI and AI/MCP operate on these same domain objects.
 
-Windows owns:
+The user should be able to think:
 
-- installation and removal;
-- WSL creation/destruction and lifetime;
+```text
+Create Project
+ -> Add packages
+ -> Create/Import notebook
+ -> Run cells
+```
+
+without having to choose internal Python process identifiers or manually administer the Linux runtime.
+
+## 2. Windows and Linux responsibilities
+
+### Windows
+
+Windows is the product/control-plane surface.
+
+It owns:
+
+- Desktop/tray UI;
+- installation and update;
 - desired runtime state;
-- automatic start after Windows sign-in;
-- health supervision and bounded recovery;
-- dashboard data aggregation;
-- secret storage;
-- update orchestration;
-- diagnostics and user notifications.
+- WSL lifetime ownership;
+- Windows-side metrics;
+- external credential protection;
+- notifications;
+- Windows file import initiation.
 
-The Windows UI must not contain the runtime orchestration logic itself. UI and Host are separate conceptual components so the tray/window may exit or restart without destroying the compute runtime.
+### Managed WSL
 
-### 2.2 WSL is the compute plane
+WSL is the Linux compute plane.
 
-WSL owns:
+It owns:
 
-- Linux Python ecosystem;
-- CUDA-visible compute execution;
-- Docker Engine;
-- Jupyter Server/Lab;
-- notebook workspace environments;
-- Jupyter MCP Server and CoKernel MCP policy extension;
-- Secure MCP Tunnel client;
-- Linux-side runtime diagnostics.
+- uv Projects/environments;
+- Project files/notebooks;
+- supervised Python/IPython Sessions;
+- notebook document service;
+- GPU workload execution;
+- CoKernel MCP;
+- tunnel client lifecycle;
+- Linux-side metrics/diagnostics.
 
-WSL is intentionally retained because it gives CoKernel a real Linux userspace and therefore a first-class path to Linux-focused frameworks such as JAX while still using the Windows NVIDIA driver GPU virtualization path.
+Users normally do not administer WSL directly.
 
-## 3. Core domain concepts
+## 3. Project
 
-### 3.1 Runtime
-
-A Runtime is the managed WSL + Docker + Jupyter/MCP/Tunnel environment belonging to one Windows installation.
-
-The Runtime has both a **desired state** and an **observed state**.
-
-Desired state:
+Project is the dependency/environment boundary.
 
 ```text
-RUNNING | STOPPED
+Project
+├─ pyproject.toml
+├─ uv.lock
+├─ .venv / uv-managed environment
+├─ source/data
+└─ *.ipynb
 ```
 
-Observed state:
+CoKernel uses uv rather than creating its own Python dependency resolver/cache system.
+
+Logical isolation is per Project, while uv's supported cache/link mechanisms are used to reduce unnecessary physical package duplication.
+
+## 4. Notebook document
+
+A NotebookDocument is a durable standard `.ipynb` file.
+
+It stores cells, Markdown, outputs, attachments, metadata, and execution counts according to supported nbformat semantics.
+
+A NotebookDocument is not the Python process and does not contain arbitrary live objects from RAM.
+
+Existing `.ipynb` files can be imported/uploaded from Windows into a Project through a controlled transfer path.
+
+## 5. Execution Session
+
+An ExecutionSession is the live volatile compute state for a notebook.
 
 ```text
-UNINSTALLED
-STOPPED
-STARTING
-HEALTHY
-DEGRADED
-UPDATING
-REPAIRING
-STOPPING
-ERROR
+NotebookDocument
+      |
+      v
+ExecutionSession
+      |
+      v
+Project Python process
+      |
+      v
+IPython namespace
 ```
 
-The Host continuously reconciles observed state toward desired state while respecting bounded retry/backoff rules.
+It owns variables, imports, loaded models, framework/GPU runtime state, and the execution queue.
 
-### 3.2 Workspace
+By default one notebook has one primary live Session so Human and AI have one shared namespace.
 
-A Workspace is user-owned notebook/project state.
+## 6. Parallel execution
 
-For v1 the default workspace is a WSL-native directory mounted into the Jupyter container at `/workspace`.
-
-The workspace owns:
-
-- notebooks;
-- project source/data selected by the user;
-- `pyproject.toml`;
-- `uv.lock`;
-- `.venv` (reconstructible, not source of truth).
-
-### 3.3 Control-plane Python vs workspace Python
-
-CoKernel deliberately maintains two Python environments.
+Different Sessions are independent processes and may execute concurrently.
 
 ```text
-/opt/cokernel
-  CoKernel-owned
-  image-built
-  Jupyter/control-plane runtime
-  not user-mutable during normal operation
-
-/workspace/.venv
-  user-owned compute environment
-  managed by uv
-  notebook default kernel
-  pyproject.toml + uv.lock are source of truth
+train.ipynb    -> Session A
+analysis.ipynb -> Session B
+benchmark.ipynb-> Session C
 ```
 
-These environments must **not** be merged.
+Within each Session, execution is serialized to preserve deterministic interactive state.
 
-This boundary is a v1 architectural invariant and directly resolves Issue #21.
+Thus CoKernel provides parallelism **between** Sessions and deterministic ordering **inside** a Session.
 
-### 3.4 Notebook session
+## 7. Interactive Python semantics
 
-A Notebook Session binds:
+The worker uses IPython as a library/runtime to provide Python notebook behavior such as:
 
-- notebook path;
-- Jupyter session;
-- kernel id;
-- workspace;
-- live in-memory kernel state.
+- persistent namespace;
+- final-expression results;
+- stdout/stderr;
+- exceptions/tracebacks;
+- rich MIME display;
+- top-level async;
+- commonly used IPython interactive behavior.
 
-Human browser and AI must converge on the same Jupyter Server and the same existing kernel for an already-open notebook.
+The control plane itself is not required to be Python.
 
-### 3.5 Tool capability
+## 8. Supervision
 
-An MCP Tool Capability is a deliberately scoped operation presented to AI clients.
+Each Session worker is a child process supervised by CoKernel Runtime.
 
-v1 must prefer least-capable tools for common intents rather than forcing benign operations through arbitrary-code or create/modify tools. This is the architectural response to Issue #22.
+A Python/native/GPU library crash should affect that Session, not terminate the control plane or unrelated Sessions.
 
-## 4. Architectural invariants
+CoKernel captures available evidence before recovery:
 
-### INV-001 — WSL is hidden, not removed
+- exit/signal;
+- last operation/cell;
+- stderr tail;
+- memory state;
+- GPU state;
+- OOM evidence;
+- surrounding Runtime events.
 
-The user-facing product is a Windows application; WSL is the managed Linux runtime implementation.
+The product reports what happened as far as evidence allows rather than only reporting an internal restart state.
 
-### INV-002 — Dedicated distro
+## 9. Environment changes
 
-CoKernel uses a dedicated WSL distro. Other user distros are never modified.
+Changing Project dependencies through uv does not silently destroy existing Session memory.
 
-### INV-003 — Windows filesystem isolation
+Existing Sessions keep running but become `STALE_ENVIRONMENT`; restarting them intentionally starts a new worker on the current Project environment.
 
-Windows drives are not automatically mounted into the CoKernel workload environment. Windows executable interop remains disabled in the managed distro.
+## 10. Notebook persistence
 
-### INV-004 — Docker boundary
+The Notebook Document Service is the authority for CoKernel-mediated `.ipynb` writes.
 
-Jupyter/MCP containers do not receive the Docker socket, Windows home, SSH keys, Git credentials, kubeconfig, browser profiles, or unrelated host secrets.
+Human edits, AI edits, and execution outputs are revisioned and applied through this service. Workers only emit structured execution events.
 
-### INV-005 — Workspace dependency truth
+This provides one place for:
 
-`pyproject.toml` + `uv.lock` define workspace Python dependencies. `uv` is the standard package/environment manager.
+- atomic save;
+- revision conflicts;
+- external modification detection;
+- output persistence;
+- Human/AI synchronization.
 
-### INV-006 — Workspace kernel is default
+## 11. AI/MCP
 
-New Python notebooks use `cokernel-workspace` by default. `sys.executable` in a new notebook must resolve to `/workspace/.venv/bin/python` (or its equivalent resolved path).
+AI uses a CoKernel-native MCP service.
 
-### INV-007 — Control-plane environment is immutable at runtime
+MCP addresses Projects, notebooks, Sessions, variables, and resources. It calls the same Runtime domain service as local clients.
 
-JupyterLab extensions/language packs are image-owned. The generic Jupyter extension UI must not present a normal-looking mutable PyPI install path that attempts to mutate `/opt/cokernel`.
+Joining a notebook means joining its existing primary Session when present, not creating hidden compute state.
 
-### INV-008 — Same-kernel attach is fail-closed
+Human and AI execution requests use the same per-Session FIFO queue.
 
-Connecting AI to an existing notebook must attach to the unique existing Jupyter session/kernel. Zero or ambiguous matches fail clearly. Connect mode must never silently create another kernel.
+## 12. Secure remote access
 
-### INV-009 — Accurate MCP capability metadata
+External AI reaches the local authenticated MCP endpoint through a managed outbound secure tunnel.
 
-CoKernel wrappers preserve or improve MCP input schemas and ToolAnnotations. Metadata must describe actual behavior and must never be weakened merely to influence client safety policy.
+Tunnel failure degrades remote access only; local Project/Notebook/Session execution remains available.
 
-### INV-010 — Least-capable MCP operations
+External credentials are protected on Windows and not exposed to notebook workers.
 
-v1 provides dedicated operations for common narrow intents:
+## 13. Application UX
 
-- `connect_notebook` — existing notebook/session only, no file creation, no silent kernel creation;
-- `create_notebook` — create-only, no overwrite;
-- `list_variables` — bounded safe metadata inspection;
-- `get_variable` — one Python identifier, bounded exact built-in serialization only.
-
-Existing upstream compatibility tools may remain exposed, but high-risk arbitrary execution tools stay honestly high-risk.
-
-### INV-011 — Startup dependency order
-
-Runtime start order is logically:
+Normal UI centers on:
 
 ```text
-WSL
-→ Docker
-→ Jupyter
-→ Jupyter healthy
-→ MCP
-→ MCP healthy
-→ Tunnel
-→ Tunnel ready
-→ Windows acceptance
-→ HEALTHY
+Projects
+Packages
+Notebooks
+Sessions
+Resources
+Remote AI Access
+Logs/Diagnostics
 ```
 
-Tunnel must not initialize against an MCP listener that has not become healthy.
+Internal process/protocol details are visible only where useful for diagnostics/developer mode.
 
-### INV-012 — Windows owns WSL lifetime
+The primary design criterion is that operations and failures are understandable. Visual ornamentation is secondary.
 
-systemd and background containers are not considered sufficient to keep WSL alive. CoKernel Host owns an ordinary persistent WSL client/lifetime mechanism while desired state is RUNNING.
+## 14. Persistence boundary
 
-### INV-013 — No public inbound service
+Durable:
 
-Jupyter, MCP diagnostics, runtime management, and tunnel health remain localhost/private-network only. ChatGPT reaches MCP through Secure MCP Tunnel.
+- Projects;
+- dependency declarations/locks;
+- notebook documents/outputs;
+- settings and bounded diagnostics.
 
-### INV-014 — Active kernels are protected from maintenance
+Volatile:
 
-A runtime restart/update that interrupts active kernels requires explicit user consent or deferred execution.
+- Python namespaces;
+- worker processes;
+- live MCP/tunnel connections.
 
-### INV-015 — v1 is a clean-install boundary
+Windows/runtime restart does not imply that volatile Python memory was preserved.
 
-v0.1 runtime layout, distro contents, `.env`, and Git-checkout-based management are not migrated in place.
+## 15. v1 installation boundary
 
-The v1 installer detects a legacy CoKernel distro and enters **Legacy Reset** flow. Destruction of the legacy distro is explicit and auditable. Product design does not promise binary/state compatibility with v0.1.
+v1 is installed as a fresh managed runtime. Existing experimental runtime state is not an in-place compatibility contract.
 
-## 5. Legacy Reset and fresh-install policy
+Released installer explicitly confirms destructive removal of a detected legacy distro and may offer export of wanted user files before reset.
 
-The development direction is intentionally clean:
+Routine v1-to-v1 updates, by contrast, are designed to preserve Projects/notebooks and managed state.
+
+## 16. Future direction
+
+The v1 Runtime API/domain model is intentionally independent from the visible Desktop UI so a future remote CoKernel Node can expose the same:
 
 ```text
-v0.1 experimental runtime
-      ↓ explicit reset
-DESTROYED
-      ↓
-CoKernel v1 fresh install
+Project
+Environment
+Notebook
+ExecutionSession
+Resources
 ```
 
-### 5.1 What v1 does not migrate
-
-- v0.1 WSL distro system state;
-- Docker images/containers;
-- v0.1 `.env` secrets;
-- v0.1 Git checkout under WSL;
-- runtime keeper processes;
-- loopback proxy unit instances;
-- cached virtual environments.
-
-### 5.2 User data handling
-
-Because notebooks can contain user data, destructive reset is never silent in the released product.
-
-Before unregistering a detected legacy distro, the installer shows:
-
-- legacy distro identity;
-- legacy workspace path if discoverable;
-- explicit warning that WSL unregister is destructive;
-- optional `Export legacy workspace` action;
-- explicit confirmation for `Destroy v0.1 and install v1`.
-
-For development/acceptance on the current machine, it is valid to intentionally destroy the current v0.1 distro after any wanted notebook data has been exported.
-
-## 6. Installation model
-
-Final entrypoint:
-
-```text
-CoKernelSetup.exe
-```
-
-Installer phases:
-
-1. Preflight Windows/virtualization/WSL/NVIDIA/disk checks.
-2. Detect existing v1 or legacy v0.1.
-3. If legacy: Legacy Reset flow.
-4. Enable/update WSL when required; reboot/resume when required.
-5. Create fresh dedicated Ubuntu distro.
-6. Apply CoKernel isolation policy.
-7. Install Docker Engine and NVIDIA Container Toolkit.
-8. Install versioned CoKernel runtime payload (not a development Git checkout).
-9. Initialize local runtime tokens.
-10. Configure loopback bridge.
-11. Build/pull runtime images.
-12. Validate GPU.
-13. Start Host + Runtime.
-14. Verify Jupyter/MCP/Tunnel as configured.
-15. Mark installation healthy.
-
-## 7. Runtime filesystem model
-
-v1 separates immutable application/runtime payload from mutable state.
-
-Suggested WSL layout:
-
-```text
-/opt/cokernel/
-  runtime/             versioned product payload
-  bin/                 product commands
-
-/etc/cokernel/
-  runtime.conf         non-secret system config
-
-/var/lib/cokernel/
-  state/               desired/observed metadata
-  diagnostics/         bounded diagnostic state
-
-/home/cokernel/
-  workspace/           default user workspace
-```
-
-The Windows installer package owns the runtime payload. `git pull` is not part of the installed product update path.
-
-## 8. Jupyter UX model
-
-### 8.1 Default kernel
-
-At Jupyter startup, after `uv sync` and kernelspec registration, CoKernel configures the default kernel name to `cokernel-workspace`.
-
-### 8.2 Package installation
-
-Notebook package installation is uv-first:
-
-```bash
-uv add numpy
-uv add torch
-uv add jax
-uv remove <package>
-uv sync
-```
-
-A future v1 UI may wrap these operations as **Workspace Packages**, but the dependency model remains the same.
-
-### 8.3 Jupyter extensions and localization
-
-JupyterLab extension/language-pack installation is a product/image concern, not a notebook dependency concern.
-
-The v1 Jupyter image ships supported extensions at build time. At minimum, the Japanese JupyterLab language pack is built into the image so a Japanese Windows user does not need to use the broken runtime PyPI-manager path observed in v0.1.
-
-Jupyter UI locale is a CoKernel setting. Initial policy:
-
-- default to the Windows UI language when a bundled language pack exists;
-- otherwise fall back to English;
-- allow explicit language override.
-
-The Jupyter Extension Manager must be disabled or made read-only for runtime mutation.
-
-## 9. MCP capability model
-
-v1 continues to use pinned upstream `jupyter-mcp-server` plus `cokernel-mcp-extension`; no fork is required.
-
-### 9.1 Compatibility layer
-
-Existing upstream tools remain where compatibility is useful. CoKernel wrapper code must preserve exact schema constraints and annotations.
-
-`use_notebook` keeps `Literal["connect", "create"]` and explicit annotations.
-
-### 9.2 CoKernel narrow tools
-
-#### `connect_notebook`
-
-- existing file only;
-- existing session/kernel only unless explicit kernel id is supplied;
-- no notebook creation;
-- no kernel creation;
-- idempotent attachment semantics;
-- closed-world operation.
-
-#### `create_notebook`
-
-- create-only;
-- target must not exist;
-- no overwrite;
-- kernel creation behavior explicit.
-
-#### `list_variables`
-
-Returns bounded safe metadata only. No arbitrary `repr`, attribute access, iteration of custom objects, or user callable execution.
-
-#### `get_variable`
-
-- accepts one Python identifier only;
-- rejects expressions, indexing, calls, imports, comprehensions, operators, attributes;
-- serializes only exact approved built-in types;
-- bounded depth/item/string/total response size;
-- custom/unsupported types return structured metadata without invoking custom representation behavior.
-
-Arbitrary `execute_code` remains a high-risk/open-world capability and is not reclassified.
-
-## 10. Secret model
-
-Windows is the source of truth for user-facing external credentials.
-
-- Tunnel API key is stored with Windows user-scoped secret protection (DPAPI/Credential Manager abstraction).
-- MCP/Jupyter local tokens are generated inside the runtime and are not exposed in normal UI.
-- Secrets are passed to WSL through a non-command-line secret channel or tightly controlled stdin/file handoff; they are not embedded in process command lines or logs.
-- Diagnostic export redacts bearer tokens, API keys, and known secret fields.
-
-## 11. Health and recovery model
-
-Health is layered:
-
-```text
-Windows Host
-WSL reachable
-Docker reachable
-Jupyter container healthy
-Jupyter HTTP/session API healthy
-MCP container healthy
-MCP initialize path healthy
-Tunnel ready (when configured)
-GPU visible in compute container
-Workspace writable
-```
-
-Recovery escalation:
-
-```text
-service restart
-→ compose reconcile
-→ Docker restart
-→ dedicated WSL restart
-→ ERROR / user-visible repair action
-```
-
-Retries use bounded exponential backoff and a crash-loop circuit breaker.
-
-## 12. Dashboard model
-
-v1 dashboard shows at minimum:
-
-- overall runtime state;
-- WSL/Docker/Jupyter/MCP/Tunnel state;
-- runtime uptime;
-- active kernel count;
-- GPU model/utilization;
-- VRAM used/total;
-- GPU temperature/power when available;
-- CPU utilization;
-- Windows RAM used/total;
-- WSL RAM used/total;
-- storage used/total;
-- last health error;
-- update/repair status.
-
-## 13. Update model
-
-Installed v1 uses product artifacts/releases, not `git pull`.
-
-Update classes:
-
-- Desktop/Host binary;
-- WSL runtime payload;
-- container images;
-- schema/runtime migration.
-
-If active kernels would be interrupted, update is deferred or explicitly confirmed.
-
-v1-to-v1 updates are designed to be convergent and state-preserving. The destructive clean-install rule applies specifically to the v0.1 → v1 product boundary.
-
-## 14. v1 acceptance gates
-
-v1 is not complete until all are true:
-
-1. Fresh `CoKernelSetup.exe` provisions the managed WSL environment.
-2. A detected v0.1 environment can be explicitly destroyed and replaced by a fresh v1 environment.
-3. Windows sign-in restores desired RUNNING state without manual WSL commands.
-4. Jupyter is reachable from Windows and can use the NVIDIA GPU.
-5. Linux-only/first-class Python workflows such as JAX installation are viable in the workspace environment.
-6. A new notebook defaults to `/workspace/.venv`/`cokernel-workspace`.
-7. JupyterLab no longer exposes a broken mutable control-plane PyPI install path.
-8. Japanese JupyterLab localization is bundled/configurable rather than installed through the runtime Extension Manager.
-9. Human and AI share the exact same live kernel for an existing notebook.
-10. MCP annotations/schema are preserved and narrow CoKernel tools from Issue #22 are covered by tests.
-11. Dashboard reports CPU/GPU/VRAM/RAM/WSL RAM/storage/service health.
-12. Active kernels are protected from unconfirmed disruptive maintenance.
-13. Diagnostics can be exported with secrets redacted.
-14. The CLI/recovery path remains available for diagnosis even if Desktop UI fails.
-
-## 15. Deferred to post-v1
-
-- second-PC Node mode;
-- LAN pairing/mTLS node control;
-- remote Jupyter proxy;
-- multi-node scheduler;
-- batch job queue;
-- RTX 5090 + RTX 3080 Fabric resource placement;
-- headless boot-before-login node service;
-- kernel live migration.
-
-These are designed as extensions of the v1 Host/Runtime boundary, not requirements for the first desktop release.
+That allows later multi-PC/Fabric work without redesigning the local notebook execution model.
