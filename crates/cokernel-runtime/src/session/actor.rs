@@ -49,6 +49,7 @@ async fn run_session_actor(
     mut control_rx: mpsc::Receiver<ControlRequest>,
     mut worker_frames: mpsc::Receiver<Result<WorkerFrame, SessionError>>,
 ) {
+    remember_oom_baseline(context.worker_pid);
     let mut stale_environment = false;
     let mut last_worker_activity = Instant::now();
     loop {

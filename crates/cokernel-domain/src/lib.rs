@@ -148,6 +148,14 @@ pub struct LinuxOomEvidence {
     pub cgroup_path: String,
     pub oom_count: u64,
     pub oom_kill_count: u64,
+    #[serde(default)]
+    pub baseline_oom_count: Option<u64>,
+    #[serde(default)]
+    pub baseline_oom_kill_count: Option<u64>,
+    #[serde(default)]
+    pub oom_delta: Option<u64>,
+    #[serde(default)]
+    pub oom_kill_delta: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
