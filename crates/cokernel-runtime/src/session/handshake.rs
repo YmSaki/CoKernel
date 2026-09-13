@@ -176,8 +176,9 @@ fn validate_worker_handshake(
                 ))
             })?;
     }
-    let max_event_bytes = output_limits["max_event_bytes"]
-        .as_u64()
+    let max_event_bytes = output_limits
+        .get("max_event_bytes")
+        .and_then(Value::as_u64)
         .expect("validated output event limit");
     if max_event_bytes >= cokernel_protocol::DEFAULT_MAX_FRAME_BYTES as u64 {
         return Err(WorkerTransportError::Protocol(format!(
