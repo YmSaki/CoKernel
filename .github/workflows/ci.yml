@@ -2,7 +2,13 @@ name: CI
 
 on:
   push:
+    branches-ignore:
+      - cokernel-v1
+      - 'v1/**'
   pull_request:
+    branches-ignore:
+      - cokernel-v1
+      - 'v1/**'
 
 permissions:
   contents: read
