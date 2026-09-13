@@ -1,3 +1,5 @@
+const FAILURE_CELL_ID_CHARS: usize = 256;
+
 #[derive(Debug)]
 struct ExecuteRequest {
     operation_id: OperationId,
@@ -167,7 +169,7 @@ async fn execute_one(
     *context
         .current_cell_id
         .lock()
-        .expect("cell lock poisoned") = request.cell_id.clone();
+        .expect("cell lock poisoned") = bounded_failure_cell_id(request.cell_id.as_deref());
     set_state(context, SessionState::Executing);
 
     let request_id = request.operation_id.to_string();
@@ -310,6 +312,20 @@ fn session_evidence_from_worker_frame(
         )),
         WorkerFrame::Request { .. } => None,
     }
+}
+
+fn bounded_failure_cell_id(value: Option<&str>) -> Option<String> {
+    value.map(|value| {
+        if value.chars().count() <= FAILURE_CELL_ID_CHARS {
+            return value.to_owned();
+        }
+        let mut truncated = value
+            .chars()
+            .take(FAILURE_CELL_ID_CHARS.saturating_sub(1))
+            .collect::<String>();
+        truncated.push('…');
+        truncated
+    })
 }
 
 fn heartbeat_expired(last_worker_activity: Instant, heartbeat_timeout: Duration) -> bool {

@@ -91,6 +91,61 @@ mod tests {
         assert_eq!(detail.as_deref(), Some("ValueError"));
     }
 
+    #[test]
+    fn failure_cell_id_is_unicode_safe_and_bounded() {
+        assert_eq!(bounded_failure_cell_id(None), None);
+        assert_eq!(
+            bounded_failure_cell_id(Some("cell-1")).as_deref(),
+            Some("cell-1")
+        );
+
+        let oversized = "界".repeat(FAILURE_CELL_ID_CHARS + 10);
+        let bounded = bounded_failure_cell_id(Some(&oversized)).expect("bounded cell id");
+        assert_eq!(bounded.chars().count(), FAILURE_CELL_ID_CHARS);
+        assert!(bounded.ends_with('…'));
+    }
+
+    #[tokio::test]
+    async fn failure_record_captures_worker_identity_and_cell_context() {
+        let session_id = SessionId::new();
+        let operation_id = OperationId::new();
+        let worker_started_at = Utc::now();
+        let (state_tx, _state_rx) = watch::channel(SessionState::Executing);
+        let (events, _) = broadcast::channel(4);
+        let context = SessionActorContext {
+            session_id,
+            worker_pid: 4242,
+            worker_generation: 7,
+            worker_started_at,
+            environment_generation: 11,
+            state_tx,
+            events,
+            current_operation: Arc::new(StdMutex::new(Some(operation_id))),
+            current_cell_id: Arc::new(StdMutex::new(Some("cell-alpha".into()))),
+            stderr_tail: Arc::new(Mutex::new(ByteTail::new(16))),
+            shutdown_timeout: Duration::from_millis(10),
+            heartbeat_timeout: Duration::from_secs(10),
+        };
+
+        let record = failure_record(
+            &context,
+            Some(23),
+            None,
+            FailureClassification::Unknown,
+            0.25,
+            FailureEvidenceSnapshot::default(),
+        )
+        .await;
+
+        assert_eq!(record.session_id, Some(session_id));
+        assert_eq!(record.operation_id, Some(operation_id));
+        assert_eq!(record.worker_pid, Some(4242));
+        assert_eq!(record.worker_generation, Some(7));
+        assert_eq!(record.worker_started_at, Some(worker_started_at));
+        assert_eq!(record.environment_generation, Some(11));
+        assert_eq!(record.cell_id.as_deref(), Some("cell-alpha"));
+    }
+
     #[tokio::test]
     async fn cancelling_pending_requests_closes_queue_and_finishes_each_operation() {
         let session_id = SessionId::new();
