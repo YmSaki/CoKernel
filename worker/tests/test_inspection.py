@@ -5,6 +5,7 @@ import math
 import pytest
 
 from cokernel_worker.inspection import (
+    MAX_INTEROPERABLE_JSON_INTEGER,
     InspectionError,
     InspectionLimits,
     get_variable,
@@ -81,6 +82,32 @@ def test_get_variable_supports_bounded_exact_builtin_json_types() -> None:
     )
     assert result.supported is True
     assert result.value == {"a": [1, True, None, 2.5, "x"], "b": [3, 4]}
+
+
+def test_get_variable_supports_interoperable_json_integer_boundaries() -> None:
+    for value in [
+        -MAX_INTEROPERABLE_JSON_INTEGER,
+        MAX_INTEROPERABLE_JSON_INTEGER,
+    ]:
+        result = get_variable({"value": value}, "value")
+        assert result.supported is True
+        assert result.value == value
+
+
+def test_get_variable_marks_out_of_range_integer_unsupported() -> None:
+    value = MAX_INTEROPERABLE_JSON_INTEGER + 1
+    listed = {item.name: item for item in list_variables({"value": value})}
+    assert listed["value"].supported is False
+
+    result = get_variable({"value": value}, "value")
+    assert result.supported is False
+    assert result.value is None
+    assert result.reason == "integer value exceeds interoperable JSON safe range"
+
+    nested = get_variable({"value": {"nested": [value]}}, "value")
+    assert nested.supported is False
+    assert nested.value is None
+    assert nested.reason == "integer value exceeds interoperable JSON safe range"
 
 
 def test_get_variable_rejects_expressions_and_keywords() -> None:

@@ -15,6 +15,9 @@ class UnsupportedValue(InspectionError):
     pass
 
 
+MAX_INTEROPERABLE_JSON_INTEGER = (1 << 53) - 1
+
+
 @dataclass(frozen=True, slots=True)
 class InspectionLimits:
     max_depth: int = 8
@@ -59,8 +62,15 @@ def _require_bounded_namespace(
     return namespace
 
 
+def _is_interoperable_json_integer(value: int) -> bool:
+    return -MAX_INTEROPERABLE_JSON_INTEGER <= value <= MAX_INTEROPERABLE_JSON_INTEGER
+
+
 def _is_supported_exact_type(value: Any) -> bool:
-    return type(value) in (type(None), bool, int, float, str, list, tuple, dict)
+    value_type = type(value)
+    if value_type is int:
+        return _is_interoperable_json_integer(value)
+    return value_type in (type(None), bool, float, str, list, tuple, dict)
 
 
 def _type_metadata(value: Any, *, max_string_chars: int) -> tuple[str, str]:
@@ -220,8 +230,13 @@ def _serialize(
         raise InspectionError("variable value exceeds maximum nesting depth")
 
     value_type = type(value)
-    if value_type is type(None) or value_type is bool or value_type is int:
+    if value_type is type(None) or value_type is bool:
         budget.consume()
+        return value
+    if value_type is int:
+        budget.consume()
+        if not _is_interoperable_json_integer(value):
+            raise UnsupportedValue("integer value exceeds interoperable JSON safe range")
         return value
     if value_type is float:
         budget.consume()
