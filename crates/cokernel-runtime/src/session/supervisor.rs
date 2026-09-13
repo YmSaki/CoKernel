@@ -197,6 +197,14 @@ impl SessionSupervisor {
         };
 
         let mut stream = stream;
+        let peer_pid = match worker_peer_pid(&stream) {
+            Ok(pid) => pid,
+            Err(error) => {
+                terminate_child(&mut child).await;
+                let _ = fs::remove_file(&socket_path);
+                return Err(error);
+            }
+        };
         let ready = match timeout(self.config.startup_timeout, read_worker_frame(&mut stream)).await {
             Ok(Ok(Some(frame))) => frame,
             Ok(Ok(None)) => {
@@ -225,6 +233,11 @@ impl SessionSupervisor {
                 return Err(error);
             }
         };
+        if let Err(error) = validate_ready_peer_pid(ready.pid, peer_pid) {
+            terminate_child(&mut child).await;
+            let _ = fs::remove_file(&socket_path);
+            return Err(error);
+        }
         if self.config.heartbeat_timeout <= ready.heartbeat_interval {
             terminate_child(&mut child).await;
             let _ = fs::remove_file(&socket_path);
@@ -348,6 +361,26 @@ fn prepare_socket_dir(path: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
+fn worker_peer_pid(stream: &tokio::net::UnixStream) -> Result<u32, SessionError> {
+    let credentials = stream.peer_cred()?;
+    let pid = credentials.pid().ok_or_else(|| {
+        SessionError::InvalidReady("worker Unix socket peer credentials omitted pid".into())
+    })?;
+    u32::try_from(pid).map_err(|_| {
+        SessionError::InvalidReady(format!("worker Unix socket peer pid {pid} is invalid"))
+    })
+}
+
+fn validate_ready_peer_pid(reported_pid: u32, peer_pid: u32) -> Result<(), SessionError> {
+    if reported_pid == peer_pid {
+        Ok(())
+    } else {
+        Err(SessionError::InvalidReady(format!(
+            "ready worker pid {reported_pid} does not match Unix socket peer pid {peer_pid}"
+        )))
+    }
+}
+
 fn validate_ready(
     frame: &WorkerFrame,
     expected_session_id: SessionId,
@@ -382,5 +415,19 @@ fn validate_ready(
             })
         }
         other => Err(SessionError::InvalidReady(format!("{other:?}"))),
+    }
+}
+
+#[cfg(test)]
+mod supervisor_peer_tests {
+    use super::*;
+
+    #[test]
+    fn ready_pid_must_match_authenticated_unix_peer() {
+        assert!(validate_ready_peer_pid(1234, 1234).is_ok());
+        let error = validate_ready_peer_pid(1234, 5678).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("does not match Unix socket peer pid"));
     }
 }
