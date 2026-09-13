@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from . import __version__
+from .protocol import connect_and_run
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,9 +22,8 @@ def main() -> int:
     if not args.socket or not args.session_id:
         raise SystemExit("--socket and --session-id are required")
 
-    raise SystemExit(
-        "worker protocol/IPython runtime not implemented yet; see issue #27/#29"
-    )
+    connect_and_run(args.socket, args.session_id)
+    return 0
 
 
 if __name__ == "__main__":
