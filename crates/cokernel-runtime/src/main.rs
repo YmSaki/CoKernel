@@ -14,7 +14,10 @@ async fn main() -> Result<()> {
             anyhow::bail!("unknown or not-yet-implemented command: {command}");
         }
         None => {
-            println!("CoKernel Runtime v{} (v1 scaffold)", env!("CARGO_PKG_VERSION"));
+            println!(
+                "CoKernel Runtime v{} (v1 scaffold)",
+                env!("CARGO_PKG_VERSION")
+            );
         }
     }
     Ok(())
