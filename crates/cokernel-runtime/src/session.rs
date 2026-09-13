@@ -470,6 +470,7 @@ async fn run_session_actor(
             control = control_rx.recv() => {
                 match control {
                     Some(ControlRequest::Stop) | None => {
+                        cancel_pending_requests(&context, &mut execute_rx);
                         graceful_stop(&context, &mut stream, &mut child).await;
                         return;
                     }
@@ -495,8 +496,12 @@ async fn run_session_actor(
                     &mut stale_environment,
                 ).await {
                     Ok(ExecuteDisposition::Completed) => {}
-                    Ok(ExecuteDisposition::Stopped) => return,
+                    Ok(ExecuteDisposition::Stopped) => {
+                        cancel_pending_requests(&context, &mut execute_rx);
+                        return;
+                    }
                     Err(error) => {
+                        cancel_pending_requests(&context, &mut execute_rx);
                         record_crash(&context, &mut child, error.to_string()).await;
                         return;
                     }
@@ -505,11 +510,13 @@ async fn run_session_actor(
             _ = sleep(Duration::from_millis(250)) => {
                 match child.try_wait() {
                     Ok(Some(status)) => {
+                        cancel_pending_requests(&context, &mut execute_rx);
                         record_exit(&context, status).await;
                         return;
                     }
                     Ok(None) => {}
                     Err(error) => {
+                        cancel_pending_requests(&context, &mut execute_rx);
                         record_crash(&context, &mut child, error.to_string()).await;
                         return;
                     }
@@ -567,10 +574,10 @@ async fn execute_one(
                         *stale_environment = true;
                     }
                     Some(ControlRequest::Stop) | None => {
+                        finish_operation(context, request.operation_id, OperationStatus::Cancelled);
                         let _ = child.start_kill();
                         let _ = child.wait().await;
                         set_state(context, SessionState::Stopped);
-                        clear_current_operation(context);
                         return Ok(ExecuteDisposition::Stopped);
                     }
                 }
@@ -598,12 +605,7 @@ async fn execute_one(
                         } else {
                             OperationStatus::Failed
                         };
-                        let _ = context.events.send(SessionEvent::OperationFinished {
-                            session_id: context.session_id,
-                            operation_id: request.operation_id,
-                            status,
-                        });
-                        clear_current_operation(context);
+                        finish_operation(context, request.operation_id, status);
                         set_state(
                             context,
                             if *stale_environment {
@@ -623,6 +625,44 @@ async fn execute_one(
             }
         }
     }
+}
+
+fn finish_operation(
+    context: &SessionActorContext,
+    operation_id: OperationId,
+    status: OperationStatus,
+) {
+    let _ = context.events.send(SessionEvent::OperationFinished {
+        session_id: context.session_id,
+        operation_id,
+        status,
+    });
+    clear_current_operation(context);
+}
+
+fn finish_current_operation(context: &SessionActorContext, status: OperationStatus) {
+    let operation_id = *context
+        .current_operation
+        .lock()
+        .expect("operation lock poisoned");
+    if let Some(operation_id) = operation_id {
+        finish_operation(context, operation_id, status);
+    }
+}
+
+fn cancel_pending_requests(
+    context: &SessionActorContext,
+    execute_rx: &mut mpsc::Receiver<ExecuteRequest>,
+) {
+    execute_rx.close();
+    while let Ok(request) = execute_rx.try_recv() {
+        let _ = context.events.send(SessionEvent::OperationFinished {
+            session_id: context.session_id,
+            operation_id: request.operation_id,
+            status: OperationStatus::Cancelled,
+        });
+    }
+    context.queue_depth.store(0, Ordering::Relaxed);
 }
 
 fn clear_current_operation(context: &SessionActorContext) {
@@ -681,6 +721,7 @@ async fn graceful_stop(
 }
 
 async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
+    finish_current_operation(context, OperationStatus::Failed);
     let record = failure_record(
         context,
         status.code(),
@@ -694,6 +735,7 @@ async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
 }
 
 async fn record_crash(context: &SessionActorContext, child: &mut Child, detail: String) {
+    finish_current_operation(context, OperationStatus::Failed);
     let status = child.try_wait().ok().flatten();
     if status.is_none() {
         let _ = child.start_kill();
@@ -827,5 +869,69 @@ mod tests {
         assert_eq!(tail.text_lossy(), "bcdef");
         tail.push(b"0123456789");
         assert_eq!(tail.text_lossy(), "56789");
+    }
+
+    #[tokio::test]
+    async fn cancelling_pending_requests_closes_queue_and_finishes_each_operation() {
+        let session_id = SessionId::new();
+        let (state_tx, _state_rx) = watch::channel(SessionState::Idle);
+        let (events, _) = broadcast::channel(16);
+        let mut event_rx = events.subscribe();
+        let queue_depth = Arc::new(AtomicUsize::new(2));
+        let current_operation = Arc::new(StdMutex::new(None));
+        let context = SessionActorContext {
+            session_id,
+            worker_pid: 1,
+            state_tx,
+            events,
+            queue_depth: queue_depth.clone(),
+            current_operation,
+            stderr_tail: Arc::new(Mutex::new(ByteTail::new(16))),
+            shutdown_timeout: Duration::from_millis(10),
+        };
+        let (execute_tx, mut execute_rx) = mpsc::channel(4);
+        let first = OperationId::new();
+        let second = OperationId::new();
+        for operation_id in [first, second] {
+            execute_tx
+                .send(ExecuteRequest {
+                    operation_id,
+                    origin: ExecutionOrigin::Human,
+                    cell_id: Some("cell".into()),
+                    source: "1 + 1".into(),
+                })
+                .await
+                .unwrap();
+        }
+
+        cancel_pending_requests(&context, &mut execute_rx);
+
+        assert_eq!(queue_depth.load(Ordering::Relaxed), 0);
+        assert!(execute_tx
+            .send(ExecuteRequest {
+                operation_id: OperationId::new(),
+                origin: ExecutionOrigin::Human,
+                cell_id: None,
+                source: "2 + 2".into(),
+            })
+            .await
+            .is_err());
+
+        let mut cancelled = Vec::new();
+        for _ in 0..2 {
+            match event_rx.recv().await.unwrap() {
+                SessionEvent::OperationFinished {
+                    session_id: actual_session_id,
+                    operation_id,
+                    status: OperationStatus::Cancelled,
+                } => {
+                    assert_eq!(actual_session_id, session_id);
+                    cancelled.push(operation_id);
+                }
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+        assert!(cancelled.contains(&first));
+        assert!(cancelled.contains(&second));
     }
 }
