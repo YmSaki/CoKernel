@@ -1,0 +1,17 @@
+{
+  "protocol": 1,
+  "request_id": "00000000-0000-0000-0000-000000000002",
+  "ok": true,
+  "result": {
+    "product_version": "1.0.0-dev",
+    "runtime_version": "1.0.0-dev",
+    "desired_state": "RUNNING",
+    "observed_state": "HEALTHY",
+    "projects": 2,
+    "active_sessions": 3,
+    "mcp": {"state": "HEALTHY", "healthy": true},
+    "remote_access": {"state": "CONNECTED", "healthy": true},
+    "last_error": null,
+    "last_transition_at": "2026-09-13T04:00:00Z"
+  }
+}
