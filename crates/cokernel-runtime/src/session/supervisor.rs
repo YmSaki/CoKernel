@@ -1,3 +1,5 @@
+include!("handshake.rs");
+
 #[derive(Clone)]
 pub struct SessionSupervisor {
     config: SessionSupervisorConfig,
@@ -230,6 +232,19 @@ impl SessionSupervisor {
                 "heartbeat timeout {:?} must exceed worker interval {:?}",
                 self.config.heartbeat_timeout, ready.heartbeat_interval
             )));
+        }
+        if let Err(error) = perform_worker_handshake(
+            &mut stream,
+            session_id,
+            worker_generation,
+            ready.heartbeat_interval,
+            self.config.startup_timeout,
+        )
+        .await
+        {
+            terminate_child(&mut child).await;
+            let _ = fs::remove_file(&socket_path);
+            return Err(error);
         }
         let _ = fs::remove_file(&socket_path);
 
