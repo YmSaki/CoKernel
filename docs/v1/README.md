@@ -32,18 +32,23 @@ Read in this order:
 1. [`REQUIREMENTS.md`](REQUIREMENTS.md) — v1 product/system requirements and priorities.
 2. [`USE_CASES.md`](USE_CASES.md) — normal and exceptional user scenarios.
 3. [`DOMAIN_MODEL.md`](DOMAIN_MODEL.md) — Project, Environment, Notebook, Session, Execution, Runtime.
-4. [`ARCHITECTURE.md`](ARCHITECTURE.md) — target system architecture and technology choices.
-5. [`COMPONENT_MODEL.md`](COMPONENT_MODEL.md) — component ownership and dependency boundaries.
-6. [`EXECUTION_RUNTIME.md`](EXECUTION_RUNTIME.md) — supervised IPython worker/session semantics and parallel execution.
-7. [`PROJECT_NOTEBOOK_MODEL.md`](PROJECT_NOTEBOOK_MODEL.md) — uv integration, notebook persistence/import, package changes.
-8. [`INTERFACE_CONTRACTS.md`](INTERFACE_CONTRACTS.md) — Desktop/Host/WSL Runtime/Worker contracts.
-9. [`MCP_TUNNEL.md`](MCP_TUNNEL.md) — domain-oriented MCP surface, permissions, tunnel integration.
-10. [`SECURITY_OBSERVABILITY.md`](SECURITY_OBSERVABILITY.md) — trust boundaries, secrets, metrics, diagnostics, error model.
-11. [`INSTALL_UPDATE.md`](INSTALL_UPDATE.md) — setup, legacy reset, auto-start, update/repair.
-12. [`TEST_ACCEPTANCE.md`](TEST_ACCEPTANCE.md) — verification strategy and release acceptance gates.
-13. [`IMPLEMENTATION_ORDER.md`](IMPLEMENTATION_ORDER.md) — implementation sequence and PR-sized milestones.
-14. [`V0_1_ASSET_INVENTORY.md`](V0_1_ASSET_INVENTORY.md) — what knowledge/code from v0.1 is ported, replaced, or retired.
-15. [`DECISIONS.md`](DECISIONS.md) — concise architectural decision record.
+4. [`CONCEPTUAL_DESIGN.md`](CONCEPTUAL_DESIGN.md) — compact conceptual view.
+5. [`ARCHITECTURE.md`](ARCHITECTURE.md) — target system architecture and technology choices.
+6. [`COMPONENT_MODEL.md`](COMPONENT_MODEL.md) — component ownership and dependency boundaries.
+7. [`EXECUTION_RUNTIME.md`](EXECUTION_RUNTIME.md) — supervised IPython worker/session semantics and parallel execution.
+8. [`PROJECT_NOTEBOOK_MODEL.md`](PROJECT_NOTEBOOK_MODEL.md) — uv integration, notebook persistence/import, package changes.
+9. [`INTERFACE_CONTRACTS.md`](INTERFACE_CONTRACTS.md) — Desktop/Host/WSL Runtime/Worker contracts.
+10. [`MCP_TUNNEL.md`](MCP_TUNNEL.md) — domain-oriented MCP surface, permissions, tunnel integration.
+11. [`UI_SPEC.md`](UI_SPEC.md) — Desktop screens, actions, states, failure UX.
+12. [`SECURITY_OBSERVABILITY.md`](SECURITY_OBSERVABILITY.md) — trust boundaries, secrets, metrics, diagnostics, error model.
+13. [`INSTALL_UPDATE.md`](INSTALL_UPDATE.md) — setup, legacy reset, auto-start, update/repair.
+14. [`TEST_ACCEPTANCE.md`](TEST_ACCEPTANCE.md) — verification strategy and release acceptance gates.
+15. [`REPOSITORY_LAYOUT.md`](REPOSITORY_LAYOUT.md) — target source/build repository structure.
+16. [`IMPLEMENTATION_ORDER.md`](IMPLEMENTATION_ORDER.md) — implementation sequence and PR-sized milestones.
+17. [`V0_1_ASSET_INVENTORY.md`](V0_1_ASSET_INVENTORY.md) — what knowledge/code from v0.1 is ported, referenced, or retired.
+18. [`DECISIONS.md`](DECISIONS.md) — concise architectural decision record.
+
+Language-neutral protocol examples live in [`../../protocol/`](../../protocol/README.md).
 
 ## Authority rules
 
@@ -78,9 +83,24 @@ Deferred until after v1:
 - transparent live Session migration between machines;
 - automatic multi-node resource scheduling.
 
+## Implementation choices fixed for v1
+
+- core/control/runtime: Rust;
+- Project/dependency/environment management: uv;
+- notebook document: standard `.ipynb` / nbformat v4-compatible JSON;
+- Python interactive semantics: supervised Project Python + IPython worker;
+- parallelism: serialized within one Session, concurrent across Sessions;
+- Desktop shell: Tauri v2 with a small TypeScript frontend;
+- Desktop -> Host: Windows Named Pipe;
+- Host -> WSL Runtime: long-lived framed stdio bridge;
+- Runtime -> Worker: private Unix domain socket;
+- AI: CoKernel-native MCP mapped to the same Runtime domain model;
+- remote AI: managed outbound secure tunnel;
+- v0.1 -> v1: explicit fresh-install/reset boundary.
+
 ## Definition of implementation-ready
 
-Implementation may proceed when this specification set is internally consistent and the following are fixed:
+The specification now fixes:
 
 - domain ownership and lifecycle;
 - Session concurrency/serialization semantics;
@@ -90,6 +110,8 @@ Implementation may proceed when this specification set is internally consistent 
 - MCP capability boundaries;
 - secret/trust boundaries;
 - installer/reset/update rules;
-- acceptance tests.
+- Desktop UX boundaries;
+- repository/build structure;
+- acceptance tests and implementation order.
 
-Those decisions are contained in this directory.
+Implementation may proceed from Phase 0/1 of `IMPLEMENTATION_ORDER.md`. Any technical spike that changes a documented architectural choice must update this spec set before the dependent implementation is merged.
