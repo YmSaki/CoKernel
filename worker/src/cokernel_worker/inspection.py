@@ -41,14 +41,24 @@ class VariableValue:
     reason: str | None = None
 
 
+def _require_exact_namespace(namespace: Mapping[str, Any]) -> dict[str, Any]:
+    if type(namespace) is not dict:
+        raise InspectionError("inspection namespace must be an exact dict")
+    return namespace
+
+
 def _is_supported_exact_type(value: Any) -> bool:
     return type(value) in (type(None), bool, int, float, str, list, tuple, dict)
 
 
-def _type_metadata(value: Any) -> tuple[str, str]:
+def _type_metadata(value: Any, *, max_string_chars: int) -> tuple[str, str]:
     value_type = type(value)
     module = type.__getattribute__(value_type, "__module__")
     type_name = type.__getattribute__(value_type, "__qualname__")
+    if type(module) is not str or type(type_name) is not str:
+        return "<unknown>", "<unknown>"
+    if len(module) > max_string_chars or len(type_name) > max_string_chars:
+        raise InspectionError("variable type metadata exceeds maximum length")
     return module, type_name
 
 
@@ -58,20 +68,33 @@ def validate_identifier(name: str) -> None:
 
 
 def list_variables(
-    namespace: Mapping[str, Any], *, max_items: int = 512
+    namespace: Mapping[str, Any],
+    *,
+    max_items: int = 512,
+    limits: InspectionLimits | None = None,
 ) -> list[VariableSummary]:
-    names = sorted(
-        name
-        for name in namespace.keys()
+    namespace = _require_exact_namespace(namespace)
+    limits = limits or InspectionLimits()
+    if type(max_items) is not int or max_items < 0:
+        raise InspectionError("max_items must be a non-negative integer")
+    item_limit = min(max_items, limits.max_items)
+
+    entries = [
+        (name, value)
+        for name, value in namespace.items()
         if type(name) is str
+        and len(name) <= limits.max_string_chars
         and name.isidentifier()
         and not keyword.iskeyword(name)
         and not name.startswith("_")
-    )
+    ]
+    entries.sort(key=lambda item: item[0])
+
     result: list[VariableSummary] = []
-    for name in names[:max_items]:
-        value = namespace[name]
-        module, type_name = _type_metadata(value)
+    for name, value in entries[:item_limit]:
+        module, type_name = _type_metadata(
+            value, max_string_chars=limits.max_string_chars
+        )
         result.append(
             VariableSummary(
                 name=name,
@@ -80,6 +103,23 @@ def list_variables(
                 supported=_is_supported_exact_type(value),
             )
         )
+
+    encoded = json.dumps(
+        [
+            {
+                "name": item.name,
+                "type_module": item.type_module,
+                "type_name": item.type_name,
+                "supported": item.supported,
+            }
+            for item in result
+        ],
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(encoded) > limits.max_response_bytes:
+        raise InspectionError("variable list exceeds maximum serialized response size")
     return result
 
 
@@ -89,12 +129,23 @@ def get_variable(
     *,
     limits: InspectionLimits | None = None,
 ) -> VariableValue:
+    namespace = _require_exact_namespace(namespace)
     validate_identifier(name)
-    if name not in namespace:
-        raise InspectionError(f"variable not found: {name}")
     limits = limits or InspectionLimits()
-    value = namespace[name]
-    module, type_name = _type_metadata(value)
+
+    found = False
+    value: Any = None
+    for key, candidate in namespace.items():
+        if type(key) is str and key == name:
+            value = candidate
+            found = True
+            break
+    if not found:
+        raise InspectionError(f"variable not found: {name}")
+
+    module, type_name = _type_metadata(
+        value, max_string_chars=limits.max_string_chars
+    )
     budget = _Budget(limits.max_items)
     try:
         serialized = _serialize(value, limits=limits, budget=budget, depth=0, seen=set())
@@ -172,7 +223,9 @@ def _serialize(
         return value
 
     if value_type not in (list, tuple, dict):
-        module, type_name = _type_metadata(value)
+        module, type_name = _type_metadata(
+            value, max_string_chars=limits.max_string_chars
+        )
         raise UnsupportedValue(f"unsupported variable type: {module}.{type_name}")
 
     object_id = id(value)
