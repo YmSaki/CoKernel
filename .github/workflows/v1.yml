@@ -1,11 +1,10 @@
 name: v1
 
+# Intentionally manual-only.
+# CoKernel v1 development uses local/self-hosted verification scripts and must not
+# consume GitHub-hosted Actions minutes during normal development.
 on:
-  push:
-    branches:
-      - cokernel-v1
-      - 'v1/**'
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
