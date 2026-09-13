@@ -1,6 +1,6 @@
 use rmcp::model::ToolAnnotations;
-use rmcp::schemars::{JsonSchema, schema_for};
 use rmcp::transport::streamable_http_server::StreamableHttpServerConfig;
+use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
 use serde_json::Value;
 
