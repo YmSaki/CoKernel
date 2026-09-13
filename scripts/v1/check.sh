@@ -40,4 +40,7 @@ python3 scripts/v1/spike_worker_interrupt.py
 echo '[v1-check] Runtime Project + uv smoke'
 python3 scripts/v1/smoke_runtime_project.py
 
+echo '[v1-check] Session Supervisor canonical smoke'
+cargo run -q -p cokernel-runtime --example session_supervisor_smoke
+
 echo '[v1-check] PASS'
