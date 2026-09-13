@@ -128,6 +128,25 @@ pub enum FailureClassification {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FailureTrigger {
+    ProcessExit,
+    WorkerDisconnected,
+    HeartbeatTimeout,
+    WorkerProtocol,
+    RuntimeIo,
+    RuntimeControl,
+    Startup,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeFailureContext {
+    pub trigger: FailureTrigger,
+    pub detail: Option<String>,
+    pub session_state: SessionState,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessMemorySnapshot {
     pub rss_bytes: Option<u64>,
@@ -223,6 +242,8 @@ pub struct FailureRecord {
     pub wsl_memory_snapshot: Option<SystemMemorySnapshot>,
     #[serde(default)]
     pub linux_oom_evidence: Option<LinuxOomEvidence>,
+    #[serde(default)]
+    pub runtime_event_context: Option<RuntimeFailureContext>,
     pub classification: FailureClassification,
     pub confidence: f32,
 }

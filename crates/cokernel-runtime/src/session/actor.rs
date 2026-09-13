@@ -91,7 +91,7 @@ async fn run_session_actor(
                     }
                     Err(error) => {
                         cancel_pending_requests(&context, &mut execute_rx);
-                        record_crash(&context, &mut child, error.to_string()).await;
+                        record_crash(&context, &mut child, error).await;
                         return;
                     }
                 }
@@ -101,7 +101,7 @@ async fn run_session_actor(
                     Ok(_) => {}
                     Err(error) => {
                         cancel_pending_requests(&context, &mut execute_rx);
-                        record_crash(&context, &mut child, error.to_string()).await;
+                        record_crash(&context, &mut child, error).await;
                         return;
                     }
                 }
@@ -116,7 +116,7 @@ async fn run_session_actor(
                     Ok(None) => {}
                     Err(error) => {
                         cancel_pending_requests(&context, &mut execute_rx);
-                        record_crash(&context, &mut child, error.to_string()).await;
+                        record_crash(&context, &mut child, SessionError::Io(error)).await;
                         return;
                     }
                 }
@@ -125,7 +125,7 @@ async fn run_session_actor(
                     record_crash(
                         &context,
                         &mut child,
-                        SessionError::WorkerHeartbeatTimeout(context.heartbeat_timeout).to_string(),
+                        SessionError::WorkerHeartbeatTimeout(context.heartbeat_timeout),
                     ).await;
                     return;
                 }

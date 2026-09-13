@@ -35,7 +35,12 @@ async fn terminate_child(child: &mut Child) -> Option<ExitStatus> {
 }
 
 async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
-    let evidence = collect_failure_evidence(context.worker_pid);
+    let runtime_event_context = cokernel_domain::RuntimeFailureContext {
+        trigger: cokernel_domain::FailureTrigger::ProcessExit,
+        detail: Some(format_exit_status_ref(&status)),
+        session_state: observed_session_state(context),
+    };
+    let evidence = collect_failure_evidence(context.worker_pid, Some(runtime_event_context));
     let (classification, confidence) = apply_oom_classification(
         classify_exit_ref(&status),
         0.8,
@@ -55,11 +60,17 @@ async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
     let _ = context.events.send(SessionEvent::Failure { record });
 }
 
-async fn record_crash(context: &SessionActorContext, child: &mut Child, detail: String) {
+async fn record_crash(context: &SessionActorContext, child: &mut Child, error: SessionError) {
+    let detail = error.to_string();
+    let runtime_event_context = cokernel_domain::RuntimeFailureContext {
+        trigger: failure_trigger(&error),
+        detail: Some(detail.clone()),
+        session_state: observed_session_state(context),
+    };
     // Capture /proc/cgroup evidence before recovery termination whenever the worker is still alive.
     // This is intentionally best-effort and bounded; failure evidence collection must never block
     // worker cleanup or manufacture a root cause.
-    let evidence = collect_failure_evidence(context.worker_pid);
+    let evidence = collect_failure_evidence(context.worker_pid, Some(runtime_event_context));
     let observed_status = child.try_wait().ok().flatten();
     let supervisor_terminated = observed_status.is_none();
     if supervisor_terminated {
@@ -130,6 +141,7 @@ async fn failure_record(
         worker_memory_snapshot: evidence.worker_memory_snapshot,
         wsl_memory_snapshot: evidence.wsl_memory_snapshot,
         linux_oom_evidence: evidence.linux_oom_evidence,
+        runtime_event_context: evidence.runtime_event_context,
         classification,
         confidence,
     }
@@ -140,6 +152,7 @@ struct FailureEvidenceSnapshot {
     worker_memory_snapshot: Option<cokernel_domain::ProcessMemorySnapshot>,
     wsl_memory_snapshot: Option<cokernel_domain::SystemMemorySnapshot>,
     linux_oom_evidence: Option<cokernel_domain::LinuxOomEvidence>,
+    runtime_event_context: Option<cokernel_domain::RuntimeFailureContext>,
 }
 
 fn oom_baselines() -> &'static StdMutex<HashMap<u32, cokernel_domain::LinuxOomEvidence>> {
@@ -170,7 +183,10 @@ fn forget_oom_baseline(worker_pid: u32) {
     let _ = take_oom_baseline(worker_pid);
 }
 
-fn collect_failure_evidence(worker_pid: u32) -> FailureEvidenceSnapshot {
+fn collect_failure_evidence(
+    worker_pid: u32,
+    runtime_event_context: Option<cokernel_domain::RuntimeFailureContext>,
+) -> FailureEvidenceSnapshot {
     let baseline = take_oom_baseline(worker_pid);
     let linux_oom_evidence = read_linux_oom_evidence(worker_pid)
         .map(|current| correlate_linux_oom_evidence(current, baseline.as_ref()));
@@ -178,6 +194,31 @@ fn collect_failure_evidence(worker_pid: u32) -> FailureEvidenceSnapshot {
         worker_memory_snapshot: read_process_memory_snapshot(worker_pid),
         wsl_memory_snapshot: read_system_memory_snapshot(),
         linux_oom_evidence,
+        runtime_event_context,
+    }
+}
+
+fn observed_session_state(context: &SessionActorContext) -> SessionState {
+    let receiver = context.state_tx.subscribe();
+    let state = *receiver.borrow();
+    state
+}
+
+fn failure_trigger(error: &SessionError) -> cokernel_domain::FailureTrigger {
+    match error {
+        SessionError::WorkerExitedDuringStartup(_) | SessionError::WorkerExited(_) => {
+            cokernel_domain::FailureTrigger::ProcessExit
+        }
+        SessionError::WorkerDisconnected => cokernel_domain::FailureTrigger::WorkerDisconnected,
+        SessionError::WorkerHeartbeatTimeout(_) => cokernel_domain::FailureTrigger::HeartbeatTimeout,
+        SessionError::WorkerTransport(_) => cokernel_domain::FailureTrigger::WorkerProtocol,
+        SessionError::Io(_) => cokernel_domain::FailureTrigger::RuntimeIo,
+        SessionError::CommandChannelClosed | SessionError::StopTimeout(_) => {
+            cokernel_domain::FailureTrigger::RuntimeControl
+        }
+        SessionError::StartupTimeout | SessionError::InvalidReady(_) => {
+            cokernel_domain::FailureTrigger::Startup
+        }
     }
 }
 
@@ -317,6 +358,10 @@ fn classify_exit_ref(status: &ExitStatus) -> FailureClassification {
 }
 
 fn format_exit_status(status: ExitStatus) -> String {
+    format_exit_status_ref(&status)
+}
+
+fn format_exit_status_ref(status: &ExitStatus) -> String {
     match (status.code(), status.signal()) {
         (Some(code), _) => format!("exit code {code}"),
         (_, Some(signal)) => format!("signal {signal}"),
@@ -443,5 +488,21 @@ mod failure_evidence_tests {
         let reset = correlate_linux_oom_evidence(oom_evidence("/old", 1, 0), Some(&baseline));
         assert_eq!(reset.oom_delta, None);
         assert_eq!(reset.oom_kill_delta, None);
+    }
+
+    #[test]
+    fn failure_triggers_are_structured_from_session_errors() {
+        assert_eq!(
+            failure_trigger(&SessionError::WorkerDisconnected),
+            cokernel_domain::FailureTrigger::WorkerDisconnected
+        );
+        assert_eq!(
+            failure_trigger(&SessionError::WorkerHeartbeatTimeout(Duration::from_secs(10))),
+            cokernel_domain::FailureTrigger::HeartbeatTimeout
+        );
+        assert_eq!(
+            failure_trigger(&SessionError::CommandChannelClosed),
+            cokernel_domain::FailureTrigger::RuntimeControl
+        );
     }
 }
