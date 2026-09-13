@@ -65,6 +65,8 @@ pub enum SessionError {
     InvalidReady(String),
     #[error("session command channel is closed")]
     CommandChannelClosed,
+    #[error("session did not reach a terminal state before restart timeout")]
+    RestartTimeout,
 }
 
 #[derive(Debug, Clone)]
@@ -214,7 +216,9 @@ impl SessionSupervisor {
             }
         }
 
-        let handle = self.start_worker(project, notebook_id).await?;
+        let handle = self
+            .start_worker(project, notebook_id, SessionId::new())
+            .await?;
         self.primary_by_notebook
             .lock()
             .await
@@ -244,12 +248,37 @@ impl SessionSupervisor {
         project: &Project,
         notebook_id: NotebookId,
     ) -> Result<SessionHandle, SessionError> {
-        if let Some(existing) = self.primary_handle(notebook_id).await {
-            existing.stop().await?;
-            wait_until_terminal(&existing, self.config.shutdown_timeout).await;
-        }
-        self.primary_by_notebook.lock().await.remove(&notebook_id);
-        self.ensure_primary(project, notebook_id).await
+        let _guard = self.start_lock.lock().await;
+        let existing = self.primary_handle(notebook_id).await;
+        let session_id = match existing {
+            Some(existing) => {
+                if is_live_state(existing.state()) {
+                    if existing.state() != SessionState::Stopping {
+                        match existing.stop().await {
+                            Ok(()) => {}
+                            Err(error) if !is_live_state(existing.state()) => {}
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    if !wait_until_terminal(&existing, self.config.shutdown_timeout).await {
+                        return Err(SessionError::RestartTimeout);
+                    }
+                }
+                existing.session_id()
+            }
+            None => SessionId::new(),
+        };
+
+        let handle = self.start_worker(project, notebook_id, session_id).await?;
+        self.primary_by_notebook
+            .lock()
+            .await
+            .insert(notebook_id, handle.session_id());
+        self.sessions
+            .lock()
+            .await
+            .insert(handle.session_id(), handle.clone());
+        Ok(handle)
     }
 
     pub async fn mark_project_environment_stale(
@@ -288,9 +317,9 @@ impl SessionSupervisor {
         &self,
         project: &Project,
         notebook_id: NotebookId,
+        session_id: SessionId,
     ) -> Result<SessionHandle, SessionError> {
         prepare_socket_dir(&self.config.socket_dir)?;
-        let session_id = SessionId::new();
         let socket_path = self.config.socket_dir.join(format!("{session_id}.sock"));
         let _ = fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path)?;
@@ -395,11 +424,12 @@ fn is_live_state(state: SessionState) -> bool {
     )
 }
 
-async fn wait_until_terminal(handle: &SessionHandle, maximum: Duration) {
+async fn wait_until_terminal(handle: &SessionHandle, maximum: Duration) -> bool {
     let deadline = tokio::time::Instant::now() + maximum;
     while is_live_state(handle.state()) && tokio::time::Instant::now() < deadline {
         sleep(Duration::from_millis(25)).await;
     }
+    !is_live_state(handle.state())
 }
 
 fn prepare_socket_dir(path: &Path) -> Result<(), std::io::Error> {
