@@ -199,9 +199,8 @@ fn collect_failure_evidence(
 }
 
 fn observed_session_state(context: &SessionActorContext) -> SessionState {
-    let receiver = context.state_tx.subscribe();
-    let state = *receiver.borrow();
-    state
+    let current = context.state_tx.borrow();
+    *current
 }
 
 fn failure_trigger(error: &SessionError) -> cokernel_domain::FailureTrigger {
