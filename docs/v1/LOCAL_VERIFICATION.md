@@ -28,7 +28,10 @@ These entrypoints run the current baseline checks:
 - worker uv environment sync;
 - worker executable smoke test;
 - worker pytest suite;
-- uv Project + CoKernel worker overlay spike.
+- uv Project + CoKernel worker overlay spike;
+- Linux/WSL worker SIGINT survival/continuation spike.
+
+The SIGINT spike intentionally skips on native Windows because the production Python worker runs inside WSL/Linux and is supervised there.
 
 ## Evidence policy
 
