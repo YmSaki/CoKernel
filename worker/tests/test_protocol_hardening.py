@@ -123,6 +123,14 @@ def test_execute_operation_id_must_match_request_id_and_keeps_running() -> None:
             response["error"]["summary"]
             == "execute.operation_id must match request id"
         )
+
+        send_frame(
+            client,
+            request("get_variable", {"name": "should_not_run"}, "inspect-after-reject"),
+        )
+        inspection = receive_response(client, "inspect-after-reject")
+        assert inspection["ok"] is False
+        assert inspection["error"]["summary"] == "variable not found: should_not_run"
         assert_worker_survives(client)
     finally:
         stop_loop(server, client, thread)
