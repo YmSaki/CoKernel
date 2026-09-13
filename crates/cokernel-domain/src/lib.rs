@@ -150,10 +150,16 @@ pub struct ExecutionSession {
     pub project_id: ProjectId,
     pub notebook_id: NotebookId,
     pub state: SessionState,
+    #[serde(default = "initial_worker_generation")]
+    pub worker_generation: u64,
     pub environment_generation: u64,
     pub started_at: DateTime<Utc>,
     pub current_operation_id: Option<OperationId>,
     pub queue_depth: usize,
+}
+
+const fn initial_worker_generation() -> u64 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,5 +207,10 @@ mod tests {
         let id = ProjectId::new();
         let parsed = id.to_string().parse::<ProjectId>().unwrap();
         assert_eq!(parsed, id);
+    }
+
+    #[test]
+    fn initial_worker_generation_is_one() {
+        assert_eq!(initial_worker_generation(), 1);
     }
 }

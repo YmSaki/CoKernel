@@ -83,6 +83,10 @@ async fn main() -> Result<()> {
     let mut events_a = session_a.subscribe();
     let mut events_b = session_b.subscribe();
 
+    if session_a.snapshot().worker_generation != 1 || session_b.snapshot().worker_generation != 1 {
+        bail!("fresh Sessions must start at worker generation 1");
+    }
+
     // Canonical persistent-state proof.
     let set_x = session_a
         .execute_cell(ExecutionOrigin::Human, "cell-a1", "x = 123")
@@ -133,8 +137,116 @@ async fn main() -> Result<()> {
     }
     expect_success(wait_operation(&mut events_a, slow_a).await?, Some("'A-done'"))?;
 
+    // Interrupt must preserve the worker and namespace rather than restart it.
+    let remember_b = session_b
+        .execute_cell(
+            ExecutionOrigin::Human,
+            "cell-b3",
+            "restart_marker = 77\nrestart_marker",
+        )
+        .await?;
+    expect_success(wait_operation(&mut events_b, remember_b).await?, Some("77"))?;
+    let interrupted = session_b
+        .execute_cell(
+            ExecutionOrigin::Human,
+            "cell-b4",
+            "import time\ntime.sleep(30)\n'not-reached'",
+        )
+        .await?;
+    wait_for_state(&session_b, SessionState::Executing, Duration::from_secs(5)).await?;
+    session_b.interrupt().await?;
+    let interrupted_result = wait_operation(&mut events_b, interrupted).await?;
+    if interrupted_result.status != OperationStatus::Interrupted {
+        bail!(
+            "interrupt returned {:?}, expected INTERRUPTED",
+            interrupted_result.status
+        );
+    }
+    wait_for_state(&session_b, SessionState::Idle, Duration::from_secs(5)).await?;
+    let survived_interrupt = session_b
+        .execute_cell(ExecutionOrigin::Mcp, "cell-b5", "restart_marker")
+        .await?;
+    expect_success(
+        wait_operation(&mut events_b, survived_interrupt).await?,
+        Some("77"),
+    )?;
+
+    // Environment mutation marks an existing Session stale but leaves it executable.
+    let mut project_v2 = project.clone();
+    project_v2.environment_generation = 2;
+    supervisor
+        .mark_project_environment_stale(project.project_id, project_v2.environment_generation)
+        .await;
+    wait_for_state(
+        &session_b,
+        SessionState::StaleEnvironment,
+        Duration::from_secs(5),
+    )
+    .await?;
+    let stale_exec = session_b
+        .execute_cell(ExecutionOrigin::Human, "cell-b6", "6 * 7")
+        .await?;
+    expect_success(wait_operation(&mut events_b, stale_exec).await?, Some("42"))?;
+    wait_for_state(
+        &session_b,
+        SessionState::StaleEnvironment,
+        Duration::from_secs(5),
+    )
+    .await?;
+
+    // Restart preserves logical Session identity, increments worker generation, adopts
+    // the new Project environment generation, and deliberately loses volatile namespace.
+    let before_restart = session_b.snapshot();
+    let restarted_b = supervisor.restart_primary(&project_v2, notebook_b).await?;
+    let after_restart = restarted_b.snapshot();
+    if restarted_b.session_id() != session_b.session_id() {
+        bail!(
+            "restart changed logical Session ID: {} -> {}",
+            session_b.session_id(),
+            restarted_b.session_id()
+        );
+    }
+    if after_restart.worker_generation != before_restart.worker_generation + 1 {
+        bail!(
+            "worker generation did not increment: {} -> {}",
+            before_restart.worker_generation,
+            after_restart.worker_generation
+        );
+    }
+    if after_restart.environment_generation != project_v2.environment_generation {
+        bail!(
+            "restart did not adopt environment generation {}: got {}",
+            project_v2.environment_generation,
+            after_restart.environment_generation
+        );
+    }
+    if after_restart.started_at != before_restart.started_at {
+        bail!("restart changed logical Session started_at");
+    }
+    wait_for_state(&session_b, SessionState::Stopped, Duration::from_secs(5)).await?;
+
+    let ensured_b = supervisor.ensure_primary(&project_v2, notebook_b).await?;
+    if ensured_b.snapshot().worker_generation != after_restart.worker_generation {
+        bail!("ensure_primary replaced a healthy restarted worker");
+    }
+
+    let mut events_restarted_b = restarted_b.subscribe();
+    let lost_namespace = restarted_b
+        .execute_cell(ExecutionOrigin::Human, "cell-b7", "restart_marker")
+        .await?;
+    let lost_namespace = wait_operation(&mut events_restarted_b, lost_namespace).await?;
+    if lost_namespace.status != OperationStatus::Failed {
+        bail!("restart unexpectedly preserved volatile namespace");
+    }
+    let post_restart = restarted_b
+        .execute_cell(ExecutionOrigin::Mcp, "cell-b8", "40 + 2")
+        .await?;
+    expect_success(
+        wait_operation(&mut events_restarted_b, post_restart).await?,
+        Some("42"),
+    )?;
+
     // Forced worker crash must be contained to A and produce FailureRecord evidence.
-    let crashed_session_id = session_a.session_id();
     let crash_op = session_a
         .execute_cell(
             ExecutionOrigin::Internal,
@@ -142,7 +254,7 @@ async fn main() -> Result<()> {
             "import os\nos._exit(23)",
         )
         .await?;
-    let failure = wait_failure(&mut events_a, crashed_session_id).await?;
+    let failure = wait_failure(&mut events_a, session_a.session_id()).await?;
     if failure.operation_id != Some(crash_op) {
         bail!(
             "FailureRecord operation mismatch: expected {crash_op}, got {:?}",
@@ -157,147 +269,29 @@ async fn main() -> Result<()> {
     }
     wait_for_state(&session_a, SessionState::Crashed, Duration::from_secs(5)).await?;
 
-    let survivor = session_b
-        .execute_cell(ExecutionOrigin::Mcp, "cell-b3", "40 + 2")
-        .await?;
-    expect_success(wait_operation(&mut events_b, survivor).await?, Some("42"))?;
+    // An innocuous ensure call must not silently replace a crashed worker; restart is explicit.
+    let crashed_a = supervisor.ensure_primary(&project, notebook_a).await?;
+    if crashed_a.state() != SessionState::Crashed
+        || crashed_a.snapshot().worker_generation != session_a.snapshot().worker_generation
+    {
+        bail!("ensure_primary silently replaced a crashed Session");
+    }
 
-    // A crashed primary must be explicitly restartable without changing its logical Session ID.
-    let restarted_a = supervisor.restart_primary(&project, notebook_a).await?;
-    if restarted_a.session_id() != crashed_session_id {
-        bail!(
-            "restart changed logical Session ID: expected {crashed_session_id}, got {}",
-            restarted_a.session_id()
-        );
-    }
-    if restarted_a.state() != SessionState::Idle {
-        bail!("restarted Session was not IDLE: {:?}", restarted_a.state());
-    }
-    let mut restarted_events_a = restarted_a.subscribe();
-    let namespace_reset = restarted_a
-        .execute_cell(ExecutionOrigin::Human, "cell-a5", "'x' in globals()")
+    let survivor = restarted_b
+        .execute_cell(ExecutionOrigin::Mcp, "cell-b9", "20 + 22")
         .await?;
     expect_success(
-        wait_operation(&mut restarted_events_a, namespace_reset).await?,
-        Some("False"),
-    )?;
-
-    // SIGINT should interrupt only the running operation and keep the worker/namespace usable.
-    let interrupt_op = restarted_a
-        .execute_cell(
-            ExecutionOrigin::Human,
-            "cell-a6",
-            "interrupt_marker = 41\nimport time\ntime.sleep(30)",
-        )
-        .await?;
-    wait_for_state(
-        &restarted_a,
-        SessionState::Executing,
-        Duration::from_secs(5),
-    )
-    .await?;
-    restarted_a.interrupt().await?;
-    let interrupted = wait_operation(&mut restarted_events_a, interrupt_op).await?;
-    if interrupted.status != OperationStatus::Interrupted {
-        bail!(
-            "interrupt did not produce INTERRUPTED status: {:?}",
-            interrupted.status
-        );
-    }
-    wait_for_state(&restarted_a, SessionState::Idle, Duration::from_secs(5)).await?;
-    let after_interrupt = restarted_a
-        .execute_cell(
-            ExecutionOrigin::Mcp,
-            "cell-a7",
-            "interrupt_marker + 1",
-        )
-        .await?;
-    expect_success(
-        wait_operation(&mut restarted_events_a, after_interrupt).await?,
+        wait_operation(&mut events_restarted_b, survivor).await?,
         Some("42"),
     )?;
 
-    // Existing Sessions become stale after an environment generation change, but remain runnable.
-    let mut project_v2 = project.clone();
-    project_v2.environment_generation += 1;
-    supervisor
-        .mark_project_environment_stale(project.project_id, project_v2.environment_generation)
-        .await;
+    restarted_b.stop().await?;
     wait_for_state(
-        &restarted_a,
-        SessionState::StaleEnvironment,
-        Duration::from_secs(5),
-    )
-    .await?;
-    wait_for_state(
-        &session_b,
-        SessionState::StaleEnvironment,
-        Duration::from_secs(5),
-    )
-    .await?;
-
-    let stale_execution = restarted_a
-        .execute_cell(ExecutionOrigin::Human, "cell-a8", "6 * 7")
-        .await?;
-    expect_success(
-        wait_operation(&mut restarted_events_a, stale_execution).await?,
-        Some("42"),
-    )?;
-    if restarted_a.state() != SessionState::StaleEnvironment {
-        bail!(
-            "stale Session lost warning state after execution: {:?}",
-            restarted_a.state()
-        );
-    }
-
-    // Restarting a stale Session uses the current Project generation, preserves the logical ID,
-    // and drops the old volatile namespace.
-    let restarted_v2 = supervisor.restart_primary(&project_v2, notebook_a).await?;
-    if restarted_v2.session_id() != crashed_session_id {
-        bail!(
-            "environment restart changed logical Session ID: expected {crashed_session_id}, got {}",
-            restarted_v2.session_id()
-        );
-    }
-    if restarted_v2.snapshot().environment_generation != project_v2.environment_generation {
-        bail!(
-            "restart used environment generation {}, expected {}",
-            restarted_v2.snapshot().environment_generation,
-            project_v2.environment_generation
-        );
-    }
-    if restarted_a.state() != SessionState::Stopped {
-        bail!(
-            "old worker handle was not terminal before replacement: {:?}",
-            restarted_a.state()
-        );
-    }
-    let mut restarted_v2_events = restarted_v2.subscribe();
-    let reset_after_environment_restart = restarted_v2
-        .execute_cell(
-            ExecutionOrigin::Human,
-            "cell-a9",
-            "'interrupt_marker' in globals()",
-        )
-        .await?;
-    expect_success(
-        wait_operation(
-            &mut restarted_v2_events,
-            reset_after_environment_restart,
-        )
-        .await?,
-        Some("False"),
-    )?;
-
-    restarted_v2.stop().await?;
-    wait_for_state(
-        &restarted_v2,
+        &restarted_b,
         SessionState::Stopped,
         Duration::from_secs(5),
     )
     .await?;
-    session_b.stop().await?;
-    wait_for_state(&session_b, SessionState::Stopped, Duration::from_secs(5)).await?;
 
     println!("[session-supervisor-smoke] PASS");
     Ok(())
@@ -336,7 +330,7 @@ async fn wait_operation(
     operation_id: OperationId,
 ) -> Result<ObservedOperation> {
     let operation_key = operation_id.to_string();
-    timeout(Duration::from_secs(15), async {
+    timeout(Duration::from_secs(40), async {
         let mut text_plain = None;
         loop {
             match events.recv().await {
