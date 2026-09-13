@@ -43,10 +43,12 @@ Read in this order:
 12. [`SECURITY_OBSERVABILITY.md`](SECURITY_OBSERVABILITY.md) — trust boundaries, secrets, metrics, diagnostics, error model.
 13. [`INSTALL_UPDATE.md`](INSTALL_UPDATE.md) — setup, legacy reset, auto-start, update/repair.
 14. [`TEST_ACCEPTANCE.md`](TEST_ACCEPTANCE.md) — verification strategy and release acceptance gates.
-15. [`REPOSITORY_LAYOUT.md`](REPOSITORY_LAYOUT.md) — target source/build repository structure.
-16. [`IMPLEMENTATION_ORDER.md`](IMPLEMENTATION_ORDER.md) — implementation sequence and PR-sized milestones.
-17. [`V0_1_ASSET_INVENTORY.md`](V0_1_ASSET_INVENTORY.md) — what knowledge/code from v0.1 is ported, referenced, or retired.
-18. [`DECISIONS.md`](DECISIONS.md) — concise architectural decision record.
+15. [`TRACEABILITY.md`](TRACEABILITY.md) — requirements -> use cases -> implementation issues -> verification evidence.
+16. [`RISKS.md`](RISKS.md) — implementation/security/data-loss risk register and gates.
+17. [`REPOSITORY_LAYOUT.md`](REPOSITORY_LAYOUT.md) — target source/build repository structure.
+18. [`IMPLEMENTATION_ORDER.md`](IMPLEMENTATION_ORDER.md) — implementation sequence and PR-sized milestones.
+19. [`V0_1_ASSET_INVENTORY.md`](V0_1_ASSET_INVENTORY.md) — what knowledge/code from v0.1 is ported, referenced, or retired.
+20. [`DECISIONS.md`](DECISIONS.md) — concise architectural decision record.
 
 Language-neutral protocol examples live in [`../../protocol/`](../../protocol/README.md).
 
@@ -112,6 +114,7 @@ The specification now fixes:
 - installer/reset/update rules;
 - Desktop UX boundaries;
 - repository/build structure;
-- acceptance tests and implementation order.
+- acceptance tests and implementation order;
+- requirement traceability and architectural risk gates.
 
 Implementation may proceed from Phase 0/1 of `IMPLEMENTATION_ORDER.md`. Any technical spike that changes a documented architectural choice must update this spec set before the dependent implementation is merged.
