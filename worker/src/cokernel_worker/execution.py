@@ -87,11 +87,16 @@ class _BoundedTextCapture(io.StringIO):
         self.max_bytes = max_bytes
         self.stored_bytes = 0
         self.truncated_bytes = 0
+        self._exhausted = False
 
     def write(self, value: str) -> int:
         if type(value) is not str:
             raise TypeError("write() argument must be str")
         encoded = value.encode("utf-8", errors="replace")
+        if self._exhausted:
+            self.truncated_bytes += len(encoded)
+            return len(value)
+
         remaining = self.max_bytes - self.stored_bytes
         stored_count = 0
         if remaining > 0:
@@ -101,7 +106,15 @@ class _BoundedTextCapture(io.StringIO):
                 super().write(prefix)
                 stored_count = len(stored)
                 self.stored_bytes += stored_count
-        self.truncated_bytes += len(encoded) - stored_count
+        dropped = len(encoded) - stored_count
+        self.truncated_bytes += dropped
+        if dropped:
+            # If the byte limit cuts through a multibyte character, there may
+            # still be nominal byte capacity left even though the logical
+            # stream prefix has already been truncated. Never resume capture
+            # on a later write, or output after the omitted character could
+            # appear ahead of the truncation boundary.
+            self._exhausted = True
         return len(value)
 
 
