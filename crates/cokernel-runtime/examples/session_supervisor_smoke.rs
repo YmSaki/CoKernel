@@ -17,7 +17,9 @@ use cokernel_domain::{
 #[cfg(unix)]
 use cokernel_protocol::worker::{self, WorkerFrame};
 #[cfg(unix)]
-use cokernel_runtime::session::{SessionEvent, SessionHandle, SessionSupervisor, SessionSupervisorConfig};
+use cokernel_runtime::session::{
+    SessionEvent, SessionHandle, SessionSupervisor, SessionSupervisorConfig,
+};
 #[cfg(unix)]
 use tokio::sync::broadcast;
 #[cfg(unix)]
@@ -132,6 +134,7 @@ async fn main() -> Result<()> {
     expect_success(wait_operation(&mut events_a, slow_a).await?, Some("'A-done'"))?;
 
     // Forced worker crash must be contained to A and produce FailureRecord evidence.
+    let crashed_session_id = session_a.session_id();
     let crash_op = session_a
         .execute_cell(
             ExecutionOrigin::Internal,
@@ -139,7 +142,7 @@ async fn main() -> Result<()> {
             "import os\nos._exit(23)",
         )
         .await?;
-    let failure = wait_failure(&mut events_a, session_a.session_id()).await?;
+    let failure = wait_failure(&mut events_a, crashed_session_id).await?;
     if failure.operation_id != Some(crash_op) {
         bail!(
             "FailureRecord operation mismatch: expected {crash_op}, got {:?}",
@@ -159,6 +162,140 @@ async fn main() -> Result<()> {
         .await?;
     expect_success(wait_operation(&mut events_b, survivor).await?, Some("42"))?;
 
+    // A crashed primary must be explicitly restartable without changing its logical Session ID.
+    let restarted_a = supervisor.restart_primary(&project, notebook_a).await?;
+    if restarted_a.session_id() != crashed_session_id {
+        bail!(
+            "restart changed logical Session ID: expected {crashed_session_id}, got {}",
+            restarted_a.session_id()
+        );
+    }
+    if restarted_a.state() != SessionState::Idle {
+        bail!("restarted Session was not IDLE: {:?}", restarted_a.state());
+    }
+    let mut restarted_events_a = restarted_a.subscribe();
+    let namespace_reset = restarted_a
+        .execute_cell(ExecutionOrigin::Human, "cell-a5", "'x' in globals()")
+        .await?;
+    expect_success(
+        wait_operation(&mut restarted_events_a, namespace_reset).await?,
+        Some("False"),
+    )?;
+
+    // SIGINT should interrupt only the running operation and keep the worker/namespace usable.
+    let interrupt_op = restarted_a
+        .execute_cell(
+            ExecutionOrigin::Human,
+            "cell-a6",
+            "interrupt_marker = 41\nimport time\ntime.sleep(30)",
+        )
+        .await?;
+    wait_for_state(
+        &restarted_a,
+        SessionState::Executing,
+        Duration::from_secs(5),
+    )
+    .await?;
+    restarted_a.interrupt().await?;
+    let interrupted = wait_operation(&mut restarted_events_a, interrupt_op).await?;
+    if interrupted.status != OperationStatus::Interrupted {
+        bail!(
+            "interrupt did not produce INTERRUPTED status: {:?}",
+            interrupted.status
+        );
+    }
+    wait_for_state(&restarted_a, SessionState::Idle, Duration::from_secs(5)).await?;
+    let after_interrupt = restarted_a
+        .execute_cell(
+            ExecutionOrigin::Mcp,
+            "cell-a7",
+            "interrupt_marker + 1",
+        )
+        .await?;
+    expect_success(
+        wait_operation(&mut restarted_events_a, after_interrupt).await?,
+        Some("42"),
+    )?;
+
+    // Existing Sessions become stale after an environment generation change, but remain runnable.
+    let mut project_v2 = project.clone();
+    project_v2.environment_generation += 1;
+    supervisor
+        .mark_project_environment_stale(project.project_id, project_v2.environment_generation)
+        .await;
+    wait_for_state(
+        &restarted_a,
+        SessionState::StaleEnvironment,
+        Duration::from_secs(5),
+    )
+    .await?;
+    wait_for_state(
+        &session_b,
+        SessionState::StaleEnvironment,
+        Duration::from_secs(5),
+    )
+    .await?;
+
+    let stale_execution = restarted_a
+        .execute_cell(ExecutionOrigin::Human, "cell-a8", "6 * 7")
+        .await?;
+    expect_success(
+        wait_operation(&mut restarted_events_a, stale_execution).await?,
+        Some("42"),
+    )?;
+    if restarted_a.state() != SessionState::StaleEnvironment {
+        bail!(
+            "stale Session lost warning state after execution: {:?}",
+            restarted_a.state()
+        );
+    }
+
+    // Restarting a stale Session uses the current Project generation, preserves the logical ID,
+    // and drops the old volatile namespace.
+    let restarted_v2 = supervisor.restart_primary(&project_v2, notebook_a).await?;
+    if restarted_v2.session_id() != crashed_session_id {
+        bail!(
+            "environment restart changed logical Session ID: expected {crashed_session_id}, got {}",
+            restarted_v2.session_id()
+        );
+    }
+    if restarted_v2.snapshot().environment_generation != project_v2.environment_generation {
+        bail!(
+            "restart used environment generation {}, expected {}",
+            restarted_v2.snapshot().environment_generation,
+            project_v2.environment_generation
+        );
+    }
+    if restarted_a.state() != SessionState::Stopped {
+        bail!(
+            "old worker handle was not terminal before replacement: {:?}",
+            restarted_a.state()
+        );
+    }
+    let mut restarted_v2_events = restarted_v2.subscribe();
+    let reset_after_environment_restart = restarted_v2
+        .execute_cell(
+            ExecutionOrigin::Human,
+            "cell-a9",
+            "'interrupt_marker' in globals()",
+        )
+        .await?;
+    expect_success(
+        wait_operation(
+            &mut restarted_v2_events,
+            reset_after_environment_restart,
+        )
+        .await?,
+        Some("False"),
+    )?;
+
+    restarted_v2.stop().await?;
+    wait_for_state(
+        &restarted_v2,
+        SessionState::Stopped,
+        Duration::from_secs(5),
+    )
+    .await?;
     session_b.stop().await?;
     wait_for_state(&session_b, SessionState::Stopped, Duration::from_secs(5)).await?;
 
