@@ -18,7 +18,7 @@ L5 MCP/tunnel end-to-end tests
 L6 real NVIDIA Windows workstation acceptance
 ```
 
-No single CI environment is expected to prove all GPU/Windows behaviors; release requires both automated CI and explicit real-machine acceptance.
+Normal v1 development and release verification do **not** depend on GitHub-hosted CI. The canonical verification entrypoints are repository-local scripts (`scripts/v1/check.sh` and `scripts/v1/check.ps1`) plus explicit WSL/Windows/GPU acceptance runs on machines controlled by the project. If a self-hosted runner is introduced later, it is only an execution convenience for the same commands and does not replace local evidence.
 
 ## 2. L0 — Static and schema tests
 
@@ -122,7 +122,7 @@ Against fake Runtime bridge:
 
 ## 5. L3 — WSL integration tests
 
-Run on Windows CI/self-hosted environment where WSL is available when possible.
+Run on a controlled Windows development/test machine where WSL is available. Hosted CI is not part of this validation path.
 
 Validate:
 
@@ -357,9 +357,9 @@ v1 release is blocked by any of:
 - disruptive update can kill Sessions without explicit user decision;
 - `.ipynb` written by normal supported operations is structurally invalid.
 
-## 16. CI release gates
+## 16. Release verification gates
 
-A release build requires green:
+A release build requires recorded PASS results for the following local/self-hosted verification groups:
 
 ```text
 rust-core
@@ -372,4 +372,4 @@ windows-host-build
 installer-build
 ```
 
-Plus signed/recorded real-machine acceptance for GPU/tunnel paths not proven by hosted CI.
+The canonical commands are ordinary repository/toolchain commands, wrapped by `scripts/v1/check.sh` or `scripts/v1/check.ps1` where practical. Release evidence records the machine/OS/tool versions and command results. Real-machine GPU/WSL/tunnel acceptance remains mandatory and is not delegated to hosted infrastructure.
