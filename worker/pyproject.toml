@@ -1,0 +1,27 @@
+[project]
+name = "cokernel-worker"
+version = "1.0.0a0"
+description = "CoKernel v1 supervised IPython execution worker"
+requires-python = ">=3.11"
+dependencies = [
+  "ipython>=9,<10",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8,<10",
+]
+
+[project.scripts]
+cokernel-worker = "cokernel_worker.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cokernel_worker"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
