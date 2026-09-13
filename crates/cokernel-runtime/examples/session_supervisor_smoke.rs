@@ -98,6 +98,56 @@ async fn main() -> Result<()> {
         .await?;
     expect_success(wait_operation(&mut events_a, read_x).await?, Some("124"))?;
 
+    // Human and MCP executions must share one FIFO. Hold the first operation in-flight,
+    // enqueue two callers from different origins, then prove acceptance order through state.
+    let init_fifo = session_a
+        .execute_cell(ExecutionOrigin::Human, "cell-a-fifo-init", "fifo_order = []")
+        .await?;
+    expect_success(wait_operation(&mut events_a, init_fifo).await?, None)?;
+
+    let human_first = session_a
+        .execute_cell(
+            ExecutionOrigin::Human,
+            "cell-a-fifo-human-1",
+            "import time\ntime.sleep(1.0)\nfifo_order.append('human')\nlist(fifo_order)",
+        )
+        .await?;
+    wait_for_state(&session_a, SessionState::Executing, Duration::from_secs(5)).await?;
+
+    let mcp_second = session_a
+        .execute_cell(
+            ExecutionOrigin::Mcp,
+            "cell-a-fifo-mcp-2",
+            "fifo_order.append('mcp')\nlist(fifo_order)",
+        )
+        .await?;
+    let human_third = session_a
+        .execute_cell(
+            ExecutionOrigin::Human,
+            "cell-a-fifo-human-3",
+            "fifo_order.append('human-2')\nlist(fifo_order)",
+        )
+        .await?;
+    if session_a.snapshot().queue_depth != 2 {
+        bail!(
+            "shared FIFO queue depth mismatch while first operation runs: expected 2, got {}",
+            session_a.snapshot().queue_depth
+        );
+    }
+
+    expect_success(
+        wait_operation(&mut events_a, human_first).await?,
+        Some("['human']"),
+    )?;
+    expect_success(
+        wait_operation(&mut events_a, mcp_second).await?,
+        Some("['human', 'mcp']"),
+    )?;
+    expect_success(
+        wait_operation(&mut events_a, human_third).await?,
+        Some("['human', 'mcp', 'human-2']"),
+    )?;
+
     // Namespace isolation: another Session must not see x from Session A.
     let isolated = session_b
         .execute_cell(ExecutionOrigin::Human, "cell-b1", "x")
