@@ -34,6 +34,9 @@ try {
     Write-Host '[v1-check] Worker SIGINT survival spike (Linux/WSL proof; skips on native Windows)'
     python scripts/v1/spike_worker_interrupt.py
 
+    Write-Host '[v1-check] Runtime Project + uv smoke'
+    python scripts/v1/smoke_runtime_project.py
+
     Write-Host '[v1-check] PASS'
 }
 finally {
