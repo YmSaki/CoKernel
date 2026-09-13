@@ -721,7 +721,6 @@ async fn graceful_stop(
 }
 
 async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
-    finish_current_operation(context, OperationStatus::Failed);
     let record = failure_record(
         context,
         status.code(),
@@ -730,12 +729,12 @@ async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
         0.8,
     )
     .await;
+    finish_current_operation(context, OperationStatus::Failed);
     set_state(context, SessionState::Crashed);
     let _ = context.events.send(SessionEvent::Failure { record });
 }
 
 async fn record_crash(context: &SessionActorContext, child: &mut Child, detail: String) {
-    finish_current_operation(context, OperationStatus::Failed);
     let status = child.try_wait().ok().flatten();
     if status.is_none() {
         let _ = child.start_kill();
@@ -760,6 +759,7 @@ async fn record_crash(context: &SessionActorContext, child: &mut Child, detail: 
         }
         record.last_stderr.push_str(&detail);
     }
+    finish_current_operation(context, OperationStatus::Failed);
     set_state(context, SessionState::Crashed);
     let _ = context.events.send(SessionEvent::Failure { record });
 }
