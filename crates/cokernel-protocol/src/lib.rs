@@ -42,10 +42,7 @@ pub enum FrameError {
     InvalidJson(#[from] serde_json::Error),
 }
 
-pub fn encode_json_frame<T: Serialize>(
-    value: &T,
-    max_bytes: usize,
-) -> Result<Vec<u8>, FrameError> {
+pub fn encode_json_frame<T: Serialize>(value: &T, max_bytes: usize) -> Result<Vec<u8>, FrameError> {
     let payload = serde_json::to_vec(value)?;
     if payload.len() > max_bytes {
         return Err(FrameError::TooLarge(payload.len()));
