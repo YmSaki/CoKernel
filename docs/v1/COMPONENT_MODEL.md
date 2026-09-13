@@ -1,712 +1,423 @@
 # CoKernel v1 Component Model
 
-Status: **design baseline**  
-Depends on: `docs/v1/CONCEPTUAL_DESIGN.md`
+Status: **implementation baseline**  
+Depends on: `REQUIREMENTS.md`, `DOMAIN_MODEL.md`, `ARCHITECTURE.md`
 
-## 1. Decomposition policy
+CoKernel v1 is decomposed by ownership, lifecycle, trust boundary, and failure containment.
 
-CoKernel v1 is divided by ownership boundary, lifecycle, and trust boundary rather than by current script/file layout.
-
-Top-level components:
+## 1. Top-level component map
 
 ```text
-Windows Control Plane
-├─ Desktop UI
-├─ Host
-├─ Installer/Bootstrapper
-├─ Secret Store
-├─ Update Manager
-└─ Diagnostics/Telemetry
+Windows
+├─ C-WIN-01 Desktop UI
+├─ C-WIN-02 Host
+├─ C-WIN-03 Host IPC Server
+├─ C-WIN-04 Secret Store
+├─ C-WIN-05 Update/Repair Manager
+└─ C-WIN-06 Bootstrap/Installer
 
-WSL Compute Plane
-├─ Runtime Manager
-├─ Network Bridge
-├─ Docker Runtime
-├─ Jupyter Service
-│  ├─ Control-plane Python
-│  ├─ Workspace Environment Manager
-│  └─ Kernel/Session Manager
-├─ MCP Service
-│  └─ CoKernel MCP Policy Extension
-└─ Secure Tunnel Service
+Managed WSL
+├─ C-LNX-01 Runtime Bridge/Daemon
+├─ C-LNX-02 Project Registry
+├─ C-LNX-03 uv Environment Manager
+├─ C-LNX-04 Notebook Document Service
+├─ C-LNX-05 Session Supervisor
+├─ C-LNX-06 Metrics/Diagnostics Collector
+├─ C-LNX-07 MCP Service
+└─ C-LNX-08 Tunnel Supervisor
+
+Per live Session
+└─ C-EXE-01 Python/IPython Worker
 ```
 
-The v1 implementation may package multiple logical components into one executable initially, but component interfaces must remain explicit so later Node/Fabric work can reuse them.
+## 2. C-WIN-01 — Desktop UI
 
----
+### Responsibilities
 
-# 2. Windows Control Plane
+- Project list/create/open/delete actions;
+- package add/remove/sync UX;
+- notebook create/import/open/edit/save UX;
+- cell execution/interrupt/restart/stop controls;
+- Session/resource state display;
+- MCP/Remote Access settings/status;
+- logs/diagnostics/update/repair UX;
+- file picker and Windows-side notebook import initiation;
+- tray presence and notifications.
 
-## C-WIN-01 — CoKernel Desktop UI
+### Must not
 
-**Responsibility**
+- directly own WSL lifetime;
+- directly invoke uv as the authoritative environment path;
+- directly spawn Session workers;
+- store plaintext tunnel secrets;
+- write Project `.ipynb` files behind the Runtime document service.
 
-- render current product state;
-- expose start/stop/restart/update/repair actions;
-- open Jupyter;
-- configure display/runtime preferences;
-- configure Secure Tunnel credentials;
-- show logs/diagnostics/errors;
-- display metrics and active kernel count;
-- provide explicit legacy-reset confirmation.
+### Dependency
 
-**Must not**
+Desktop -> current-user Host IPC only.
 
-- directly implement WSL lifecycle rules;
-- directly parse Docker output as its primary state model;
-- hold long-running runtime ownership;
-- store plaintext API secrets.
+## 3. C-WIN-02 — Host
 
-**Inputs**
+Long-running user-level Windows control process.
 
-- Host IPC status stream / request-response API.
+### Responsibilities
 
-**Outputs**
+- persist desired runtime state;
+- own the long-lived `wsl.exe` bridge while RUNNING;
+- reconnect/restart the bridge with bounded backoff;
+- broker Desktop requests to Runtime;
+- aggregate Windows + Runtime metrics;
+- manage Windows auto-start;
+- hold/broker external secrets;
+- coordinate installer/update/repair operations;
+- emit user notifications;
+- preserve runtime operation IDs across UI reconnects where practical.
 
-- user intents to Host.
+### Failure property
 
-**v1 implementation note**
+Desktop failure must not imply Runtime/Session termination. Host failure may drop the Windows bridge, but Runtime behavior/recovery must be explicit and diagnosable.
 
-WPF/.NET 8 is acceptable for v1. WinUI is not an architectural requirement. The UI technology must not leak into runtime contracts.
+## 4. C-WIN-03 — Host IPC Server
 
----
+### Transport
 
-## C-WIN-02 — CoKernel Host
+Windows Named Pipe, current-user ACL.
 
-**Responsibility**
+### Responsibilities
 
-This is the central v1 control-plane component.
-
-- persist desired state (`RUNNING|STOPPED`);
-- own WSL lifetime while desired state is RUNNING;
-- orchestrate runtime startup dependency order;
-- poll/aggregate health;
-- execute bounded self-healing;
-- broker secrets to WSL;
-- expose typed IPC to Desktop;
-- coordinate update and repair;
-- emit structured logs/events;
-- publish component state and metrics.
-
-**Runtime state machine**
-
-```text
-UNINSTALLED
-  ↓ install
-STOPPED
-  ↓ start
-STARTING
-  ↓ success
-HEALTHY
-  ↘ partial failure → DEGRADED
-  ↘ fatal/retry exhaustion → ERROR
-
-HEALTHY/DEGRADED
-  ↓ update → UPDATING
-  ↓ repair → REPAIRING
-  ↓ stop → STOPPING → STOPPED
-```
-
-**Key principle**
-
-The Host is authoritative for desired/observed state. Docker restart policies and systemd are helpers, not the source of truth.
-
----
-
-## C-WIN-03 — Host IPC
-
-**Responsibility**
-
-Provide a local-only stable contract between Desktop and Host.
-
-Initial recommendation:
-
-```text
-Named Pipe + versioned JSON messages
-```
-
-Required operations:
-
-```text
-GetStatus
-GetMetrics
-GetKernels
-StartRuntime
-StopRuntime
-RestartRuntime
-UpdateRuntime
-RepairRuntime
-OpenJupyter
-GetLogs
-ExportDiagnostics
-GetSettings
-SetSettings
-SetTunnelCredentials
-LegacyReset
-```
-
-Properties:
-
-- current-user ACL;
-- protocol version field;
-- request id;
-- structured error code;
+- versioned request/response methods;
+- asynchronous event subscription;
+- request IDs and operation IDs;
 - cancellation/timeouts;
-- no secrets in ordinary status responses.
+- structured errors;
+- streaming/chunked notebook import payloads;
+- no secret echo in status/event responses.
 
----
-
-## C-WIN-04 — Installer / Bootstrapper
-
-**Responsibility**
-
-- preflight Windows/WSL/GPU requirements;
-- distinguish v0.1 legacy runtime from v1 installation;
-- run explicit Legacy Reset;
-- create managed WSL distro;
-- install versioned runtime payload;
-- configure automatic Host startup;
-- support reboot-and-resume;
-- install/upgrade Desktop + Host;
-- establish product version metadata.
-
-**Legacy Reset contract**
-
-A legacy `CoKernel` distro may be destroyed for v1 installation only after explicit user authorization in released builds.
-
-Reset operation:
+### Example methods
 
 ```text
-stop legacy runtime if possible
-→ optional workspace export
-→ wsl --terminate CoKernel
-→ wsl --unregister CoKernel
-→ remove legacy Windows runtime state
-→ fresh v1 provision
+runtime.status
+runtime.start
+runtime.stop
+projects.list
+projects.create
+projects.open
+packages.list
+packages.add
+packages.remove
+packages.sync
+notebooks.list
+notebooks.create
+notebooks.import
+notebooks.get
+notebooks.apply_edits
+sessions.list
+sessions.start
+sessions.execute_cell
+sessions.interrupt
+sessions.restart
+sessions.stop
+resources.get
+remote_access.status
+remote_access.configure
+diagnostics.export
 ```
 
-No v0.1 WSL image migration is required.
+## 5. C-WIN-04 — Secret Store
+
+### Backing
+
+Windows user-scoped DPAPI/Credential Manager abstraction.
+
+### Owns
+
+- OpenAI/Secure Tunnel external credentials;
+- future remote-node credentials.
+
+### Does not own
+
+- user Project secrets placed intentionally in Project files;
+- volatile local runtime/session IDs.
+
+### Rules
+
+- no secrets in command-line arguments;
+- no secrets in ordinary logs/events;
+- no secrets copied into Project directories;
+- diagnostics redact known secret forms.
+
+## 6. C-WIN-05 — Update/Repair Manager
+
+### Responsibilities
+
+- discover/stage versioned product artifacts;
+- determine disruptive/non-disruptive update impact;
+- protect active Sessions from surprise termination;
+- coordinate Windows binaries and WSL runtime payload updates;
+- run post-update acceptance;
+- initiate repair/convergence;
+- retain rollback metadata where supported.
+
+## 7. C-WIN-06 — Bootstrap/Installer
+
+### Responsibilities
+
+- prerequisite/preflight checks;
+- WSL enable/update/reboot-resume;
+- legacy-runtime detection and explicit reset flow;
+- dedicated distro provisioning;
+- Linux identities/permissions;
+- runtime payload installation;
+- uv and GPU prerequisites;
+- Host/Desktop installation and auto-start registration;
+- first-run acceptance.
 
 ---
 
-## C-WIN-05 — Secret Store
+## 8. C-LNX-01 — Runtime Bridge/Daemon
 
-**Responsibility**
+Central Linux control-plane process.
 
-Store external credentials and provide a narrow broker API.
+### Interfaces
 
-Secrets:
+- framed stdio bridge to Windows Host;
+- Unix domain socket API for local MCP and other trusted product services.
 
-- OpenAI tunnel API key;
-- future node credentials.
+### Responsibilities
 
-Recommended backing:
+- protocol handshake/versioning;
+- route domain operations;
+- Project registry;
+- Session lifecycle ownership via Session Supervisor;
+- Runtime health state;
+- child service supervision for MCP/Tunnel;
+- Linux-side structured logging;
+- expose metrics/diagnostic operations.
 
-- Windows DPAPI/Credential Manager abstraction, current-user scope.
+### Must not
 
-Local Jupyter/MCP runtime tokens remain generated within the runtime unless a Windows-side consumer specifically needs them.
+- execute notebook user code in-process;
+- expose tunnel secrets to workers;
+- let one client bypass domain invariants.
 
-**Rules**
+## 9. C-LNX-02 — Project Registry
 
-- no API key in command-line arguments;
-- no plaintext key in logs;
-- no key in diagnostics bundle;
-- no key checked into runtime payload.
+### Responsibilities
+
+- assign/stabilize `project_id`;
+- map Project ID to canonical WSL-native root;
+- validate Project root containment/permissions;
+- discover notebooks;
+- track recent/open Projects;
+- provide Project metadata independent of live environment state.
+
+### Persistence
+
+Small product-owned registry under `/var/lib/cokernel/state/` plus Project-local files where appropriate.
+
+## 10. C-LNX-03 — uv Environment Manager
+
+### Responsibilities
+
+- initialize uv Project when requested;
+- detect Python/dependency requirements;
+- create/sync environment;
+- add/remove packages;
+- query dependency state;
+- expose uv operation progress/errors;
+- compute environment generation/fingerprint;
+- mark existing Sessions stale after successful environment mutation;
+- manage/cache cleanup commands without breaking active Projects.
+
+### Source of truth
+
+`pyproject.toml` + `uv.lock`.
+
+### Must not
+
+- silently restart Sessions after environment mutation;
+- replace uv dependency resolution with product-specific resolution.
+
+## 11. C-LNX-04 — Notebook Document Service
+
+### Responsibilities
+
+- parse/validate nbformat v4 `.ipynb` JSON;
+- preserve unknown metadata;
+- create/import/open documents;
+- stable notebook/cell IDs;
+- document revision control;
+- apply human/AI edits;
+- apply execution outputs;
+- atomic file writes;
+- external modification detection;
+- emit notebook revision events;
+- normalize only what is necessary for valid output.
+
+### Ownership rule
+
+Only this service writes open NotebookDocuments as part of normal CoKernel operation. Workers emit results; they do not persist notebook files.
+
+## 12. C-LNX-05 — Session Supervisor
+
+### Responsibilities
+
+- one primary live Session per notebook by default;
+- spawn worker with Project interpreter/environment;
+- maintain Session state machine;
+- per-Session FIFO execution queue;
+- allow different Sessions to run concurrently;
+- interrupt/stop/restart workers;
+- capture child PID/exit status/stdout/stderr;
+- correlate failures with OOM/resource/runtime evidence;
+- retain bounded FailureRecords;
+- publish state/execution events;
+- mark environment-stale Sessions after Project sync.
+
+### Critical failure boundary
+
+A worker crash must not crash the Runtime daemon or unrelated workers.
+
+## 13. C-LNX-06 — Metrics/Diagnostics Collector
+
+### Sources
+
+- `/proc` and process metadata;
+- WSL memory state;
+- filesystem usage;
+- NVIDIA management interface / `nvidia-smi` fallback;
+- child process resource data;
+- Runtime/MCP/Tunnel supervision state;
+- kernel/OS OOM evidence where available.
+
+### Responsibilities
+
+- typed resource snapshots;
+- best-effort per-Session attribution;
+- diagnostic bundle source data;
+- bounded log collection;
+- redaction support.
+
+## 14. C-LNX-07 — MCP Service
+
+Separate product process/service using Runtime domain API.
+
+### Responsibilities
+
+- Streamable HTTP MCP endpoint;
+- local bearer authentication;
+- domain-oriented tools;
+- exact tool annotations/schema;
+- input validation/bounds;
+- map all stateful operations to Runtime IDs/queues;
+- never create hidden execution state outside Session Supervisor.
+
+### Must not
+
+- directly spawn Python workers;
+- directly edit `.ipynb` behind Notebook Document Service;
+- store external tunnel credentials.
+
+## 15. C-LNX-08 — Tunnel Supervisor
+
+### Responsibilities
+
+- start tunnel only after MCP ready;
+- receive credential material through controlled handoff;
+- monitor readiness/reconnect;
+- expose no secret material to notebook workers;
+- keep tunnel failure independent from local compute;
+- stop tunnel when Remote Access disabled.
 
 ---
 
-## C-WIN-06 — Metrics Aggregator
+## 16. C-EXE-01 — Python/IPython Worker
 
-**Responsibility**
+One worker per ExecutionSession.
 
-Aggregate Windows and WSL/compute metrics into one typed snapshot.
+### Responsibilities
 
-Windows sources:
+- connect to supervisor private Unix socket;
+- start IPython execution shell;
+- maintain user namespace;
+- execute queued cell source;
+- capture/emit ordered output events;
+- top-level async/IPython behavior;
+- constrained variable inspection;
+- cooperative interrupt handling;
+- heartbeat/status response.
 
-- CPU;
-- physical RAM;
-- host storage;
-- NVIDIA NVML or `nvidia-smi` fallback.
+### Must not
 
-WSL/runtime sources:
+- manage uv dependency state;
+- write notebook files;
+- contact MCP/Tunnel directly;
+- receive Windows/tunnel/MCP credentials;
+- supervise other workers.
 
-- WSL RAM;
-- workspace filesystem;
-- Docker/runtime state;
-- Jupyter kernel count;
-- optional per-process/GPU attribution when reliable.
+## 17. Dependency direction
 
-Refresh targets:
-
-- resource metrics: 1–3 s while dashboard visible, slower in tray-only mode;
-- health: 2–5 s normal, faster only during startup/recovery.
-
----
-
-## C-WIN-07 — Health Supervisor
-
-**Responsibility**
-
-Evaluate layered health and trigger bounded recovery.
-
-Health graph:
+Allowed normal direction:
 
 ```text
-WSL
-└─ Docker
-   ├─ Jupyter
-   │  ├─ HTTP/API
-   │  ├─ workspace writable
-   │  └─ GPU visible
-   ├─ MCP
-   │  └─ initialize/tool discovery
-   └─ Tunnel (optional)
-      └─ readyz/control-plane connectivity
+Desktop
+  -> Host IPC
+     -> Host
+        -> WSL Runtime bridge
+           -> Runtime domain services
+              -> Project/uv/Notebook/Session services
+                 -> Worker
+
+AI
+  -> Tunnel
+     -> MCP
+        -> Runtime domain services
 ```
 
-Recovery policy:
+Forbidden shortcuts include Desktop -> worker, MCP -> worker direct spawn, and worker -> notebook file persistence.
+
+## 18. Event flow example — Execute Cell
 
 ```text
-Level 1: restart individual service
-Level 2: reconcile compose stack
-Level 3: restart Docker
-Level 4: restart dedicated WSL distro
-Level 5: stop automated recovery and surface ERROR
+Desktop/MCP
+  -> sessions.execute_cell(session_id, notebook_id, cell_id, revision)
+Host (Desktop path only)
+  -> Runtime
+Session Supervisor
+  -> enqueue operation
+  -> Worker execute request
+Worker
+  -> stdout/display/result/error events
+Supervisor
+  -> operation events
+Notebook Document Service
+  -> apply final/stream-supported outputs with revision control
+Runtime
+  -> subscribers
+Desktop/MCP caller
 ```
 
-Crash-loop protection is mandatory.
-
----
-
-## C-WIN-08 — Update Manager
-
-**Responsibility**
-
-- discover product update;
-- stage signed/versioned artifacts;
-- determine whether kernel interruption is required;
-- defer or request confirmation;
-- apply Windows + WSL runtime update coherently;
-- run post-update health acceptance;
-- report rollback/recovery state.
-
-**Important change from v0.1**
-
-Installed v1 does not run `git pull` as its product update mechanism.
-
----
-
-## C-WIN-09 — Diagnostics Manager
-
-**Responsibility**
-
-Create a redacted diagnostics bundle containing:
-
-- product versions;
-- Windows/WSL version;
-- distro state;
-- Docker/runtime info;
-- NVIDIA information;
-- health snapshot;
-- loopback checks;
-- Jupyter/MCP/Tunnel status;
-- recent structured logs;
-- optional smoke-test result.
-
-No secret material may be exported.
-
----
-
-# 3. WSL Compute Plane
-
-## C-LNX-01 — Runtime Manager
-
-**Responsibility**
-
-Provide a stable Linux-side management surface independent of raw script layout.
-
-v1 target interface can be a single product CLI invoked by Host, e.g.:
+## 19. Event flow example — Worker crash
 
 ```text
-cokernel-runtime status --json
-cokernel-runtime start
-cokernel-runtime stop
-cokernel-runtime health --json
-cokernel-runtime metrics --json
-cokernel-runtime repair
-cokernel-runtime logs --json
+Worker exits
+  -> Supervisor records exit/signal/stderr
+  -> Metrics Collector snapshots RAM/GPU/OOM context
+  -> FailureRecord persisted
+  -> Session = CRASHED
+  -> Runtime event published
+  -> Desktop/AI sees failure evidence
+  -> restart only on explicit/defined recovery action
 ```
 
-The first implementation may internally call retained shell functions/scripts, but Windows Host must depend on the stable command contract rather than scraping arbitrary shell output.
-
-**Why this exists**
-
-v0.1 has useful shell logic but no stable typed boundary. v1 needs one before Node/Fabric can reuse the runtime remotely.
-
----
-
-## C-LNX-02 — WSL Bootstrap / Isolation
-
-**Responsibility**
-
-- install Linux prerequisites;
-- Docker Engine;
-- NVIDIA Container Toolkit;
-- enable systemd;
-- set managed distro marker/version;
-- disable Windows drive automount;
-- disable Windows executable interop;
-- configure users/groups/permissions.
-
-Bootstrap is privileged and separate from ordinary runtime control.
-
----
-
-## C-LNX-03 — Network Bridge
-
-**Responsibility**
-
-Expose real WSL localhost listeners for Windows localhost forwarding while keeping Docker backend ports private.
-
-Logical mapping:
-
-```text
-Windows localhost:8888
-  → WSL listener:8888
-  → Docker backend:18888
-  → jupyter:8888
-
-Windows localhost:4040
-  → WSL listener:4040
-  → Docker backend:14040
-  → mcp:4040
-
-Windows localhost:8080
-  → WSL listener:8080
-  → Docker backend:18080
-  → tunnel:8080
-```
-
-The current `systemd-socket-proxyd` approach is retained unless a simpler equally secure mechanism is proven on real machines.
-
----
-
-## C-LNX-04 — Container Orchestrator
-
-**Responsibility**
-
-Manage the Compose application stack.
-
-Services:
-
-- `jupyter`;
-- `mcp`;
-- optional `tunnel`.
-
-Rules:
-
-- backend ports bind to WSL loopback only where publishing is needed;
-- Jupyter receives GPU;
-- MCP does not require GPU;
-- workload containers do not receive Docker socket;
-- tunnel starts only after MCP healthy;
-- healthchecks are authoritative inputs, not the global desired-state controller.
-
----
-
-# 4. Jupyter service internal components
-
-## C-JUP-01 — Control-plane Python Runtime
-
-Path:
-
-```text
-/opt/cokernel
-```
-
-Owns:
-
-- JupyterLab;
-- jupyter-collaboration;
-- infrastructure extensions;
-- product-selected JupyterLab language packs/extensions.
-
-Policy:
-
-- immutable during normal operation;
-- built by image;
-- no runtime `pip install` UX;
-- not the notebook dependency environment.
-
----
-
-## C-JUP-02 — Workspace Environment Manager
-
-Path:
-
-```text
-/workspace
-/workspace/.venv
-```
-
-Owns:
-
-- creation of minimal workspace project when absent;
-- `uv sync`;
-- dependency state;
-- kernelspec registration;
-- future `Workspace Packages` actions.
-
-Source of truth:
-
-```text
-/workspace/pyproject.toml
-/workspace/uv.lock
-```
-
-Operations eventually exposed through Host/UI:
-
-```text
-ListPackages
-AddPackage
-RemovePackage
-SyncEnvironment
-EnvironmentStatus
-```
-
-These are uv operations, not mutations of `/opt/cokernel`.
-
----
-
-## C-JUP-03 — Kernel/Session Manager
-
-**Responsibility**
-
-- register `cokernel-workspace`;
-- configure it as default Python kernel;
-- enumerate sessions/kernels;
-- support active-kernel protection during update;
-- provide the same-kernel lookup primitive used by MCP.
-
-Invariant:
-
-New notebooks must not accidentally run against `/opt/cokernel/bin/python`.
-
----
-
-## C-JUP-04 — Jupyter UX Configuration
-
-**Responsibility**
-
-- default kernel selection;
-- JupyterLab locale;
-- disable/read-only Extension Manager mutation path;
-- product branding/integration where useful;
-- supported language packs installed at image build.
-
-Japanese localization is a first-class v1 configuration, not a runtime PyPI-install workaround.
-
----
-
-# 5. MCP service internal components
-
-## C-MCP-01 — Upstream Jupyter MCP Server
-
-Pinned upstream dependency remains the base implementation.
-
-CoKernel does not fork it in v1 unless an extension API limitation is proven.
-
----
-
-## C-MCP-02 — Same-Kernel Resolver
-
-Existing CoKernel concept retained.
-
-Input:
-
-- notebook path;
-- optional explicit kernel id.
-
-Output:
-
-- unique existing kernel id or explicit failure.
-
-No silent kernel creation when attaching to an existing notebook.
-
----
-
-## C-MCP-03 — Tool Metadata Adapter
-
-**Responsibility**
-
-When wrapping/replacing upstream tools:
-
-- preserve exact annotations;
-- preserve precise input types such as `Literal`;
-- regression-test tool metadata;
-- never accidentally fall back to conservative/wrong default annotations.
-
-This component fixes the metadata regression identified by Issue #22.
-
----
-
-## C-MCP-04 — Narrow Capability Tools
-
-v1 CoKernel-specific tools:
-
-### `connect_notebook`
-
-Existing notebook/session only.
-
-### `create_notebook`
-
-Create-only/no-overwrite.
-
-### `list_variables`
-
-Bounded safe variable metadata.
-
-### `get_variable`
-
-Identifier-only, bounded exact-type serialization.
-
-These tools reduce the need for broad `use_notebook`/`execute_code` capabilities for benign intents.
-
----
-
-## C-MCP-05 — Transport Security Adapter
-
-Retains DNS-rebinding protection while allowlisting the private Compose service hostname required by tunnel-client.
-
-No global Host-validation disable.
-
----
-
-# 6. Secure Tunnel
-
-## C-TUN-01 — Tunnel Client
-
-OpenAI Secure MCP Tunnel remains the remote transport from ChatGPT to private MCP.
-
-CoKernel responsibilities around it:
-
-- inject private MCP bearer auth internally;
-- start only after MCP is healthy;
-- use `readyz` as runtime readiness;
-- no OAuth requirement for CoKernel's MCP auth model;
-- preserve admin UI loopback restrictions;
-- keep OpenAI control-plane access outbound only.
-
----
-
-# 7. Cross-component contracts
-
-## 7.1 Status contract
-
-A typed status snapshot contains at least:
-
-```text
-product_version
-runtime_version
-desired_state
-observed_state
-wsl
-container_runtime
-jupyter
-mcp
-tunnel
-workspace
-gpu
-active_kernel_count
-last_error
-last_transition_at
-```
-
-Each component status has:
-
-```text
-state
-healthy
-message
-error_code?
-last_checked_at
-```
-
-## 7.2 Error contract
-
-Errors exposed to Desktop must include:
-
-```text
-code
-component
-summary
-action
-technical_detail?
-```
-
-Example:
-
-```text
-CK-MCP-004
-MCP
-"MCP did not become ready"
-"Restart MCP or run Diagnostics"
-```
-
-Raw exit codes are diagnostic detail, not the primary user message.
-
-## 7.3 Logging contract
-
-Structured event fields:
-
-```text
-timestamp
-severity
-component
-event_id
-operation_id?
-message
-error_code?
-```
-
-Secrets are redacted at source where possible and again during bundle export.
-
----
-
-# 8. Component ownership summary
-
-| Component | Runs on | Product-owned state | User-owned state |
-|---|---|---|---|
-| Desktop UI | Windows | preferences/UI cache | none |
-| Host | Windows | desired state, health metadata | none |
-| Secret Store | Windows | encrypted credentials | credentials supplied by user |
-| Installer | Windows | installed product files | none |
-| Runtime Manager | WSL | runtime config/state | none |
-| Network Bridge | WSL | systemd units/config | none |
-| Docker Runtime | WSL | images/containers | none |
-| Jupyter control plane | container | `/opt/cokernel` | none |
-| Workspace Env Manager | container/workspace | generated metadata | `pyproject.toml`, `uv.lock`, notebooks |
-| MCP | container | tool/session attachment state | none |
-| Tunnel | container | ephemeral runtime state | none |
-
----
-
-# 9. Dependency direction
-
-Allowed dependency direction:
-
-```text
-Desktop UI
-   ↓
-Host API
-   ↓
-Runtime Management Contract
-   ↓
-WSL/Docker services
-   ↓
-Jupyter/MCP/Tunnel
-```
-
-MCP may call Jupyter APIs. Tunnel may call MCP. Jupyter must not depend on Desktop UI. Runtime containers must not depend on Windows source checkout structure.
-
-This direction is mandatory for later CoKernel Node/Fabric reuse.
+## 20. Component testability rule
+
+Every component must have a test seam that does not require the complete product:
+
+- uv manager can run against temporary Projects;
+- notebook service can run against fixture `.ipynb` files;
+- worker protocol can run with fake supervisor;
+- supervisor can run with crash/slow/fake workers;
+- MCP can run against a fake Runtime domain service;
+- Host can run against a fake WSL bridge;
+- Desktop can run against a fake Host IPC server.
