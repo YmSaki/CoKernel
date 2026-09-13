@@ -343,10 +343,12 @@ Rules for `get_variable`:
 - no attribute/property access;
 - no calling user functions;
 - do not call arbitrary `repr`/`str` on unsupported/custom values;
-- serialize only approved exact built-in types (`None`, `bool`, `int`, finite `float`, `str`, bounded exact `list`/`tuple`/`dict` with approved contents/keys);
+- serialize only approved exact built-in types (`None`, `bool`, `int` within interoperable JSON safe range `[-(2^53-1), 2^53-1]`, finite `float`, `str`, bounded exact `list`/`tuple`/`dict` with approved contents/keys);
+- out-of-range integers are unsupported rather than emitted as lossy or implementation-dependent JSON numbers;
 - exact type checks rather than subclass-polymorphic behavior for safe values;
 - bounded recursion depth/item count/string size/total response;
-- unsupported values return type name/module and `unsupported=true` without user-defined representation.
+- unsupported values return type name/module and `unsupported=true` without user-defined representation;
+- type/module metadata lookup must not invoke custom metaclass descriptors; when metadata cannot be read without crossing that boundary, return unknown metadata.
 
 Hostile-object tests are mandatory.
 
