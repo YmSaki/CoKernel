@@ -178,8 +178,9 @@ session_id
 project_id
 notebook_id
 worker_pid?
-state
+worker_generation
 environment_generation
+state
 started_at
 last_activity_at
 current_operation_id?
@@ -297,19 +298,28 @@ failure_id
 component
 session_id?
 operation_id?
+cell_id?
 timestamp
 exit_code?
 signal?
 last_stderr
-last_operation
+worker_pid?
+worker_generation?
+worker_started_at?
+environment_generation?
+worker_memory_snapshot
 linux_oom_evidence
-host_memory_snapshot
 wsl_memory_snapshot
+host_memory_snapshot
 gpu_snapshot
 runtime_event_context
 classification
 confidence
 ```
+
+`runtime_event_context` records the structured failure trigger and the bounded pre-failure Session evidence tail. The Session tail contains lifecycle/operation/worker-event metadata only; it does not duplicate stdout/stderr/rich-output payloads. Runtime-local evidence is captured before cleanup where possible. Host memory, GPU, and Runtime/WSL restart correlation are attached by the Windows Host/metrics boundary when that evidence source is available; absence of those sources must remain explicit rather than being inferred.
+
+Linux OOM classification uses per-worker cgroup-v2 `memory.events` baselines captured at Session worker start. `OOM_SUSPECTED` is only produced from a same-cgroup positive `oom_kill` delta associated with an already-terminated worker. Cumulative counters, cgroup changes, counter resets, or Supervisor-generated recovery termination do not establish OOM causality.
 
 `classification` may be:
 
