@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/cokernel-domain",
+  "crates/cokernel-protocol",
+  "crates/cokernel-runtime",
+  "crates/cokernel-host",
+  "crates/cokernel-mcp",
+  "crates/cokernel-bootstrap",
+]
+
+[workspace.package]
+version = "1.0.0-alpha.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/YmSaki/CoKernel"
+
+[workspace.dependencies]
+anyhow = "1"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4", "serde"] }
