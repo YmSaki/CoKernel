@@ -21,16 +21,36 @@ struct SessionActorContext {
     current_operation: Arc<StdMutex<Option<OperationId>>>,
     stderr_tail: Arc<Mutex<ByteTail>>,
     shutdown_timeout: Duration,
+    heartbeat_timeout: Duration,
+}
+
+async fn read_worker_frames(
+    mut reader: OwnedReadHalf,
+    sender: mpsc::Sender<Result<WorkerFrame, SessionError>>,
+) {
+    loop {
+        let inbound = match read_worker_frame(&mut reader).await {
+            Ok(Some(frame)) => Ok(frame),
+            Ok(None) => Err(SessionError::WorkerDisconnected),
+            Err(error) => Err(error.into()),
+        };
+        let terminal = inbound.is_err();
+        if sender.send(inbound).await.is_err() || terminal {
+            return;
+        }
+    }
 }
 
 async fn run_session_actor(
     context: SessionActorContext,
-    mut stream: UnixStream,
+    mut writer: OwnedWriteHalf,
     mut child: Child,
     mut execute_rx: mpsc::Receiver<ExecuteRequest>,
     mut control_rx: mpsc::Receiver<ControlRequest>,
+    mut worker_frames: mpsc::Receiver<Result<WorkerFrame, SessionError>>,
 ) {
     let mut stale_environment = false;
+    let mut last_worker_activity = Instant::now();
     loop {
         tokio::select! {
             biased;
@@ -38,7 +58,7 @@ async fn run_session_actor(
                 match control {
                     Some(ControlRequest::Stop) | None => {
                         cancel_pending_requests(&context, &mut execute_rx);
-                        graceful_stop(&context, &mut stream, &mut child).await;
+                        graceful_stop(&context, &mut writer, &mut child).await;
                         return;
                     }
                     Some(ControlRequest::MarkEnvironmentStale) => {
@@ -50,16 +70,18 @@ async fn run_session_actor(
             }
             request = execute_rx.recv() => {
                 let Some(request) = request else {
-                    graceful_stop(&context, &mut stream, &mut child).await;
+                    graceful_stop(&context, &mut writer, &mut child).await;
                     return;
                 };
                 match execute_one(
                     &context,
-                    &mut stream,
+                    &mut writer,
                     &mut child,
                     &mut control_rx,
+                    &mut worker_frames,
                     request,
                     &mut stale_environment,
+                    &mut last_worker_activity,
                 ).await {
                     Ok(ExecuteDisposition::Completed) => {}
                     Ok(ExecuteDisposition::Stopped) => {
@@ -73,7 +95,17 @@ async fn run_session_actor(
                     }
                 }
             }
-            _ = sleep(Duration::from_millis(250)) => {
+            inbound = worker_frames.recv() => {
+                match observe_worker_frame(&context, inbound, &mut last_worker_activity) {
+                    Ok(_) => {}
+                    Err(error) => {
+                        cancel_pending_requests(&context, &mut execute_rx);
+                        record_crash(&context, &mut child, error.to_string()).await;
+                        return;
+                    }
+                }
+            }
+            _ = sleep(HEALTH_POLL_INTERVAL) => {
                 match child.try_wait() {
                     Ok(Some(status)) => {
                         cancel_pending_requests(&context, &mut execute_rx);
@@ -87,6 +119,15 @@ async fn run_session_actor(
                         return;
                     }
                 }
+                if heartbeat_expired(last_worker_activity, context.heartbeat_timeout) {
+                    cancel_pending_requests(&context, &mut execute_rx);
+                    record_crash(
+                        &context,
+                        &mut child,
+                        SessionError::WorkerHeartbeatTimeout(context.heartbeat_timeout).to_string(),
+                    ).await;
+                    return;
+                }
             }
         }
     }
@@ -99,11 +140,13 @@ enum ExecuteDisposition {
 
 async fn execute_one(
     context: &SessionActorContext,
-    stream: &mut UnixStream,
+    writer: &mut OwnedWriteHalf,
     child: &mut Child,
     control_rx: &mut mpsc::Receiver<ControlRequest>,
+    worker_frames: &mut mpsc::Receiver<Result<WorkerFrame, SessionError>>,
     request: ExecuteRequest,
     stale_environment: &mut bool,
+    last_worker_activity: &mut Instant,
 ) -> Result<ExecuteDisposition, SessionError> {
     *context
         .current_operation
@@ -124,7 +167,7 @@ async fn execute_one(
             "origin": request.origin,
         }),
     };
-    write_worker_frame(stream, &frame).await?;
+    write_worker_frame(writer, &frame).await?;
 
     let mut interrupted = false;
     loop {
@@ -143,19 +186,13 @@ async fn execute_one(
                     }
                     Some(ControlRequest::Stop) | None => {
                         finish_operation(context, request.operation_id, OperationStatus::Cancelled);
-                        graceful_stop(context, stream, child).await;
+                        graceful_stop(context, writer, child).await;
                         return Ok(ExecuteDisposition::Stopped);
                     }
                 }
             }
-            frame = read_worker_frame(stream) => {
-                let Some(frame) = frame? else {
-                    return Err(SessionError::WorkerDisconnected);
-                };
-                let _ = context.events.send(SessionEvent::WorkerFrame {
-                    session_id: context.session_id,
-                    frame: frame.clone(),
-                });
+            inbound = worker_frames.recv() => {
+                let frame = observe_worker_frame(context, inbound, last_worker_activity)?;
                 if let WorkerFrame::Response { id, ok, result, .. } = &frame {
                     if id == &request_id {
                         let succeeded = *ok
@@ -184,13 +221,34 @@ async fn execute_one(
                     }
                 }
             }
-            _ = sleep(Duration::from_millis(250)) => {
+            _ = sleep(HEALTH_POLL_INTERVAL) => {
                 if let Some(status) = child.try_wait()? {
                     return Err(SessionError::WorkerExited(format_exit_status(status)));
+                }
+                if heartbeat_expired(*last_worker_activity, context.heartbeat_timeout) {
+                    return Err(SessionError::WorkerHeartbeatTimeout(context.heartbeat_timeout));
                 }
             }
         }
     }
+}
+
+fn observe_worker_frame(
+    context: &SessionActorContext,
+    inbound: Option<Result<WorkerFrame, SessionError>>,
+    last_worker_activity: &mut Instant,
+) -> Result<WorkerFrame, SessionError> {
+    let frame = inbound.ok_or(SessionError::WorkerDisconnected)??;
+    *last_worker_activity = Instant::now();
+    let _ = context.events.send(SessionEvent::WorkerFrame {
+        session_id: context.session_id,
+        frame: frame.clone(),
+    });
+    Ok(frame)
+}
+
+fn heartbeat_expired(last_worker_activity: Instant, heartbeat_timeout: Duration) -> bool {
+    last_worker_activity.elapsed() >= heartbeat_timeout
 }
 
 fn finish_operation(
@@ -263,4 +321,3 @@ async fn send_signal(pid: u32, signal: &str) -> Result<(), std::io::Error> {
         )))
     }
 }
-

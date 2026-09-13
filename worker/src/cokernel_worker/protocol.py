@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+import math
 import os
 import platform
 import socket
 import struct
+import threading
+import time
 from typing import Any
 
 import IPython
@@ -16,6 +19,7 @@ from .output_limits import OperationOutputBudget, OutputLimits, encode_json
 
 PROTOCOL_V1 = 1
 DEFAULT_MAX_FRAME_BYTES = 8 * 1024 * 1024
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 2.0
 
 
 class WorkerProtocolError(RuntimeError):
@@ -77,11 +81,28 @@ class WorkerLoop:
         engine: ExecutionEngine | None = None,
         *,
         output_limits: OutputLimits | None = None,
+        heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     ) -> None:
         self.session_id = session_id
         self.engine = engine or ExecutionEngine()
         self.output_limits = output_limits or OutputLimits()
         self.output_limits.validate(max_frame_bytes=DEFAULT_MAX_FRAME_BYTES)
+        if type(heartbeat_interval_seconds) not in (int, float):
+            raise ValueError("heartbeat_interval_seconds must be a positive finite number")
+        try:
+            heartbeat_interval = float(heartbeat_interval_seconds)
+        except OverflowError as error:
+            raise ValueError(
+                "heartbeat_interval_seconds must be a positive finite number"
+            ) from error
+        if not math.isfinite(heartbeat_interval) or heartbeat_interval <= 0:
+            raise ValueError("heartbeat_interval_seconds must be a positive finite number")
+        self.heartbeat_interval_seconds = heartbeat_interval
+        self._send_lock = threading.Lock()
+
+    @property
+    def heartbeat_interval_ms(self) -> int:
+        return max(1, round(self.heartbeat_interval_seconds * 1000))
 
     def run(self, sock: socket.socket) -> None:
         self._send_event(
@@ -92,13 +113,39 @@ class WorkerLoop:
                 "python_version": platform.python_version(),
                 "ipython_version": IPython.__version__,
                 "pid": os.getpid(),
+                "heartbeat_interval_ms": self.heartbeat_interval_ms,
             },
         )
-        while True:
-            request = receive_frame(sock)
-            if request is None:
-                return
-            if self._handle_request(sock, request):
+        heartbeat_stop = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            args=(sock, heartbeat_stop),
+            name=f"cokernel-heartbeat-{self.session_id}",
+            daemon=True,
+        )
+        heartbeat_thread.start()
+        try:
+            while True:
+                request = receive_frame(sock)
+                if request is None:
+                    return
+                if self._handle_request(sock, request):
+                    return
+        finally:
+            heartbeat_stop.set()
+            heartbeat_thread.join(timeout=1.0)
+
+    def _heartbeat_loop(self, sock: socket.socket, stop: threading.Event) -> None:
+        while not stop.wait(self.heartbeat_interval_seconds):
+            try:
+                self._send_event(
+                    sock,
+                    "heartbeat",
+                    {
+                        "monotonic_ns": time.monotonic_ns(),
+                    },
+                )
+            except (OSError, WorkerProtocolError):
                 return
 
     def _handle_request(self, sock: socket.socket, request: dict[str, Any]) -> bool:
@@ -127,6 +174,7 @@ class WorkerLoop:
                             "reset",
                             "shutdown",
                         ],
+                        "heartbeat_interval_ms": self.heartbeat_interval_ms,
                         "output_limits": {
                             "max_event_bytes": self.output_limits.max_event_bytes,
                             "max_operation_bytes": self.output_limits.max_operation_bytes,
@@ -200,7 +248,7 @@ class WorkerLoop:
                 source_reason=source_reason,
             )
             if message is not None:
-                send_frame(sock, message)
+                self._send_message(sock, message)
                 sequence = next_sequence
 
         if outcome.stdout or outcome.stdout_truncated_bytes:
@@ -275,10 +323,14 @@ class WorkerLoop:
         if type(request.get("method")) is not str or not request["method"]:
             raise WorkerProtocolError("request method must be a non-empty string")
 
+    def _send_message(self, sock: socket.socket, message: dict[str, Any]) -> None:
+        with self._send_lock:
+            send_frame(sock, message)
+
     def _send_response(
         self, sock: socket.socket, request_id: Any, result: dict[str, Any]
     ) -> None:
-        send_frame(
+        self._send_message(
             sock,
             {
                 "protocol": PROTOCOL_V1,
@@ -293,7 +345,7 @@ class WorkerLoop:
     def _send_error(
         self, sock: socket.socket, request_id: Any, error: Exception
     ) -> None:
-        send_frame(
+        self._send_message(
             sock,
             {
                 "protocol": PROTOCOL_V1,
@@ -321,7 +373,7 @@ class WorkerLoop:
     def _send_event(
         self, sock: socket.socket, event: str, payload: dict[str, Any]
     ) -> None:
-        send_frame(sock, self._event_message(event, payload))
+        self._send_message(sock, self._event_message(event, payload))
 
 
 def connect_and_run(socket_path: str, session_id: str) -> None:

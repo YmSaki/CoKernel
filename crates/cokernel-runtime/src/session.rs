@@ -5,7 +5,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use cokernel_domain::{
@@ -16,7 +16,7 @@ use cokernel_protocol::worker::{self, WorkerFrame, WORKER_PROTOCOL_V1};
 use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::{unix::OwnedReadHalf, unix::OwnedWriteHalf, UnixListener};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio::time::{sleep, timeout};
@@ -26,6 +26,8 @@ use crate::worker::{read_worker_frame, uv_worker_command, write_worker_frame, Wo
 const EXECUTE_QUEUE_CAPACITY: usize = 128;
 const CONTROL_QUEUE_CAPACITY: usize = 16;
 const EVENT_QUEUE_CAPACITY: usize = 512;
+const WORKER_FRAME_QUEUE_CAPACITY: usize = 512;
+const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const RESTART_STOP_GRACE: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
@@ -35,6 +37,7 @@ pub struct SessionSupervisorConfig {
     pub socket_dir: PathBuf,
     pub startup_timeout: Duration,
     pub shutdown_timeout: Duration,
+    pub heartbeat_timeout: Duration,
     pub diagnostic_tail_bytes: usize,
 }
 
@@ -46,6 +49,7 @@ impl SessionSupervisorConfig {
             socket_dir: socket_dir.into(),
             startup_timeout: Duration::from_secs(15),
             shutdown_timeout: Duration::from_secs(3),
+            heartbeat_timeout: Duration::from_secs(10),
             diagnostic_tail_bytes: 64 * 1024,
         }
     }
@@ -65,6 +69,8 @@ pub enum SessionError {
     WorkerExited(String),
     #[error("worker disconnected unexpectedly")]
     WorkerDisconnected,
+    #[error("worker heartbeat timed out after {0:?}")]
+    WorkerHeartbeatTimeout(Duration),
     #[error("worker did not send a valid ready event: {0}")]
     InvalidReady(String),
     #[error("session command channel is closed")]
@@ -199,7 +205,6 @@ fn queue_depth(sender: &mpsc::Sender<ExecuteRequest>) -> usize {
         sender.max_capacity().saturating_sub(sender.capacity())
     }
 }
-
 
 include!("session/supervisor.rs");
 include!("session/actor.rs");

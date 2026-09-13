@@ -1,6 +1,6 @@
 async fn graceful_stop(
     context: &SessionActorContext,
-    stream: &mut UnixStream,
+    writer: &mut OwnedWriteHalf,
     child: &mut Child,
 ) {
     set_state(context, SessionState::Stopping);
@@ -11,7 +11,7 @@ async fn graceful_stop(
         method: worker::method::SHUTDOWN.into(),
         payload: json!({}),
     };
-    let _ = write_worker_frame(stream, &request).await;
+    let _ = write_worker_frame(writer, &request).await;
     match timeout(context.shutdown_timeout, child.wait()).await {
         Ok(Ok(_)) => {}
         _ => {
@@ -48,25 +48,25 @@ async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
 }
 
 async fn record_crash(context: &SessionActorContext, child: &mut Child, detail: String) {
-    let status = child.try_wait().ok().flatten();
-    if status.is_none() {
+    let observed_status = child.try_wait().ok().flatten();
+    let supervisor_terminated = observed_status.is_none();
+    if supervisor_terminated {
         let _ = send_signal(context.worker_pid, "TERM").await;
     }
-    let status = match status {
+    let status = match observed_status {
         Some(status) => Some(status),
         None => match timeout(Duration::from_millis(250), child.wait()).await {
             Ok(Ok(status)) => Some(status),
             _ => terminate_child(child).await,
         },
     };
+    let (classification, confidence) = crash_classification(status.as_ref(), supervisor_terminated);
     let mut record = failure_record(
         context,
         status.as_ref().and_then(ExitStatus::code),
         status.as_ref().and_then(ExitStatusExt::signal),
-        status
-            .map(classify_exit)
-            .unwrap_or(FailureClassification::Unknown),
-        0.5,
+        classification,
+        confidence,
     )
     .await;
     if !detail.is_empty() {
@@ -105,7 +105,25 @@ async fn failure_record(
     }
 }
 
+fn crash_classification(
+    status: Option<&ExitStatus>,
+    supervisor_terminated: bool,
+) -> (FailureClassification, f32) {
+    if supervisor_terminated {
+        // A signal sent by the Supervisor is recovery action, not root-cause evidence.
+        return (FailureClassification::Unknown, 0.25);
+    }
+    match status {
+        Some(status) => (classify_exit_ref(status), 0.5),
+        None => (FailureClassification::Unknown, 0.25),
+    }
+}
+
 fn classify_exit(status: ExitStatus) -> FailureClassification {
+    classify_exit_ref(&status)
+}
+
+fn classify_exit_ref(status: &ExitStatus) -> FailureClassification {
     if status.signal().is_some() {
         FailureClassification::ProcessSignal
     } else {
@@ -172,4 +190,3 @@ where
         }
     }
 }
-

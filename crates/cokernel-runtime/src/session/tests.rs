@@ -11,6 +11,47 @@ mod tests {
         assert_eq!(tail.text_lossy(), "56789");
     }
 
+    #[test]
+    fn heartbeat_expiry_is_fail_closed() {
+        let timeout = Duration::from_secs(10);
+        let now = Instant::now();
+        assert!(!heartbeat_expired(now, timeout));
+        let expired = now.checked_sub(Duration::from_secs(11)).unwrap();
+        assert!(heartbeat_expired(expired, timeout));
+    }
+
+    #[test]
+    fn ready_event_requires_positive_heartbeat_contract() {
+        let session_id = SessionId::new();
+        let valid = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.to_string(),
+            event: worker::event::READY.into(),
+            payload: json!({
+                "pid": 1234,
+                "heartbeat_interval_ms": 2000,
+            }),
+        };
+        let ready = validate_ready(&valid, session_id).unwrap();
+        assert_eq!(ready.pid, 1234);
+        assert_eq!(ready.heartbeat_interval, Duration::from_secs(2));
+
+        let missing_heartbeat = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.to_string(),
+            event: worker::event::READY.into(),
+            payload: json!({"pid": 1234}),
+        };
+        assert!(validate_ready(&missing_heartbeat, session_id).is_err());
+    }
+
+    #[test]
+    fn supervisor_termination_is_not_misclassified_as_process_signal() {
+        let (classification, confidence) = crash_classification(None, true);
+        assert_eq!(classification, FailureClassification::Unknown);
+        assert_eq!(confidence, 0.25);
+    }
+
     #[tokio::test]
     async fn cancelling_pending_requests_closes_queue_and_finishes_each_operation() {
         let session_id = SessionId::new();
@@ -26,6 +67,7 @@ mod tests {
             current_operation,
             stderr_tail: Arc::new(Mutex::new(ByteTail::new(16))),
             shutdown_timeout: Duration::from_millis(10),
+            heartbeat_timeout: Duration::from_secs(10),
         };
         let (execute_tx, mut execute_rx) = mpsc::channel(4);
         let first = OperationId::new();

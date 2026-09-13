@@ -215,15 +215,27 @@ impl SessionSupervisor {
                 return Err(SessionError::StartupTimeout);
             }
         };
-        let worker_pid = match validate_ready(&ready, session_id) {
-            Ok(pid) => pid,
+        let ready = match validate_ready(&ready, session_id) {
+            Ok(ready) => ready,
             Err(error) => {
                 terminate_child(&mut child).await;
                 let _ = fs::remove_file(&socket_path);
                 return Err(error);
             }
         };
+        if self.config.heartbeat_timeout <= ready.heartbeat_interval {
+            terminate_child(&mut child).await;
+            let _ = fs::remove_file(&socket_path);
+            return Err(SessionError::InvalidReady(format!(
+                "heartbeat timeout {:?} must exceed worker interval {:?}",
+                self.config.heartbeat_timeout, ready.heartbeat_interval
+            )));
+        }
         let _ = fs::remove_file(&socket_path);
+
+        let (reader, writer) = stream.into_split();
+        let (worker_frames_tx, worker_frames_rx) = mpsc::channel(WORKER_FRAME_QUEUE_CAPACITY);
+        tokio::spawn(read_worker_frames(reader, worker_frames_tx));
 
         let (state_tx, state_rx) = watch::channel(SessionState::Idle);
         let (execute_tx, execute_rx) = mpsc::channel(EXECUTE_QUEUE_CAPACITY);
@@ -253,21 +265,29 @@ impl SessionSupervisor {
         tokio::spawn(run_session_actor(
             SessionActorContext {
                 session_id,
-                worker_pid,
+                worker_pid: ready.pid,
                 state_tx,
                 events,
                 current_operation,
                 stderr_tail,
                 shutdown_timeout: self.config.shutdown_timeout,
+                heartbeat_timeout: self.config.heartbeat_timeout,
             },
-            stream,
+            writer,
             child,
             execute_rx,
             control_rx,
+            worker_frames_rx,
         ));
 
         Ok(handle)
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WorkerReady {
+    pid: u32,
+    heartbeat_interval: Duration,
 }
 
 fn is_terminal_state(state: SessionState) -> bool {
@@ -304,7 +324,10 @@ fn prepare_socket_dir(path: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn validate_ready(frame: &WorkerFrame, expected_session_id: SessionId) -> Result<u32, SessionError> {
+fn validate_ready(
+    frame: &WorkerFrame,
+    expected_session_id: SessionId,
+) -> Result<WorkerReady, SessionError> {
     match frame {
         WorkerFrame::Event {
             protocol,
@@ -320,9 +343,20 @@ fn validate_ready(frame: &WorkerFrame, expected_session_id: SessionId) -> Result
                 .and_then(Value::as_u64)
                 .and_then(|value| u32::try_from(value).ok())
                 .ok_or_else(|| SessionError::InvalidReady("ready event is missing worker pid".into()))?;
-            Ok(pid)
+            let heartbeat_interval_ms = payload
+                .get("heartbeat_interval_ms")
+                .and_then(Value::as_u64)
+                .filter(|value| *value > 0)
+                .ok_or_else(|| {
+                    SessionError::InvalidReady(
+                        "ready event is missing a positive heartbeat interval".into(),
+                    )
+                })?;
+            Ok(WorkerReady {
+                pid,
+                heartbeat_interval: Duration::from_millis(heartbeat_interval_ms),
+            })
         }
         other => Err(SessionError::InvalidReady(format!("{other:?}"))),
     }
 }
-

@@ -27,10 +27,12 @@ def request(method: str, payload=None, request_id: str = "r1"):
     }
 
 
-def start_loop():
+def start_loop(*, heartbeat_interval_seconds: float = 2.0):
     server, client = socket.socketpair()
     thread = threading.Thread(
-        target=WorkerLoop("s1").run,
+        target=WorkerLoop(
+            "s1", heartbeat_interval_seconds=heartbeat_interval_seconds
+        ).run,
         args=(server,),
         daemon=True,
     )
@@ -38,13 +40,20 @@ def start_loop():
     ready = receive_frame(client)
     assert ready is not None
     assert ready["event"] == "ready"
-    return server, client, thread
+    return server, client, thread, ready
+
+
+def receive_response(client, request_id: str):
+    while True:
+        frame = receive_frame(client)
+        assert frame is not None
+        if frame.get("type") == "response" and frame.get("id") == request_id:
+            return frame
 
 
 def stop_loop(client, thread):
     send_frame(client, request("shutdown", request_id="shutdown"))
-    response = receive_frame(client)
-    assert response is not None
+    response = receive_response(client, "shutdown")
     assert response["ok"] is True
     thread.join(timeout=2)
     client.close()
@@ -52,7 +61,7 @@ def stop_loop(client, thread):
 
 
 def test_worker_protocol_persists_namespace_and_supports_safe_inspection() -> None:
-    server, client, thread = start_loop()
+    server, client, thread, _ = start_loop()
     try:
         send_frame(
             client,
@@ -72,8 +81,7 @@ def test_worker_protocol_persists_namespace_and_supports_safe_inspection() -> No
         assert frames[-1]["result"]["status"] == "SUCCEEDED"
 
         send_frame(client, request("get_variable", {"name": "x"}, "g1"))
-        value = receive_frame(client)
-        assert value is not None
+        value = receive_response(client, "g1")
         assert value["ok"] is True
         assert value["result"]["value"] == 123
         assert value["result"]["supported"] is True
@@ -93,7 +101,9 @@ def test_worker_protocol_persists_namespace_and_supports_safe_inspection() -> No
             frames.append(frame)
             if frame.get("type") == "response" and frame.get("id") == "e2":
                 break
-        result_events = [frame for frame in frames if frame.get("event") == "execute_result"]
+        result_events = [
+            frame for frame in frames if frame.get("event") == "execute_result"
+        ]
         assert result_events
         assert result_events[0]["payload"]["data"]["text/plain"] == "124"
     finally:
@@ -102,19 +112,69 @@ def test_worker_protocol_persists_namespace_and_supports_safe_inspection() -> No
 
 
 def test_worker_rejects_wrong_session_without_terminating() -> None:
-    server, client, thread = start_loop()
+    server, client, thread, _ = start_loop()
     try:
         bad = request("ping", request_id="bad")
         bad["session_id"] = "other"
         send_frame(client, bad)
-        response = receive_frame(client)
-        assert response is not None
+        response = receive_response(client, "bad")
         assert response["ok"] is False
 
         send_frame(client, request("ping", request_id="good"))
-        response = receive_frame(client)
-        assert response is not None
+        response = receive_response(client, "good")
         assert response["ok"] is True
     finally:
         stop_loop(client, thread)
         server.close()
+
+
+def test_worker_emits_heartbeat_while_execution_is_running() -> None:
+    server, client, thread, ready = start_loop(heartbeat_interval_seconds=0.02)
+    try:
+        assert ready["payload"]["heartbeat_interval_ms"] == 20
+        send_frame(
+            client,
+            request(
+                "execute",
+                {
+                    "operation_id": "slow-op",
+                    "cell_id": "slow-cell",
+                    "source": "import time\ntime.sleep(0.12)\n42",
+                },
+                "slow-request",
+            ),
+        )
+        saw_heartbeat = False
+        while True:
+            frame = receive_frame(client)
+            assert frame is not None
+            if frame.get("event") == "heartbeat":
+                saw_heartbeat = True
+                assert type(frame["payload"]["monotonic_ns"]) is int
+            if frame.get("type") == "response" and frame.get("id") == "slow-request":
+                break
+        assert saw_heartbeat
+    finally:
+        stop_loop(client, thread)
+        server.close()
+
+
+def test_handshake_advertises_heartbeat_contract() -> None:
+    server, client, thread, _ = start_loop(heartbeat_interval_seconds=0.02)
+    try:
+        send_frame(client, request("handshake", request_id="handshake"))
+        response = receive_response(client, "handshake")
+        assert response["ok"] is True
+        assert response["result"]["heartbeat_interval_ms"] == 20
+    finally:
+        stop_loop(client, thread)
+        server.close()
+
+
+@pytest.mark.parametrize(
+    "heartbeat_interval_seconds",
+    [0, -1, float("inf"), float("nan"), True],
+)
+def test_worker_rejects_invalid_heartbeat_interval(heartbeat_interval_seconds) -> None:
+    with pytest.raises(ValueError, match="heartbeat_interval_seconds"):
+        WorkerLoop("s1", heartbeat_interval_seconds=heartbeat_interval_seconds)
