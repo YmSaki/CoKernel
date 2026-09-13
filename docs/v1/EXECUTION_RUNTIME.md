@@ -65,13 +65,13 @@ Supervisor startup sequence:
 4. Record environment generation/fingerprint.
 5. Spawn worker with Project Python interpreter using the approved worker-tooling injection mechanism.
 6. Pass only non-secret runtime/session bootstrap values.
-7. Worker connects to private socket.
-8. Protocol handshake/version negotiation.
-9. Worker initializes IPython shell and namespace.
-10. Worker reports `ready` including Python/IPython versions.
-11. Supervisor marks Session `IDLE`.
+7. Worker connects to the private socket and initializes its IPython shell/namespace.
+8. Worker reports bootstrap `ready` metadata including PID, Python/IPython versions, and heartbeat interval.
+9. Supervisor authenticates the connected Unix peer and requires the OS-reported peer PID to match `ready.pid`.
+10. Supervisor performs explicit protocol handshake/version/capability/output-limit negotiation.
+11. Supervisor marks Session `IDLE` only after the handshake succeeds.
 
-Startup must fail clearly if Project environment or worker compatibility is invalid.
+The bootstrap `ready` frame is not sufficient to make a Session usable. Startup must fail clearly if Project environment, peer identity, or worker compatibility is invalid.
 
 ## 5. Worker protocol
 
@@ -135,6 +135,8 @@ Example payload:
   "silent": false
 }
 ```
+
+For `execute`, the request envelope `id` is the operation correlation ID and must equal payload `operation_id`. The worker rejects a mismatch before executing user code or emitting operation output. This keeps responses/events tied to one bounded identifier and prevents caller-controlled correlation divergence.
 
 The source comes from the authoritative NotebookDocument revision selected by the caller/runtime. The worker does not read notebook files to determine code.
 
