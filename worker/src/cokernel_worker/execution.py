@@ -130,27 +130,60 @@ class ExecutionEngine:
 
         stdout = _BoundedTextCapture(self.max_stream_capture_bytes)
         stderr = _BoundedTextCapture(self.max_stream_capture_bytes)
-        with capture_output(stdout=False, stderr=False, display=True) as captured:
-            previous_stdout = sys.stdout
-            previous_stderr = sys.stderr
-            sys.stdout = stdout
-            sys.stderr = stderr
-            try:
-                result = self.shell.run_cell(
-                    source,
-                    store_history=True,
-                    silent=False,
-                    cell_id=cell_id,
-                )
-            finally:
-                sys.stdout = previous_stdout
-                sys.stderr = previous_stderr
+        final_result: MimeBundle | None = None
+        displayhook = self.shell.displayhook
+        original_write_output_prompt = displayhook.write_output_prompt
+        original_write_format_data = displayhook.write_format_data
+        original_finish_displayhook = displayhook.finish_displayhook
+
+        def capture_execute_result(
+            format_dict: dict[str, Any], metadata: dict[str, Any] | None = None
+        ) -> None:
+            nonlocal final_result
+            final_result = MimeBundle(
+                data=_normalize_mime_data(dict(format_dict)),
+                metadata=dict(metadata or {}),
+            )
+
+        # ``run_cell`` installs ``shell.display_trap.hook`` as ``sys.displayhook``.
+        # Patching the existing IPython DisplayHook preserves execution history,
+        # ``_``/``Out`` namespace semantics, and ExecutionResult.result while
+        # preventing terminal-style ``Out[n]:`` text from leaking into stdout.
+        # Capturing the formatter payload here also avoids formatting the final
+        # value a second time after ``run_cell`` returns.
+        displayhook.write_output_prompt = lambda: None
+        displayhook.write_format_data = capture_execute_result
+        displayhook.finish_displayhook = lambda: setattr(
+            displayhook, "_is_active", False
+        )
+
+        try:
+            with capture_output(stdout=False, stderr=False, display=True) as captured:
+                previous_stdout = sys.stdout
+                previous_stderr = sys.stderr
+                sys.stdout = stdout
+                sys.stderr = stderr
+                try:
+                    result = self.shell.run_cell(
+                        source,
+                        store_history=True,
+                        silent=False,
+                        cell_id=cell_id,
+                    )
+                finally:
+                    sys.stdout = previous_stdout
+                    sys.stderr = previous_stderr
+        finally:
+            displayhook.write_output_prompt = original_write_output_prompt
+            displayhook.write_format_data = original_write_format_data
+            displayhook.finish_displayhook = original_finish_displayhook
 
         return self._outcome(
             result,
             stdout.getvalue(),
             stderr.getvalue(),
             captured.outputs,
+            final_result=final_result,
             stdout_truncated_bytes=stdout.truncated_bytes,
             stderr_truncated_bytes=stderr.truncated_bytes,
         )
@@ -167,21 +200,15 @@ class ExecutionEngine:
         stderr: str,
         outputs: list[RichOutput],
         *,
+        final_result: MimeBundle | None = None,
         stdout_truncated_bytes: int = 0,
         stderr_truncated_bytes: int = 0,
     ) -> ExecutionOutcome:
         error = result.error_before_exec or result.error_in_exec
-        final_result: MimeBundle | None = None
-
-        if error is None and result.result is not None:
-            data, metadata = self.shell.display_formatter.format(result.result)
-            final_result = MimeBundle(
-                data=_normalize_mime_data(dict(data)),
-                metadata=dict(metadata or {}),
-            )
 
         execution_error: ExecutionError | None = None
         if error is not None:
+            final_result = None
             execution_error = ExecutionError(
                 name=type(error).__name__,
                 value=str(error),

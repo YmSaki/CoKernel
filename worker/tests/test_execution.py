@@ -39,6 +39,45 @@ def test_stdout_and_stderr_are_captured() -> None:
     assert "hello-err" in outcome.stderr
 
 
+def test_final_expression_is_not_duplicated_as_stdout() -> None:
+    engine = ExecutionEngine()
+    outcome = engine.execute("40 + 2")
+    assert outcome.success, outcome.error
+    assert outcome.stdout == ""
+    assert outcome.final_result is not None
+    assert outcome.final_result.data["text/plain"] == "42"
+
+
+def test_final_expression_rich_repr_runs_once_and_preserves_history() -> None:
+    engine = ExecutionEngine()
+    outcome = engine.execute(
+        "class CountingRepr:\n"
+        "    calls = 0\n"
+        "    def _repr_html_(self):\n"
+        "        print('repr-side-effect')\n"
+        "        type(self).calls += 1\n"
+        "        return f'<b>{type(self).calls}</b>'\n"
+        "value = CountingRepr()\n"
+        "value"
+    )
+    assert outcome.success, outcome.error
+    assert engine.shell.user_ns["CountingRepr"].calls == 1
+    assert outcome.stdout == "repr-side-effect\n"
+    assert outcome.final_result is not None
+    assert outcome.final_result.data["text/html"] == "<b>1</b>"
+    assert engine.shell.user_ns["_"] is engine.shell.user_ns["value"]
+    assert outcome.execution_count in engine.shell.user_ns["Out"]
+    assert engine.shell.user_ns["Out"][outcome.execution_count] is engine.shell.user_ns["value"]
+
+
+def test_semicolon_suppresses_final_expression_without_stdout_leak() -> None:
+    engine = ExecutionEngine()
+    outcome = engine.execute("42;")
+    assert outcome.success, outcome.error
+    assert outcome.stdout == ""
+    assert outcome.final_result is None
+
+
 def test_rich_display_mime_bundle_is_captured() -> None:
     engine = ExecutionEngine()
     outcome = engine.execute(
@@ -71,8 +110,6 @@ def test_binary_rich_mime_is_base64_normalized_for_wire_and_ipynb() -> None:
     assert base64.b64decode(explicit_png) == raw_png
     assert base64.b64decode(result_png) == raw_png
 
-    # Both paths must already be JSON-safe before the worker output-budget and
-    # framed transport layers see the MIME bundle.
     json.dumps(outcome.displays[0].data, ensure_ascii=False)
     json.dumps(outcome.final_result.data, ensure_ascii=False)
 
