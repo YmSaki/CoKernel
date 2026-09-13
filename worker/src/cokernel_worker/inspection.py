@@ -91,9 +91,14 @@ def _type_metadata(value: Any, *, max_string_chars: int) -> tuple[str, str]:
     return module, type_name
 
 
-def validate_identifier(name: str) -> None:
+def validate_identifier(name: str, *, max_chars: int | None = None) -> None:
     if type(name) is not str or not name.isidentifier() or keyword.iskeyword(name):
         raise InspectionError("variable name must be one non-keyword Python identifier")
+    if max_chars is not None:
+        if type(max_chars) is not int or max_chars < 0:
+            raise InspectionError("max_string_chars must be a non-negative integer")
+        if len(name) > max_chars:
+            raise InspectionError("variable name exceeds maximum length")
 
 
 def list_variables(
@@ -164,8 +169,8 @@ def get_variable(
     *,
     limits: InspectionLimits | None = None,
 ) -> VariableValue:
-    validate_identifier(name)
     limits = limits or InspectionLimits()
+    validate_identifier(name, max_chars=limits.max_string_chars)
     namespace = _require_bounded_namespace(namespace, limits=limits)
 
     found = False
