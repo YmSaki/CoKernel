@@ -6,9 +6,8 @@ from pathlib import Path
 import selectors
 import signal
 import subprocess
-import sys
 import time
-from typing import Any, TextIO
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -71,10 +70,11 @@ def main() -> int:
         ready = read_json_line(process)
         if ready.get("type") != "ready":
             raise RuntimeError(f"unexpected worker ready message: {ready!r}")
+        worker_pid = int(ready["pid"])
 
         send(process, {"method": "execute", "source": "import time\ntime.sleep(30)"})
         time.sleep(0.5)
-        os.kill(process.pid, signal.SIGINT)
+        os.kill(worker_pid, signal.SIGINT)
 
         interrupted = read_json_line(process)
         outcome = interrupted.get("outcome", {})
