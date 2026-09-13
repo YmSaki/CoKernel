@@ -54,6 +54,8 @@ jobs:
         run: uv run pytest
       - name: uv Project + worker overlay spike
         run: python scripts/v1/spike_uv_worker_overlay.py
+      - name: Worker SIGINT survival spike
+        run: python scripts/v1/spike_worker_interrupt.py
 
   protocol-fixtures:
     name: Protocol fixtures
