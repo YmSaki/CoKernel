@@ -28,6 +28,9 @@ uv run --project worker cokernel-worker --version
 echo '[v1-check] Worker tests'
 uv run --project worker pytest
 
+echo '[v1-check] Worker protocol subprocess smoke'
+python3 scripts/v1/smoke_worker_protocol.py
+
 echo '[v1-check] uv Project + worker overlay spike'
 python3 scripts/v1/spike_uv_worker_overlay.py
 
