@@ -38,7 +38,7 @@ jobs:
         run: cargo check --workspace --all-targets
 
   worker:
-    name: Python worker scaffold
+    name: Python worker
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -49,6 +49,9 @@ jobs:
       - name: Worker entrypoint smoke
         working-directory: worker
         run: uv run cokernel-worker --version
+      - name: Worker execution semantics
+        working-directory: worker
+        run: uv run pytest
 
   protocol-fixtures:
     name: Protocol fixtures
