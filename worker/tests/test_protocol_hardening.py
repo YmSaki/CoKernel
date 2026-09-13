@@ -87,6 +87,25 @@ def test_worker_receive_rejects_non_standard_json_constants(constant: bytes) -> 
         server.close()
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'\xef\xbb\xbf{"value":1}',
+        '{"value":1}'.encode("utf-16"),
+    ],
+    ids=["utf8-bom", "utf16"],
+)
+def test_worker_receive_requires_plain_utf8_json(payload: bytes) -> None:
+    server, client = socket.socketpair()
+    try:
+        client.sendall(struct.pack(">I", len(payload)) + payload)
+        with pytest.raises(WorkerProtocolError, match="frame is not valid UTF-8 JSON"):
+            receive_frame(server)
+    finally:
+        client.close()
+        server.close()
+
+
 @pytest.mark.parametrize("payload", [None, [], "", 0, False])
 def test_worker_rejects_explicit_non_object_payload_without_terminating(payload) -> None:
     server, client, thread = start_loop()
