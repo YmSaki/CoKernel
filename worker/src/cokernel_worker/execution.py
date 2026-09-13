@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 import io
 import sys
@@ -12,6 +13,35 @@ from IPython.utils.capture import RichOutput, capture_output
 DEFAULT_STREAM_CAPTURE_BYTES = 4 * 1024 * 1024
 
 
+def _binary_mime_requires_base64(mime: str) -> bool:
+    return (mime.startswith("image/") and mime != "image/svg+xml") or mime in {
+        "application/octet-stream",
+        "application/pdf",
+    }
+
+
+def _normalize_mime_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize IPython binary MIME values into notebook/wire-safe JSON values.
+
+    IPython formatters commonly return raw ``bytes`` for image/png, image/jpeg,
+    and PDF representations. Standard notebook MIME bundles carry those binary
+    values as base64 text. Normalize at the execution boundary so downstream
+    output budgeting and framed JSON transport never see raw bytes.
+    """
+
+    normalized: dict[str, Any] = {}
+    for mime, value in data.items():
+        if (
+            type(mime) is str
+            and _binary_mime_requires_base64(mime)
+            and type(value) is bytes
+        ):
+            normalized[mime] = base64.b64encode(value).decode("ascii")
+        else:
+            normalized[mime] = value
+    return normalized
+
+
 @dataclass(slots=True)
 class MimeBundle:
     data: dict[str, Any]
@@ -21,7 +51,7 @@ class MimeBundle:
     @classmethod
     def from_rich_output(cls, output: RichOutput) -> "MimeBundle":
         return cls(
-            data=dict(output.data),
+            data=_normalize_mime_data(dict(output.data)),
             metadata=dict(output.metadata or {}),
             transient=dict(getattr(output, "transient", None) or {}),
         )
@@ -145,7 +175,10 @@ class ExecutionEngine:
 
         if error is None and result.result is not None:
             data, metadata = self.shell.display_formatter.format(result.result)
-            final_result = MimeBundle(data=dict(data), metadata=dict(metadata or {}))
+            final_result = MimeBundle(
+                data=_normalize_mime_data(dict(data)),
+                metadata=dict(metadata or {}),
+            )
 
         execution_error: ExecutionError | None = None
         if error is not None:
