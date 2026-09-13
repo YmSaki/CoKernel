@@ -128,6 +128,28 @@ pub enum FailureClassification {
     Unknown,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessMemorySnapshot {
+    pub rss_bytes: Option<u64>,
+    pub virtual_bytes: Option<u64>,
+    pub swap_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SystemMemorySnapshot {
+    pub total_bytes: Option<u64>,
+    pub available_bytes: Option<u64>,
+    pub swap_total_bytes: Option<u64>,
+    pub swap_free_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinuxOomEvidence {
+    pub cgroup_path: String,
+    pub oom_count: u64,
+    pub oom_kill_count: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub project_id: ProjectId,
@@ -185,6 +207,14 @@ pub struct FailureRecord {
     pub exit_code: Option<i32>,
     pub signal: Option<i32>,
     pub last_stderr: String,
+    #[serde(default)]
+    pub worker_pid: Option<u32>,
+    #[serde(default)]
+    pub worker_memory_snapshot: Option<ProcessMemorySnapshot>,
+    #[serde(default)]
+    pub wsl_memory_snapshot: Option<SystemMemorySnapshot>,
+    #[serde(default)]
+    pub linux_oom_evidence: Option<LinuxOomEvidence>,
     pub classification: FailureClassification,
     pub confidence: f32,
 }

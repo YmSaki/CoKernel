@@ -34,12 +34,14 @@ async fn terminate_child(child: &mut Child) -> Option<ExitStatus> {
 }
 
 async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
+    let evidence = collect_failure_evidence(context.worker_pid);
     let record = failure_record(
         context,
         status.code(),
         status.signal(),
         classify_exit(status),
         0.8,
+        evidence,
     )
     .await;
     finish_current_operation(context, OperationStatus::Failed);
@@ -48,6 +50,10 @@ async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
 }
 
 async fn record_crash(context: &SessionActorContext, child: &mut Child, detail: String) {
+    // Capture /proc/cgroup evidence before recovery termination whenever the worker is still alive.
+    // This is intentionally best-effort and bounded; failure evidence collection must never block
+    // worker cleanup or manufacture a root cause.
+    let evidence = collect_failure_evidence(context.worker_pid);
     let observed_status = child.try_wait().ok().flatten();
     let supervisor_terminated = observed_status.is_none();
     if supervisor_terminated {
@@ -67,6 +73,7 @@ async fn record_crash(context: &SessionActorContext, child: &mut Child, detail: 
         status.as_ref().and_then(ExitStatusExt::signal),
         classification,
         confidence,
+        evidence,
     )
     .await;
     if !detail.is_empty() {
@@ -86,6 +93,7 @@ async fn failure_record(
     signal: Option<i32>,
     classification: FailureClassification,
     confidence: f32,
+    evidence: FailureEvidenceSnapshot,
 ) -> FailureRecord {
     let last_stderr = context.stderr_tail.lock().await.text_lossy();
     FailureRecord {
@@ -100,9 +108,105 @@ async fn failure_record(
         exit_code,
         signal,
         last_stderr,
+        worker_pid: Some(context.worker_pid),
+        worker_memory_snapshot: evidence.worker_memory_snapshot,
+        wsl_memory_snapshot: evidence.wsl_memory_snapshot,
+        linux_oom_evidence: evidence.linux_oom_evidence,
         classification,
         confidence,
     }
+}
+
+#[derive(Debug, Default)]
+struct FailureEvidenceSnapshot {
+    worker_memory_snapshot: Option<cokernel_domain::ProcessMemorySnapshot>,
+    wsl_memory_snapshot: Option<cokernel_domain::SystemMemorySnapshot>,
+    linux_oom_evidence: Option<cokernel_domain::LinuxOomEvidence>,
+}
+
+fn collect_failure_evidence(worker_pid: u32) -> FailureEvidenceSnapshot {
+    FailureEvidenceSnapshot {
+        worker_memory_snapshot: read_process_memory_snapshot(worker_pid),
+        wsl_memory_snapshot: read_system_memory_snapshot(),
+        linux_oom_evidence: read_linux_oom_evidence(worker_pid),
+    }
+}
+
+fn read_process_memory_snapshot(pid: u32) -> Option<cokernel_domain::ProcessMemorySnapshot> {
+    let status = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    let snapshot = cokernel_domain::ProcessMemorySnapshot {
+        rss_bytes: parse_kib_field(&status, "VmRSS:"),
+        virtual_bytes: parse_kib_field(&status, "VmSize:"),
+        swap_bytes: parse_kib_field(&status, "VmSwap:"),
+    };
+    if snapshot.rss_bytes.is_none()
+        && snapshot.virtual_bytes.is_none()
+        && snapshot.swap_bytes.is_none()
+    {
+        None
+    } else {
+        Some(snapshot)
+    }
+}
+
+fn read_system_memory_snapshot() -> Option<cokernel_domain::SystemMemorySnapshot> {
+    let meminfo = fs::read_to_string("/proc/meminfo").ok()?;
+    let snapshot = cokernel_domain::SystemMemorySnapshot {
+        total_bytes: parse_kib_field(&meminfo, "MemTotal:"),
+        available_bytes: parse_kib_field(&meminfo, "MemAvailable:"),
+        swap_total_bytes: parse_kib_field(&meminfo, "SwapTotal:"),
+        swap_free_bytes: parse_kib_field(&meminfo, "SwapFree:"),
+    };
+    if snapshot.total_bytes.is_none()
+        && snapshot.available_bytes.is_none()
+        && snapshot.swap_total_bytes.is_none()
+        && snapshot.swap_free_bytes.is_none()
+    {
+        None
+    } else {
+        Some(snapshot)
+    }
+}
+
+fn parse_kib_field(contents: &str, field: &str) -> Option<u64> {
+    contents.lines().find_map(|line| {
+        let value = line.strip_prefix(field)?.split_whitespace().next()?;
+        value.parse::<u64>().ok()?.checked_mul(1024)
+    })
+}
+
+fn read_linux_oom_evidence(pid: u32) -> Option<cokernel_domain::LinuxOomEvidence> {
+    let cgroup_path = read_cgroup_v2_path(pid).or_else(|| read_cgroup_v2_path(std::process::id()))?;
+    let relative = cgroup_path.trim_start_matches('/');
+    let events_path = Path::new("/sys/fs/cgroup")
+        .join(relative)
+        .join("memory.events");
+    let events = fs::read_to_string(events_path).ok()?;
+    Some(cokernel_domain::LinuxOomEvidence {
+        cgroup_path,
+        oom_count: parse_cgroup_counter(&events, "oom")?,
+        oom_kill_count: parse_cgroup_counter(&events, "oom_kill")?,
+    })
+}
+
+fn read_cgroup_v2_path(pid: u32) -> Option<String> {
+    let cgroup = fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+    cgroup.lines().find_map(|line| {
+        line.strip_prefix("0::")
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+fn parse_cgroup_counter(contents: &str, key: &str) -> Option<u64> {
+    contents.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        if fields.next()? != key {
+            return None;
+        }
+        fields.next()?.parse::<u64>().ok()
+    })
 }
 
 fn crash_classification(
@@ -188,5 +292,27 @@ where
             Ok(0) | Err(_) => return,
             Ok(read) => tail.lock().await.push(&buffer[..read]),
         }
+    }
+}
+
+#[cfg(test)]
+mod failure_evidence_tests {
+    use super::*;
+
+    #[test]
+    fn parses_proc_kib_fields_as_bytes() {
+        let sample = "Name:\tpython\nVmSize:\t 2048 kB\nVmRSS:\t 1024 kB\nVmSwap:\t 3 kB\n";
+        assert_eq!(parse_kib_field(sample, "VmSize:"), Some(2 * 1024 * 1024));
+        assert_eq!(parse_kib_field(sample, "VmRSS:"), Some(1024 * 1024));
+        assert_eq!(parse_kib_field(sample, "VmSwap:"), Some(3 * 1024));
+        assert_eq!(parse_kib_field(sample, "MemTotal:"), None);
+    }
+
+    #[test]
+    fn parses_cgroup_v2_memory_event_counters() {
+        let sample = "low 0\nhigh 2\nmax 4\noom 3\noom_kill 1\noom_group_kill 0\n";
+        assert_eq!(parse_cgroup_counter(sample, "oom"), Some(3));
+        assert_eq!(parse_cgroup_counter(sample, "oom_kill"), Some(1));
+        assert_eq!(parse_cgroup_counter(sample, "missing"), None);
     }
 }
