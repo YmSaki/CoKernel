@@ -62,7 +62,8 @@ def receive_frame(
     if payload is None:
         raise WorkerProtocolError("socket closed in the middle of a frame")
     try:
-        value = json.loads(payload, parse_constant=_reject_non_json_constant)
+        text = payload.decode("utf-8")
+        value = json.loads(text, parse_constant=_reject_non_json_constant)
     except (UnicodeDecodeError, ValueError) as error:
         raise WorkerProtocolError("frame is not valid UTF-8 JSON") from error
     if type(value) is not dict:
