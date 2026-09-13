@@ -1,233 +1,344 @@
 # CoKernel v1 Implementation Order
 
-Status: **execution baseline after conceptual design approval**
+Status: **execution baseline**
 
-This order minimizes rework by fixing runtime contracts before building the final Desktop/Installer around them.
+Implementation should proceed through vertical slices that prove the risky runtime semantics before spending heavily on UI/installer polish.
 
-## Phase 0 — Design freeze
+## Phase 0 — Technical spikes and repository reset
 
-Deliverables:
+### Deliverables
 
-- `CONCEPTUAL_DESIGN.md`
-- `COMPONENT_MODEL.md`
-- `V0_1_ASSET_INVENTORY.md`
-- this implementation order
+1. Create new Cargo workspace/layout on `cokernel-v1`.
+2. Preserve v0.1 source as reference until replacement paths pass tests; do not make new core depend on it.
+3. Spike uv worker-tooling launch strategy:
+   - Project interpreter sees Project packages;
+   - CoKernel worker/IPython tooling remains product-controlled;
+   - Project dependency truth is not unintentionally polluted;
+   - selected v1 Python versions work deterministically.
+4. Spike IPython embedding/output capture required for:
+   - expression result;
+   - stdout/stderr;
+   - rich MIME display;
+   - top-level async;
+   - interruption.
+5. Spike Tauri/Host Named Pipe integration.
+6. Confirm Rust MCP implementation approach/SDK against required Streamable HTTP/tool annotations.
 
-Gate:
+### Gate
 
-- v1 is confirmed as a fresh-install boundary;
-- v0.1 runtime is explicitly disposable;
-- Issue #21 and Issue #22 are accepted as v1 runtime requirements;
-- PR #20 is treated only as prototype/reference code.
+No main Session Runtime implementation starts until worker launch and IPython output/interrupt feasibility are demonstrated in small tests.
 
-## Phase 1 — Runtime contract foundation
+---
 
-Create the stable boundary Windows Host will depend on.
+## Phase 1 — Shared domain/protocol core
 
-Deliverables:
+### Deliverables
 
-1. runtime/product version manifest;
-2. structured runtime status model;
-3. structured health model;
-4. stable Linux management command surface (`cokernel-runtime` or equivalent);
-5. JSON output for status/health/metrics;
-6. structured error codes;
-7. shell scripts adapted behind the contract rather than exposed as the primary Windows interface.
-
-Gate:
+Crates:
 
 ```text
-status --json
-health --json
-start
-stop
-logs
+cokernel-domain
+cokernel-protocol
 ```
 
-work from inside the managed WSL runtime and are covered by tests.
+Implement:
 
-## Phase 2 — Jupyter workspace UX correctness (Issue #21)
+- IDs/domain structs;
+- Runtime/Project/Environment/Notebook/Session/Operation/Failure states;
+- structured errors/error codes;
+- framed JSON protocol codec;
+- version handshake;
+- protocol fuzz/malformed-frame/bounds tests.
 
-Deliverables:
+### Gate
 
-- `cokernel-workspace` set as deterministic default Python kernel;
-- new notebook `sys.executable` points into `/workspace/.venv`;
-- control-plane `/opt/cokernel` kept image-owned;
-- Jupyter runtime extension install actions disabled/read-only;
-- Japanese JupyterLab language pack baked into image;
-- locale setting supports Windows-language default and explicit override;
-- docs explain control-plane vs workspace Python;
-- smoke/CI tests for the boundary.
+Domain state-machine/unit tests green on Windows and Linux CI.
 
-Gate:
+---
 
-A fresh notebook starts in the uv workspace environment without user kernel selection, Japanese localization can be enabled without installing packages at runtime, and JupyterLab does not offer a broken `/opt/cokernel` PyPI mutation path.
+## Phase 2 — Project + uv environment vertical slice
 
-## Phase 3 — MCP capability correctness (Issue #22)
+### Deliverables
 
-Deliverables:
+- `cokernel-runtime` Linux binary skeleton;
+- Project registry;
+- Project create/open/list;
+- uv invocation wrapper;
+- package add/remove/sync;
+- environment status/generation;
+- structured progress/errors;
+- Project path safety.
 
-- preserve `use_notebook` annotations;
-- restore precise `Literal["connect", "create"]` input schema;
-- tool-metadata regression tests;
-- `connect_notebook`;
-- `create_notebook` no-overwrite semantics;
-- `list_variables`;
-- `get_variable` identifier-only safe inspection;
-- hostile-object tests;
-- bounded serialization tests;
-- preserve same-kernel invariant;
-- keep upstream execution tools honestly annotated.
+### CLI acceptance
 
-Gate:
+From WSL/dev shell:
 
-AI can connect to an existing browser notebook and inspect a primitive variable without needing arbitrary code execution, while compatibility tools remain available.
+```text
+cokernel-runtime project create demo
+cokernel-runtime package add demo numpy
+cokernel-runtime project status demo --json
+```
 
-## Phase 4 — Windows Host
+### Gate
 
-Deliverables:
+Temporary Project can be created/synced and its interpreter imports installed package.
 
-- long-running Host process;
-- desired-state persistence;
+---
+
+## Phase 3 — Python/IPython worker + Session Supervisor
+
+### Deliverables
+
+- `worker/cokernel_worker`;
+- private Unix socket worker protocol;
+- IPython persistent namespace;
+- execution output capture;
+- safe variable inspection;
+- Session Supervisor;
+- FIFO queue;
+- start/interrupt/stop/restart;
+- failure capture;
+- environment-stale state;
+- multi-Session concurrency.
+
+### Canonical tests
+
+- Cell 1 `x=123`, Cell 2 `x+1` => 124.
+- Session A/B execute concurrently and have separate namespaces.
+- force-kill A; B survives; A has FailureRecord.
+
+### Gate
+
+The execution engine works without Desktop/MCP and passes hostile-object safe-inspection tests.
+
+---
+
+## Phase 4 — Notebook Document Service
+
+### Deliverables
+
+- nbformat v4 Rust model preserving unknown JSON metadata;
+- notebook create/open/list;
+- revisioned edits;
+- atomic save;
+- external-change detection;
+- output conversion from worker events;
+- execute-cell by notebook/cell ID;
+- Windows-import runtime-side transaction API;
+- compatibility fixture suite.
+
+### Gate
+
+A standard imported `.ipynb` can be executed through Project Session, outputs persist, and the result remains structurally valid.
+
+---
+
+## Phase 5 — WSL Runtime bridge + Windows Host
+
+### Deliverables
+
+Crate/binary:
+
+```text
+cokernel-host
+```
+
+Implement:
+
+- persistent `wsl.exe` bridge;
+- protocol handshake;
+- desired RUNNING/STOPPED state;
 - WSL lifetime ownership;
-- startup state machine;
-- health supervisor/backoff/circuit breaker;
-- runtime contract client;
-- structured Host logs;
-- current-user Named Pipe IPC;
-- secret broker interface.
+- reconnection/backoff;
+- Windows Named Pipe IPC;
+- event forwarding;
+- auto-start;
+- Windows/WSL metrics aggregation;
+- chunked notebook import from Windows.
 
-Gate:
+### Gate
 
-With no Desktop UI running, Host can keep desired RUNNING runtime alive, report typed health, recover bounded service failures, and stop cleanly.
+With no Desktop UI, Host can keep Runtime/Sessions alive, execute domain operations through the bridge, restart UI clients freely, and recover bounded bridge failures.
 
-## Phase 5 — Windows Secret Store and Tunnel configuration
+---
 
-Deliverables:
+## Phase 6 — MCP domain service
 
-- DPAPI/Credential Manager abstraction;
-- tunnel credential storage;
-- secure handoff to WSL runtime;
-- no API key in command line/logs/diagnostics;
-- Tunnel startup after MCP healthy;
-- `readyz` authoritative status.
+### Deliverables
 
-Gate:
+- `cokernel-mcp`;
+- local bearer auth;
+- Streamable HTTP;
+- Runtime Unix API client;
+- minimum v1 tool set from `MCP_TUNNEL.md`;
+- exact annotations/schema tests;
+- response bounds;
+- Human/MCP shared queue tests.
 
-ChatGPT tunnel reconnects after Host/runtime restart without plaintext credential persistence in the v1 runtime config.
+### Canonical proof
 
-## Phase 6 — Metrics and diagnostics
+Human/session executes:
 
-Deliverables:
+```python
+secret_from_master = 123456789
+```
 
-- CPU;
-- Windows RAM;
-- WSL RAM;
-- storage;
-- GPU model/utilization;
-- VRAM;
-- temperature/power where available;
-- active kernel count;
-- service health;
-- redacted diagnostics ZIP;
-- loopback/GPU/MCP/Tunnel acceptance checks.
+MCP `get_variable` on the primary Session returns `123456789` without starting another worker.
 
-Gate:
+### Gate
 
-Host exposes a complete metrics/status snapshot through IPC and diagnostics contain no known secrets.
+Same-Session proof and MCP security suite green locally.
 
-## Phase 7 — CoKernel Desktop
+---
 
-Deliverables:
+## Phase 7 — Secure Tunnel integration
 
-- tray-resident Windows UI;
-- dashboard;
-- Start/Stop/Restart;
-- Open Jupyter;
-- active kernel view/count;
-- logs;
-- diagnostics export;
-- repair action;
-- tunnel settings;
-- locale setting;
-- auto-start setting;
-- update UX;
-- actionable errors.
+### Deliverables
 
-Architectural constraint:
+- Windows Secret Store abstraction;
+- secure credential handoff;
+- Tunnel Supervisor;
+- start MCP before tunnel;
+- readiness/reconnect/backoff;
+- remote access status;
+- credential isolation/redaction tests.
 
-Desktop communicates with Host IPC; it does not directly own WSL/Docker lifecycle.
+### Gate
 
-Gate:
+Remote ChatGPT/MCP reaches the same local Session. Disconnecting tunnel leaves local compute unaffected.
 
-Closing/restarting Desktop does not destroy or orphan the running Runtime.
+---
 
-## Phase 8 — Fresh v1 installer and Legacy Reset
+## Phase 8 — Desktop application
 
-Deliverables:
+### Deliverables
+
+Tauri/Desktop:
+
+- Project list/create/open;
+- package management;
+- notebook tree/editor;
+- create/import notebook;
+- run cell/run selected/interrupt;
+- Session list/restart/stop;
+- environment-stale indication;
+- CPU/RAM/WSL RAM/GPU/VRAM/storage dashboard;
+- crash/failure evidence UI;
+- MCP/Remote Access settings/status;
+- logs/diagnostics;
+- tray and notifications;
+- update/repair entry points.
+
+### UX constraints
+
+- no internal PID/session-process selection for normal execution;
+- Project implies environment;
+- document saved state and Session live state visually distinct;
+- visual polish is secondary to understandable operations/state.
+
+### Gate
+
+All representative local use cases can be completed without command-line administration after installation.
+
+---
+
+## Phase 9 — Installer/bootstrap + legacy reset
+
+### Deliverables
 
 - `CoKernelSetup.exe`;
-- preflight;
-- WSL enable/update and reboot-resume;
-- v0.1 detection;
-- optional legacy workspace export;
-- explicit destructive reset;
-- `wsl --unregister CoKernel` only inside the confirmed legacy-reset path;
-- fresh v1 distro provisioning;
-- versioned runtime payload installation;
-- Host auto-start registration;
-- uninstall behavior for v1;
+- Windows/WSL/NVIDIA preflight;
+- reboot/resume;
+- legacy detection/export/explicit destructive reset;
+- fresh managed distro;
+- identities/permissions/hardening;
+- product payload install;
+- Host/Desktop install/auto-start;
+- first-run GPU/runtime acceptance;
 - setup logs.
 
-Gate:
+### Gate
 
-On the current development machine, the v0.1 environment can be deliberately destroyed and a clean v1 installed without requiring manual WSL/Docker configuration.
+A disposable v0.1 development machine can be explicitly reset and a fresh v1 installed with no manual WSL/Linux configuration.
 
-## Phase 9 — Product update/repair
+---
 
-Deliverables:
+## Phase 10 — Update/repair/product hardening
 
-- signed/versioned update artifact model;
-- no `git pull` in installed product;
-- active-kernel interruption guard;
-- v1-to-v1 state-preserving runtime update;
-- repair/convergence flow;
-- post-update acceptance;
-- rollback metadata for Windows binaries/runtime configuration.
+### Deliverables
 
-Gate:
+- signed/versioned artifact update model;
+- Host/Runtime compatibility manifest;
+- active-Session disruption analysis;
+- defer/confirm update;
+- runtime payload migration;
+- repair convergence;
+- rollback metadata;
+- uninstall/data preservation UX;
+- crash-loop circuit breakers;
+- diagnostic ZIP.
 
-A v1 installation can update to the next v1 build without recreating the WSL distro or losing workspace state.
+### Gate
 
-## Phase 10 — Full real-machine acceptance
+v1 build N -> N+1 update preserves Projects/notebooks and never silently terminates active Sessions.
 
-Mandatory acceptance on NVIDIA Windows workstation:
+---
 
-1. fresh setup from Windows installer;
-2. WSL distro created automatically;
-3. GPU visible in Jupyter container;
-4. `uv` workspace works;
-5. JAX/PyTorch representative GPU smoke tests where package compatibility permits;
-6. default notebook kernel is `/workspace/.venv`;
-7. Japanese Jupyter localization works without runtime extension installation;
-8. browser/AI same-kernel proof;
-9. narrow MCP variable inspection proof;
-10. Tunnel ready and reconnect after restart;
-11. Desktop close/reopen while Host keeps runtime alive;
-12. Windows sign-in automatic recovery;
-13. dashboard metrics validated against OS/NVIDIA tools;
-14. active-kernel update warning validated;
-15. diagnostics redaction validated;
-16. stop/restart/repair paths validated;
-17. legacy v0.1 destructive reset tested once on the disposable old environment.
+## Phase 11 — Full acceptance and release candidate
 
-## Post-v1
+Execute all `TEST_ACCEPTANCE.md` L0–L6 gates.
 
-Only after all v1 gates pass:
+Mandatory real-machine evidence includes:
 
-- CoKernel Node;
-- second Windows PC / RTX 3080 node;
-- LAN pairing + mTLS;
-- remote metrics/lifecycle;
-- remote workspace/Jupyter;
-- scheduler/Fabric.
+- setup;
+- uv Project;
+- PyTorch/JAX GPU representative tests where supported;
+- notebook import/create/run;
+- persistent state;
+- parallel Sessions;
+- forced worker crash evidence;
+- same-Session Human/MCP proof;
+- secure tunnel remote proof;
+- Windows restart behavior;
+- dashboard metrics;
+- update guard;
+- diagnostic redaction;
+- legacy destructive reset once on disposable old runtime.
+
+---
+
+# PR decomposition
+
+Prefer small/medium PRs with one acceptance boundary:
+
+```text
+PR A: cargo workspace + domain/protocol
+PR B: uv Project manager
+PR C: Python worker protocol/IPython
+PR D: Session Supervisor
+PR E: Notebook service/import
+PR F: WSL bridge + Host
+PR G: MCP service
+PR H: Tunnel/secret integration
+PR I: Desktop Project/package shell
+PR J: Desktop notebook/session editor
+PR K: dashboard/diagnostics
+PR L: installer/bootstrap
+PR M: update/repair
+PR N+: hardening/acceptance fixes
+```
+
+Avoid giant PRs combining Runtime, Desktop, Installer, and security changes before their lower-level contracts are proven.
+
+# Implementation discipline
+
+For every phase:
+
+1. implement domain/contract first;
+2. add component tests;
+3. add failure-path tests;
+4. expose through next layer;
+5. run acceptance gate;
+6. update spec in same PR if behavior/domain contract changes.
+
+No UI workaround should bypass Runtime domain invariants, and no MCP workaround should create a second execution path.
