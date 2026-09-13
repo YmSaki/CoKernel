@@ -1,7 +1,7 @@
 use std::io;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient, ServerOptions};
 use tokio::time::sleep;
 
@@ -29,7 +29,7 @@ async fn open_client_with_retry(pipe_name: &str) -> io::Result<NamedPipeClient> 
 
 async fn write_frame<W>(writer: &mut W, payload: &[u8]) -> io::Result<()>
 where
-    W: AsyncWriteExt + Unpin,
+    W: AsyncWrite + Unpin,
 {
     let length = u32::try_from(payload.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "payload too large"))?;
@@ -40,7 +40,7 @@ where
 
 async fn read_frame<R>(reader: &mut R) -> io::Result<Vec<u8>>
 where
-    R: AsyncReadExt + Unpin,
+    R: AsyncRead + Unpin,
 {
     let mut length = [0_u8; 4];
     reader.read_exact(&mut length).await?;
