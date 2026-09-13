@@ -1,0 +1,12 @@
+{
+  "protocol": 1,
+  "request_id": "00000000-0000-0000-0000-000000000004",
+  "ok": false,
+  "error": {
+    "code": "CK-NB-CONFLICT",
+    "component": "notebook",
+    "summary": "Notebook changed since the requested revision",
+    "action": "Reload the notebook and retry the edit or execution",
+    "detail": "expected revision 7, current revision 8"
+  }
+}
