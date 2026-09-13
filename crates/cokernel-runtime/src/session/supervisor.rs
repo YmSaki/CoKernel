@@ -1,5 +1,21 @@
 include!("handshake.rs");
 
+struct SocketPathCleanup {
+    path: PathBuf,
+}
+
+impl SocketPathCleanup {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for SocketPathCleanup {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 #[derive(Clone)]
 pub struct SessionSupervisor {
     config: SessionSupervisorConfig,
@@ -159,6 +175,7 @@ impl SessionSupervisor {
             .join(format!("{session_id}-{worker_generation}.sock"));
         let _ = fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path)?;
+        let _socket_path_cleanup = SocketPathCleanup::new(socket_path.clone());
         fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
 
         let mut command = uv_worker_command(
@@ -183,15 +200,28 @@ impl SessionSupervisor {
         }
 
         let (stream, _) = tokio::select! {
-            accepted = listener.accept() => accepted?,
+            accepted = listener.accept() => {
+                match accepted {
+                    Ok(accepted) => accepted,
+                    Err(error) => {
+                        terminate_child(&mut child).await;
+                        return Err(error.into());
+                    }
+                }
+            },
             status = child.wait() => {
-                let status = status?;
-                let _ = fs::remove_file(&socket_path);
-                return Err(SessionError::WorkerExitedDuringStartup(format_exit_status(status)));
+                match status {
+                    Ok(status) => {
+                        return Err(SessionError::WorkerExitedDuringStartup(format_exit_status(status)));
+                    }
+                    Err(error) => {
+                        terminate_child(&mut child).await;
+                        return Err(error.into());
+                    }
+                }
             }
             _ = sleep(self.config.startup_timeout) => {
                 terminate_child(&mut child).await;
-                let _ = fs::remove_file(&socket_path);
                 return Err(SessionError::StartupTimeout);
             }
         };
@@ -201,7 +231,6 @@ impl SessionSupervisor {
             Ok(pid) => pid,
             Err(error) => {
                 terminate_child(&mut child).await;
-                let _ = fs::remove_file(&socket_path);
                 return Err(error);
             }
         };
@@ -209,19 +238,16 @@ impl SessionSupervisor {
             Ok(Ok(Some(frame))) => frame,
             Ok(Ok(None)) => {
                 terminate_child(&mut child).await;
-                let _ = fs::remove_file(&socket_path);
                 return Err(SessionError::InvalidReady(
                     "worker disconnected before ready".into(),
                 ));
             }
             Ok(Err(error)) => {
                 terminate_child(&mut child).await;
-                let _ = fs::remove_file(&socket_path);
                 return Err(error.into());
             }
             Err(_) => {
                 terminate_child(&mut child).await;
-                let _ = fs::remove_file(&socket_path);
                 return Err(SessionError::StartupTimeout);
             }
         };
@@ -229,18 +255,15 @@ impl SessionSupervisor {
             Ok(ready) => ready,
             Err(error) => {
                 terminate_child(&mut child).await;
-                let _ = fs::remove_file(&socket_path);
                 return Err(error);
             }
         };
         if let Err(error) = validate_ready_peer_pid(ready.pid, peer_pid) {
             terminate_child(&mut child).await;
-            let _ = fs::remove_file(&socket_path);
             return Err(error);
         }
         if self.config.heartbeat_timeout <= ready.heartbeat_interval {
             terminate_child(&mut child).await;
-            let _ = fs::remove_file(&socket_path);
             return Err(SessionError::InvalidReady(format!(
                 "heartbeat timeout {:?} must exceed worker interval {:?}",
                 self.config.heartbeat_timeout, ready.heartbeat_interval
@@ -256,7 +279,6 @@ impl SessionSupervisor {
         .await
         {
             terminate_child(&mut child).await;
-            let _ = fs::remove_file(&socket_path);
             return Err(error);
         }
         let _ = fs::remove_file(&socket_path);
@@ -429,5 +451,20 @@ mod supervisor_peer_tests {
         assert!(error
             .to_string()
             .contains("does not match Unix socket peer pid"));
+    }
+
+    #[test]
+    fn socket_path_cleanup_removes_bound_socket_name() {
+        let path = std::env::temp_dir().join(format!(
+            "cokernel-session-socket-cleanup-{}.sock",
+            SessionId::new()
+        ));
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        {
+            let _cleanup = SocketPathCleanup::new(path.clone());
+            assert!(path.exists());
+        }
+        assert!(!path.exists());
+        drop(listener);
     }
 }
