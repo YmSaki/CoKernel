@@ -28,6 +28,8 @@ pub enum ProjectError {
     EmptyPackageList,
     #[error("project environment is not ready; Python executable not found at {0}")]
     PythonMissing(String),
+    #[error("unsupported project registry schema: {0}")]
+    UnsupportedRegistrySchema(u32),
     #[error(transparent)]
     Uv(#[from] UvError),
     #[error("filesystem operation failed for {path}: {source}")]
@@ -94,15 +96,9 @@ impl<R: UvRunner> ProjectManager<R> {
             })?;
             let parsed: RegistryFile = serde_json::from_slice(&bytes)?;
             if parsed.schema_version != REGISTRY_SCHEMA_VERSION {
-                return Err(ProjectError::InvalidRegistry(serde_json::Error::io(
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "unsupported project registry schema {}",
-                            parsed.schema_version
-                        ),
-                    ),
-                )));
+                return Err(ProjectError::UnsupportedRegistrySchema(
+                    parsed.schema_version,
+                ));
             }
             parsed
         } else {
@@ -140,7 +136,9 @@ impl<R: UvRunner> ProjectManager<R> {
         validate_project_name(name)?;
         let project_root = self.projects_root.join(name);
         if project_root.exists() {
-            return Err(ProjectError::AlreadyExists(project_root.display().to_string()));
+            return Err(ProjectError::AlreadyExists(
+                project_root.display().to_string(),
+            ));
         }
 
         if let Err(error) = self.uv.run(&uv::init_project(&project_root, name)) {
@@ -212,10 +210,7 @@ impl<R: UvRunner> ProjectManager<R> {
         Ok(record)
     }
 
-    pub fn sync_project(
-        &mut self,
-        project_id: ProjectId,
-    ) -> Result<ProjectRecord, ProjectError> {
+    pub fn sync_project(&mut self, project_id: ProjectId) -> Result<ProjectRecord, ProjectError> {
         let root = self.project_root(project_id)?;
         self.uv.run(&uv::sync_project(&root))?;
         self.refresh_generation(project_id, &root)
@@ -303,7 +298,8 @@ impl<R: UvRunner> ProjectManager<R> {
             .ok_or_else(|| ProjectError::NotFound(project_id.to_string()))?;
 
         if record.lock_fingerprint.as_deref() != Some(fingerprint.as_str()) {
-            record.project.environment_generation = record.project.environment_generation.saturating_add(1);
+            record.project.environment_generation =
+                record.project.environment_generation.saturating_add(1);
             record.lock_fingerprint = Some(fingerprint);
         }
         let updated = record.clone();
@@ -336,10 +332,9 @@ impl<R: UvRunner> ProjectManager<R> {
             create_dir_all(parent)?;
         }
         let bytes = serde_json::to_vec_pretty(&self.registry)?;
-        let temp = self.registry_path.with_extension(format!(
-            "json.tmp-{}",
-            std::process::id()
-        ));
+        let temp = self
+            .registry_path
+            .with_extension(format!("json.tmp-{}", std::process::id()));
         fs::write(&temp, bytes).map_err(|source| ProjectError::Io {
             path: temp.display().to_string(),
             source,
@@ -391,7 +386,10 @@ fn path_to_string(path: &Path) -> Result<String, ProjectError> {
 fn project_python_path(project_root: &Path) -> PathBuf {
     #[cfg(windows)]
     {
-        project_root.join(".venv").join("Scripts").join("python.exe")
+        project_root
+            .join(".venv")
+            .join("Scripts")
+            .join("python.exe")
     }
     #[cfg(not(windows))]
     {
@@ -524,8 +522,17 @@ mod tests {
 
         let created = manager.create_project("demo").unwrap();
         assert_eq!(created.project.environment_generation, 1);
-        assert!(Path::new(&created.project.root_path).join("pyproject.toml").is_file());
-        assert!(manager.environment_status(created.project.project_id).unwrap().ready);
+        assert!(
+            Path::new(&created.project.root_path)
+                .join("pyproject.toml")
+                .is_file()
+        );
+        assert!(
+            manager
+                .environment_status(created.project.project_id)
+                .unwrap()
+                .ready
+        );
 
         let calls = manager.uv.calls();
         assert_eq!(calls.len(), 2);
