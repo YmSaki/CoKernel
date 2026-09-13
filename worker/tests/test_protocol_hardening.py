@@ -101,6 +101,33 @@ def test_worker_rejects_oversized_method_and_keeps_running() -> None:
         stop_loop(server, client, thread)
 
 
+def test_execute_operation_id_must_match_request_id_and_keeps_running() -> None:
+    server, client, thread = start_loop()
+    try:
+        send_frame(
+            client,
+            request(
+                "execute",
+                {
+                    "operation_id": "different-operation",
+                    "cell_id": "cell-1",
+                    "source": "should_not_run = 99",
+                    "origin": "HUMAN",
+                },
+                "execute-1",
+            ),
+        )
+        response = receive_response(client, "execute-1")
+        assert response["ok"] is False
+        assert (
+            response["error"]["summary"]
+            == "execute.operation_id must match request id"
+        )
+        assert_worker_survives(client)
+    finally:
+        stop_loop(server, client, thread)
+
+
 def test_error_summary_is_unicode_safely_bounded() -> None:
     summary = _bounded_text("界" * (MAX_ERROR_SUMMARY_CHARS + 10), MAX_ERROR_SUMMARY_CHARS)
     assert len(summary) == MAX_ERROR_SUMMARY_CHARS
