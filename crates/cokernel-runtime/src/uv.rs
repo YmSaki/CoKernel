@@ -151,10 +151,7 @@ where
 }
 
 fn project_command<const N: usize>(project_root: &Path, command: [&str; N]) -> UvInvocation {
-    let mut args = command
-        .into_iter()
-        .map(OsString::from)
-        .collect::<Vec<_>>();
+    let mut args = command.into_iter().map(OsString::from).collect::<Vec<_>>();
     args.push("--project".into());
     args.push(project_root.as_os_str().to_owned());
     UvInvocation { args }
