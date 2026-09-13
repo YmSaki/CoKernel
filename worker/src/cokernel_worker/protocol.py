@@ -30,6 +30,10 @@ class WorkerProtocolError(RuntimeError):
     pass
 
 
+def _reject_non_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant is not allowed: {value}")
+
+
 def send_frame(
     sock: socket.socket,
     message: dict[str, Any],
@@ -58,8 +62,8 @@ def receive_frame(
     if payload is None:
         raise WorkerProtocolError("socket closed in the middle of a frame")
     try:
-        value = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        value = json.loads(payload, parse_constant=_reject_non_json_constant)
+    except (UnicodeDecodeError, ValueError) as error:
         raise WorkerProtocolError("frame is not valid UTF-8 JSON") from error
     if type(value) is not dict:
         raise WorkerProtocolError("frame root must be a JSON object")
