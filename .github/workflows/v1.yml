@@ -1,0 +1,73 @@
+name: v1
+
+on:
+  push:
+    branches:
+      - cokernel-v1
+      - 'v1/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Check
+        run: cargo check --workspace --all-targets
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+
+  rust-windows:
+    name: Rust workspace (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check Windows build
+        run: cargo check --workspace --all-targets
+
+  worker:
+    name: Python worker scaffold
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: Sync worker development environment
+        working-directory: worker
+        run: uv sync --dev
+      - name: Worker entrypoint smoke
+        working-directory: worker
+        run: uv run cokernel-worker --version
+
+  protocol-fixtures:
+    name: Protocol fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate JSON fixtures
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          paths = sorted(Path('protocol/fixtures').glob('*.json'))
+          if not paths:
+              raise SystemExit('no v1 protocol fixtures found')
+          for path in paths:
+              with path.open(encoding='utf-8') as f:
+                  data = json.load(f)
+              if data.get('protocol') != 1:
+                  raise SystemExit(f'{path}: expected protocol=1')
+              print(f'OK {path}')
+          PY
