@@ -10,6 +10,7 @@ anyhow.workspace = true
 cokernel-domain = { path = "../cokernel-domain" }
 cokernel-protocol = { path = "../cokernel-protocol" }
 rmcp.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
