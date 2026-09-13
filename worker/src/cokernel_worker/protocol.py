@@ -20,6 +20,10 @@ from .output_limits import OperationOutputBudget, OutputLimits, encode_json
 PROTOCOL_V1 = 1
 DEFAULT_MAX_FRAME_BYTES = 8 * 1024 * 1024
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 2.0
+MAX_REQUEST_ID_CHARS = 256
+MAX_METHOD_CHARS = 128
+MAX_ERROR_SUMMARY_CHARS = 4096
+INVALID_REQUEST_ID = "<invalid-request-id>"
 
 
 class WorkerProtocolError(RuntimeError):
@@ -153,7 +157,7 @@ class WorkerLoop:
         try:
             self._validate_request(request)
             method = request["method"]
-            payload = request.get("payload") or {}
+            payload = request.get("payload", {})
             if type(payload) is not dict:
                 raise WorkerProtocolError("request payload must be an object")
 
@@ -206,7 +210,7 @@ class WorkerLoop:
                 return True
             raise WorkerProtocolError(f"unsupported worker method: {method}")
         except (WorkerProtocolError, InspectionError, KeyError, TypeError, ValueError) as error:
-            self._send_error(sock, request_id, error)
+            self._send_error(sock, _response_request_id(request_id), error)
             return False
 
     def _execute(
@@ -318,10 +322,16 @@ class WorkerLoop:
             raise WorkerProtocolError("worker accepts request frames only")
         if request.get("session_id") != self.session_id:
             raise WorkerProtocolError("request session_id does not match worker session")
-        if type(request.get("id")) is not str or not request["id"]:
+        request_id = request.get("id")
+        if type(request_id) is not str or not request_id:
             raise WorkerProtocolError("request id must be a non-empty string")
-        if type(request.get("method")) is not str or not request["method"]:
+        if len(request_id) > MAX_REQUEST_ID_CHARS:
+            raise WorkerProtocolError("request id exceeds maximum length")
+        method = request.get("method")
+        if type(method) is not str or not method:
             raise WorkerProtocolError("request method must be a non-empty string")
+        if len(method) > MAX_METHOD_CHARS:
+            raise WorkerProtocolError("request method exceeds maximum length")
 
     def _send_message(self, sock: socket.socket, message: dict[str, Any]) -> None:
         with self._send_lock:
@@ -355,7 +365,7 @@ class WorkerLoop:
                 "ok": False,
                 "error": {
                     "code": "CK-WORKER-REQUEST",
-                    "summary": str(error),
+                    "summary": _bounded_text(str(error), MAX_ERROR_SUMMARY_CHARS),
                     "error_type": type(error).__name__,
                 },
             },
@@ -374,6 +384,18 @@ class WorkerLoop:
         self, sock: socket.socket, event: str, payload: dict[str, Any]
     ) -> None:
         self._send_message(sock, self._event_message(event, payload))
+
+
+def _response_request_id(value: Any) -> str:
+    if type(value) is str and value and len(value) <= MAX_REQUEST_ID_CHARS:
+        return value
+    return INVALID_REQUEST_ID
+
+
+def _bounded_text(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    return value[: max_chars - 1] + "…"
 
 
 def connect_and_run(socket_path: str, session_id: str) -> None:
