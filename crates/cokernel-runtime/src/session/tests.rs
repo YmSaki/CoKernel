@@ -52,6 +52,45 @@ mod tests {
         assert_eq!(confidence, 0.25);
     }
 
+    #[test]
+    fn worker_frame_evidence_excludes_heartbeat_and_output_content() {
+        let operation_id = OperationId::new();
+        let heartbeat = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: SessionId::new().to_string(),
+            event: worker::event::HEARTBEAT.into(),
+            payload: json!({"monotonic_ms": 10}),
+        };
+        assert!(session_evidence_from_worker_frame(&heartbeat).is_none());
+
+        let stdout = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: SessionId::new().to_string(),
+            event: worker::event::STDOUT.into(),
+            payload: json!({
+                "operation_id": operation_id.to_string(),
+                "text": "secret-output-must-not-enter-failure-tail",
+            }),
+        };
+        assert!(session_evidence_from_worker_frame(&stdout).is_none());
+
+        let error = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: SessionId::new().to_string(),
+            event: worker::event::ERROR.into(),
+            payload: json!({
+                "operation_id": operation_id.to_string(),
+                "ename": "ValueError",
+                "evalue": "secret-error-value",
+            }),
+        };
+        let (kind, actual_operation, detail) =
+            session_evidence_from_worker_frame(&error).expect("error evidence");
+        assert_eq!(kind, cokernel_domain::SessionEvidenceKind::WorkerError);
+        assert_eq!(actual_operation, Some(operation_id));
+        assert_eq!(detail.as_deref(), Some("ValueError"));
+    }
+
     #[tokio::test]
     async fn cancelling_pending_requests_closes_queue_and_finishes_each_operation() {
         let session_id = SessionId::new();

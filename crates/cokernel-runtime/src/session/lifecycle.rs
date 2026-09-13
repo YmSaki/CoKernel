@@ -27,6 +27,7 @@ async fn graceful_stop(
     forget_oom_baseline(context.worker_pid);
     clear_current_operation(context);
     set_state(context, SessionState::Stopped);
+    forget_session_event_tail(context.worker_pid);
 }
 
 async fn terminate_child(child: &mut Child) -> Option<ExitStatus> {
@@ -39,6 +40,7 @@ async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
         trigger: cokernel_domain::FailureTrigger::ProcessExit,
         detail: Some(format_exit_status_ref(&status)),
         session_state: observed_session_state(context),
+        recent_session_events: take_session_event_tail(context.worker_pid),
     };
     let evidence = collect_failure_evidence(context.worker_pid, Some(runtime_event_context));
     let (classification, confidence) = apply_oom_classification(
@@ -66,6 +68,7 @@ async fn record_crash(context: &SessionActorContext, child: &mut Child, error: S
         trigger: failure_trigger(&error),
         detail: Some(detail.clone()),
         session_state: observed_session_state(context),
+        recent_session_events: take_session_event_tail(context.worker_pid),
     };
     // Capture /proc/cgroup evidence before recovery termination whenever the worker is still alive.
     // This is intentionally best-effort and bounded; failure evidence collection must never block
@@ -153,6 +156,78 @@ struct FailureEvidenceSnapshot {
     wsl_memory_snapshot: Option<cokernel_domain::SystemMemorySnapshot>,
     linux_oom_evidence: Option<cokernel_domain::LinuxOomEvidence>,
     runtime_event_context: Option<cokernel_domain::RuntimeFailureContext>,
+}
+
+const RECENT_SESSION_EVENT_CAPACITY: usize = 64;
+const RECENT_SESSION_EVENT_DETAIL_CHARS: usize = 160;
+
+fn session_event_tails(
+) -> &'static StdMutex<HashMap<u32, std::collections::VecDeque<cokernel_domain::SessionEvidenceEvent>>>
+{
+    static TAILS: std::sync::OnceLock<
+        StdMutex<
+            HashMap<u32, std::collections::VecDeque<cokernel_domain::SessionEvidenceEvent>>,
+        >,
+    > = std::sync::OnceLock::new();
+    TAILS.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+fn remember_session_event_tail(worker_pid: u32) {
+    session_event_tails()
+        .lock()
+        .expect("Session event tail lock poisoned")
+        .insert(
+            worker_pid,
+            std::collections::VecDeque::with_capacity(RECENT_SESSION_EVENT_CAPACITY),
+        );
+}
+
+fn take_session_event_tail(worker_pid: u32) -> Vec<cokernel_domain::SessionEvidenceEvent> {
+    session_event_tails()
+        .lock()
+        .expect("Session event tail lock poisoned")
+        .remove(&worker_pid)
+        .map(|tail| tail.into_iter().collect())
+        .unwrap_or_default()
+}
+
+fn forget_session_event_tail(worker_pid: u32) {
+    let _ = take_session_event_tail(worker_pid);
+}
+
+fn record_session_evidence(
+    worker_pid: u32,
+    kind: cokernel_domain::SessionEvidenceKind,
+    operation_id: Option<OperationId>,
+    detail: Option<String>,
+) {
+    let mut tails = session_event_tails()
+        .lock()
+        .expect("Session event tail lock poisoned");
+    let Some(tail) = tails.get_mut(&worker_pid) else {
+        return;
+    };
+    if tail.len() == RECENT_SESSION_EVENT_CAPACITY {
+        tail.pop_front();
+    }
+    tail.push_back(cokernel_domain::SessionEvidenceEvent {
+        timestamp: Utc::now(),
+        kind,
+        operation_id,
+        detail: detail.map(|value| truncate_session_evidence_detail(&value)),
+    });
+}
+
+fn truncate_session_evidence_detail(value: &str) -> String {
+    if value.chars().count() <= RECENT_SESSION_EVENT_DETAIL_CHARS {
+        return value.to_owned();
+    }
+    let mut truncated = value
+        .chars()
+        .take(RECENT_SESSION_EVENT_DETAIL_CHARS.saturating_sub(1))
+        .collect::<String>();
+    truncated.push('…');
+    truncated
 }
 
 fn oom_baselines() -> &'static StdMutex<HashMap<u32, cokernel_domain::LinuxOomEvidence>> {
@@ -503,5 +578,28 @@ mod failure_evidence_tests {
             failure_trigger(&SessionError::CommandChannelClosed),
             cokernel_domain::FailureTrigger::RuntimeControl
         );
+    }
+
+    #[test]
+    fn recent_session_event_tail_is_bounded_and_truncates_detail() {
+        let pid = u32::MAX;
+        remember_session_event_tail(pid);
+        for index in 0..(RECENT_SESSION_EVENT_CAPACITY + 5) {
+            record_session_evidence(
+                pid,
+                cokernel_domain::SessionEvidenceKind::StateChanged,
+                None,
+                Some(format!("{index}-{}", "x".repeat(RECENT_SESSION_EVENT_DETAIL_CHARS + 20))),
+            );
+        }
+        let events = take_session_event_tail(pid);
+        assert_eq!(events.len(), RECENT_SESSION_EVENT_CAPACITY);
+        assert!(events[0].detail.as_deref().unwrap().starts_with("5-"));
+        assert!(events.iter().all(|event| {
+            event
+                .detail
+                .as_ref()
+                .is_none_or(|detail| detail.chars().count() <= RECENT_SESSION_EVENT_DETAIL_CHARS)
+        }));
     }
 }

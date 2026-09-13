@@ -49,6 +49,13 @@ async fn run_session_actor(
     mut control_rx: mpsc::Receiver<ControlRequest>,
     mut worker_frames: mpsc::Receiver<Result<WorkerFrame, SessionError>>,
 ) {
+    remember_session_event_tail(context.worker_pid);
+    record_session_evidence(
+        context.worker_pid,
+        cokernel_domain::SessionEvidenceKind::StateChanged,
+        None,
+        Some("IDLE".into()),
+    );
     remember_oom_baseline(context.worker_pid);
     let mut stale_environment = false;
     let mut last_worker_activity = Instant::now();
@@ -241,11 +248,60 @@ fn observe_worker_frame(
 ) -> Result<WorkerFrame, SessionError> {
     let frame = inbound.ok_or(SessionError::WorkerDisconnected)??;
     *last_worker_activity = Instant::now();
+    if let Some((kind, operation_id, detail)) = session_evidence_from_worker_frame(&frame) {
+        record_session_evidence(context.worker_pid, kind, operation_id, detail);
+    }
     let _ = context.events.send(SessionEvent::WorkerFrame {
         session_id: context.session_id,
         frame: frame.clone(),
     });
     Ok(frame)
+}
+
+fn session_evidence_from_worker_frame(
+    frame: &WorkerFrame,
+) -> Option<(
+    cokernel_domain::SessionEvidenceKind,
+    Option<OperationId>,
+    Option<String>,
+)> {
+    match frame {
+        WorkerFrame::Event { event, payload, .. } => {
+            let kind = match event.as_str() {
+                worker::event::EXECUTION_STARTED => {
+                    cokernel_domain::SessionEvidenceKind::WorkerExecutionStarted
+                }
+                worker::event::EXECUTION_FINISHED => {
+                    cokernel_domain::SessionEvidenceKind::WorkerExecutionFinished
+                }
+                worker::event::WORKER_WARNING => cokernel_domain::SessionEvidenceKind::WorkerWarning,
+                worker::event::ERROR => cokernel_domain::SessionEvidenceKind::WorkerError,
+                _ => return None,
+            };
+            let operation_id = payload
+                .get("operation_id")
+                .and_then(Value::as_str)
+                .and_then(|value| value.parse::<OperationId>().ok());
+            let detail = match event.as_str() {
+                worker::event::EXECUTION_FINISHED => payload
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                worker::event::ERROR => payload
+                    .get("ename")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                _ => Some(event.clone()),
+            };
+            Some((kind, operation_id, detail))
+        }
+        WorkerFrame::Response { id, ok, .. } => Some((
+            cokernel_domain::SessionEvidenceKind::WorkerResponse,
+            id.parse::<OperationId>().ok(),
+            Some(if *ok { "ok" } else { "error" }.into()),
+        )),
+        WorkerFrame::Request { .. } => None,
+    }
 }
 
 fn heartbeat_expired(last_worker_activity: Instant, heartbeat_timeout: Duration) -> bool {
@@ -257,6 +313,12 @@ fn finish_operation(
     operation_id: OperationId,
     status: OperationStatus,
 ) {
+    record_session_evidence(
+        context.worker_pid,
+        cokernel_domain::SessionEvidenceKind::OperationFinished,
+        Some(operation_id),
+        Some(format!("{status:?}")),
+    );
     let _ = context.events.send(SessionEvent::OperationFinished {
         session_id: context.session_id,
         operation_id,
@@ -281,6 +343,12 @@ fn cancel_pending_requests(
 ) {
     execute_rx.close();
     while let Ok(request) = execute_rx.try_recv() {
+        record_session_evidence(
+            context.worker_pid,
+            cokernel_domain::SessionEvidenceKind::OperationFinished,
+            Some(request.operation_id),
+            Some("Cancelled".into()),
+        );
         let _ = context.events.send(SessionEvent::OperationFinished {
             session_id: context.session_id,
             operation_id: request.operation_id,
@@ -298,6 +366,12 @@ fn clear_current_operation(context: &SessionActorContext) {
 
 fn set_state(context: &SessionActorContext, state: SessionState) {
     context.state_tx.send_replace(state);
+    record_session_evidence(
+        context.worker_pid,
+        cokernel_domain::SessionEvidenceKind::StateChanged,
+        None,
+        Some(format!("{state:?}")),
+    );
     let _ = context.events.send(SessionEvent::StateChanged {
         session_id: context.session_id,
         state,

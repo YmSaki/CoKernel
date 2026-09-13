@@ -140,11 +140,33 @@ pub enum FailureTrigger {
     Startup,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SessionEvidenceKind {
+    StateChanged,
+    OperationFinished,
+    WorkerExecutionStarted,
+    WorkerExecutionFinished,
+    WorkerWarning,
+    WorkerError,
+    WorkerResponse,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionEvidenceEvent {
+    pub timestamp: DateTime<Utc>,
+    pub kind: SessionEvidenceKind,
+    pub operation_id: Option<OperationId>,
+    pub detail: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeFailureContext {
     pub trigger: FailureTrigger,
     pub detail: Option<String>,
     pub session_state: SessionState,
+    #[serde(default)]
+    pub recent_session_events: Vec<SessionEvidenceEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
