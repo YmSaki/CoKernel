@@ -1,0 +1,19 @@
+{
+  "protocol": 1,
+  "event": "session.output",
+  "sequence": 104,
+  "payload": {
+    "session_id": "11111111-1111-1111-1111-111111111111",
+    "operation_id": "33333333-3333-3333-3333-333333333333",
+    "cell_id": "cell-1",
+    "output_sequence": 1,
+    "output": {
+      "kind": "execute_result",
+      "execution_count": 1,
+      "data": {
+        "text/plain": "124"
+      },
+      "metadata": {}
+    }
+  }
+}
