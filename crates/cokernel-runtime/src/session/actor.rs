@@ -52,6 +52,7 @@ async fn run_session_actor(
     mut writer: OwnedWriteHalf,
     mut child: Child,
     mut execute_rx: mpsc::Receiver<ExecuteRequest>,
+    mut inspection_rx: mpsc::Receiver<InspectionRequest>,
     mut control_rx: mpsc::Receiver<ControlRequest>,
     mut worker_frames: mpsc::Receiver<Result<WorkerFrame, SessionError>>,
 ) {
@@ -65,13 +66,14 @@ async fn run_session_actor(
     remember_oom_baseline(context.worker_pid);
     let mut stale_environment = false;
     let mut last_worker_activity = Instant::now();
+    let mut inspection_open = true;
     loop {
         tokio::select! {
             biased;
             control = control_rx.recv() => {
                 match control {
                     Some(ControlRequest::Stop) | None => {
-                        cancel_pending_requests(&context, &mut execute_rx);
+                        cancel_pending_work(&context, &mut execute_rx, &mut inspection_rx);
                         graceful_stop(&context, &mut writer, &mut child).await;
                         return;
                     }
@@ -84,6 +86,7 @@ async fn run_session_actor(
             }
             request = execute_rx.recv() => {
                 let Some(request) = request else {
+                    cancel_pending_inspections(&mut inspection_rx);
                     graceful_stop(&context, &mut writer, &mut child).await;
                     return;
                 };
@@ -99,21 +102,53 @@ async fn run_session_actor(
                 ).await {
                     Ok(ExecuteDisposition::Completed) => {}
                     Ok(ExecuteDisposition::Stopped) => {
-                        cancel_pending_requests(&context, &mut execute_rx);
+                        cancel_pending_work(&context, &mut execute_rx, &mut inspection_rx);
                         return;
                     }
                     Err(error) => {
-                        cancel_pending_requests(&context, &mut execute_rx);
+                        cancel_pending_work(&context, &mut execute_rx, &mut inspection_rx);
+                        record_crash(&context, &mut child, error).await;
+                        return;
+                    }
+                }
+            }
+            inspection = inspection_rx.recv(), if inspection_open => {
+                let Some(InspectionRequest { method, payload, response }) = inspection else {
+                    inspection_open = false;
+                    continue;
+                };
+                match inspect_one(
+                    &context,
+                    &mut writer,
+                    &mut child,
+                    &mut control_rx,
+                    &mut worker_frames,
+                    method,
+                    payload,
+                    &mut stale_environment,
+                    &mut last_worker_activity,
+                ).await {
+                    Ok(InspectionDisposition::Completed(result)) => {
+                        let _ = response.send(result);
+                    }
+                    Ok(InspectionDisposition::Stopped) => {
+                        let _ = response.send(Err(SessionInspectionError::CommandChannelClosed));
+                        cancel_pending_work(&context, &mut execute_rx, &mut inspection_rx);
+                        return;
+                    }
+                    Err(error) => {
+                        let _ = response.send(Err(SessionInspectionError::Unavailable(error.to_string())));
+                        cancel_pending_work(&context, &mut execute_rx, &mut inspection_rx);
                         record_crash(&context, &mut child, error).await;
                         return;
                     }
                 }
             }
             inbound = worker_frames.recv() => {
-                match observe_worker_frame(&context, inbound, &mut last_worker_activity) {
+                match observe_worker_frame(&context, inbound, &mut last_worker_activity, true) {
                     Ok(_) => {}
                     Err(error) => {
-                        cancel_pending_requests(&context, &mut execute_rx);
+                        cancel_pending_work(&context, &mut execute_rx, &mut inspection_rx);
                         record_crash(&context, &mut child, error).await;
                         return;
                     }
@@ -122,19 +157,19 @@ async fn run_session_actor(
             _ = sleep(HEALTH_POLL_INTERVAL) => {
                 match child.try_wait() {
                     Ok(Some(status)) => {
-                        cancel_pending_requests(&context, &mut execute_rx);
+                        cancel_pending_work(&context, &mut execute_rx, &mut inspection_rx);
                         record_exit(&context, status).await;
                         return;
                     }
                     Ok(None) => {}
                     Err(error) => {
-                        cancel_pending_requests(&context, &mut execute_rx);
+                        cancel_pending_work(&context, &mut execute_rx, &mut inspection_rx);
                         record_crash(&context, &mut child, SessionError::Io(error)).await;
                         return;
                     }
                 }
                 if heartbeat_expired(last_worker_activity, context.heartbeat_timeout) {
-                    cancel_pending_requests(&context, &mut execute_rx);
+                    cancel_pending_work(&context, &mut execute_rx, &mut inspection_rx);
                     record_crash(
                         &context,
                         &mut child,
@@ -149,6 +184,11 @@ async fn run_session_actor(
 
 enum ExecuteDisposition {
     Completed,
+    Stopped,
+}
+
+enum InspectionDisposition {
+    Completed(Result<Value, SessionInspectionError>),
     Stopped,
 }
 
@@ -210,7 +250,7 @@ async fn execute_one(
                 }
             }
             inbound = worker_frames.recv() => {
-                let frame = observe_worker_frame(context, inbound, last_worker_activity)?;
+                let frame = observe_worker_frame(context, inbound, last_worker_activity, true)?;
                 if let WorkerFrame::Response { id, ok, result, .. } = &frame {
                     if id == &request_id {
                         let succeeded = *ok
@@ -251,10 +291,105 @@ async fn execute_one(
     }
 }
 
+async fn inspect_one(
+    context: &SessionActorContext,
+    writer: &mut OwnedWriteHalf,
+    child: &mut Child,
+    control_rx: &mut mpsc::Receiver<ControlRequest>,
+    worker_frames: &mut mpsc::Receiver<Result<WorkerFrame, SessionError>>,
+    method: &'static str,
+    payload: Value,
+    stale_environment: &mut bool,
+    last_worker_activity: &mut Instant,
+) -> Result<InspectionDisposition, SessionError> {
+    let request_id = format!("inspect-{}", OperationId::new());
+    let frame = WorkerFrame::Request {
+        protocol: WORKER_PROTOCOL_V1,
+        id: request_id.clone(),
+        session_id: context.session_id.to_string(),
+        method: method.into(),
+        payload,
+    };
+    write_worker_frame(writer, &frame).await?;
+
+    loop {
+        tokio::select! {
+            control = control_rx.recv() => {
+                match control {
+                    Some(ControlRequest::Interrupt) => {}
+                    Some(ControlRequest::MarkEnvironmentStale) => {
+                        *stale_environment = true;
+                        set_state(context, SessionState::StaleEnvironment);
+                    }
+                    Some(ControlRequest::Stop) | None => {
+                        graceful_stop(context, writer, child).await;
+                        return Ok(InspectionDisposition::Stopped);
+                    }
+                }
+            }
+            inbound = worker_frames.recv() => {
+                let frame = observe_worker_frame(context, inbound, last_worker_activity, false)?;
+                let WorkerFrame::Response {
+                    id,
+                    ok,
+                    result,
+                    error,
+                    ..
+                } = &frame else {
+                    continue;
+                };
+                if id != &request_id {
+                    continue;
+                }
+
+                if *ok {
+                    if error.is_some() {
+                        return Err(WorkerTransportError::Protocol(
+                            "successful inspection response included an error".into(),
+                        ).into());
+                    }
+                    let result = result.clone().ok_or_else(|| {
+                        WorkerTransportError::Protocol(
+                            "successful inspection response omitted result".into(),
+                        )
+                    })?;
+                    return Ok(InspectionDisposition::Completed(Ok(result)));
+                }
+
+                if result.is_some() {
+                    return Err(WorkerTransportError::Protocol(
+                        "failed inspection response included a result".into(),
+                    ).into());
+                }
+                let error = error.as_ref().ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "failed inspection response omitted error".into(),
+                    )
+                })?;
+                return Ok(InspectionDisposition::Completed(Err(
+                    SessionInspectionError::WorkerRequest {
+                        code: error.code.clone(),
+                        summary: error.summary.clone(),
+                    },
+                )));
+            }
+            _ = sleep(HEALTH_POLL_INTERVAL) => {
+                if let Some(status) = child.try_wait()? {
+                    return Err(SessionError::WorkerExited(format_exit_status(status)));
+                }
+                if heartbeat_expired(*last_worker_activity, context.heartbeat_timeout) {
+                    return Err(SessionError::WorkerHeartbeatTimeout(context.heartbeat_timeout));
+                }
+            }
+        }
+    }
+}
+
 fn observe_worker_frame(
     context: &SessionActorContext,
     inbound: Option<Result<WorkerFrame, SessionError>>,
     last_worker_activity: &mut Instant,
+    publish_event: bool,
 ) -> Result<WorkerFrame, SessionError> {
     let frame = inbound.ok_or(SessionError::WorkerDisconnected)??;
     validate_worker_frame_identity(context.session_id, &frame)?;
@@ -262,10 +397,12 @@ fn observe_worker_frame(
     if let Some((kind, operation_id, detail)) = session_evidence_from_worker_frame(&frame) {
         record_session_evidence(context.worker_pid, kind, operation_id, detail);
     }
-    let _ = context.events.send(SessionEvent::WorkerFrame {
-        session_id: context.session_id,
-        frame: frame.clone(),
-    });
+    if publish_event {
+        let _ = context.events.send(SessionEvent::WorkerFrame {
+            session_id: context.session_id,
+            frame: frame.clone(),
+        });
+    }
     Ok(frame)
 }
 
@@ -402,6 +539,24 @@ fn cancel_pending_requests(
             status: OperationStatus::Cancelled,
         });
     }
+}
+
+fn cancel_pending_inspections(inspection_rx: &mut mpsc::Receiver<InspectionRequest>) {
+    inspection_rx.close();
+    while let Ok(request) = inspection_rx.try_recv() {
+        let _ = request
+            .response
+            .send(Err(SessionInspectionError::CommandChannelClosed));
+    }
+}
+
+fn cancel_pending_work(
+    context: &SessionActorContext,
+    execute_rx: &mut mpsc::Receiver<ExecuteRequest>,
+    inspection_rx: &mut mpsc::Receiver<InspectionRequest>,
+) {
+    cancel_pending_requests(context, execute_rx);
+    cancel_pending_inspections(inspection_rx);
 }
 
 fn clear_current_operation(context: &SessionActorContext) {

@@ -13,17 +13,19 @@ use cokernel_domain::{
     OperationId, OperationStatus, Project, ProjectId, SessionId, SessionState,
 };
 use cokernel_protocol::worker::{self, WorkerFrame, WORKER_PROTOCOL_V1};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::net::{unix::OwnedReadHalf, unix::OwnedWriteHalf, UnixListener};
 use tokio::process::{Child, Command};
-use tokio::sync::{broadcast, mpsc, watch, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
 use tokio::time::{sleep, timeout};
 
 use crate::worker::{read_worker_frame, uv_worker_command, write_worker_frame, WorkerTransportError};
 
 const EXECUTE_QUEUE_CAPACITY: usize = 128;
+const INSPECTION_QUEUE_CAPACITY: usize = 32;
 const CONTROL_QUEUE_CAPACITY: usize = 16;
 const EVENT_QUEUE_CAPACITY: usize = 512;
 const WORKER_FRAME_QUEUE_CAPACITY: usize = 512;
@@ -79,6 +81,47 @@ pub enum SessionError {
     StopTimeout(SessionId),
 }
 
+#[derive(Debug, Error)]
+pub enum SessionInspectionError {
+    #[error("session inspection channel is closed")]
+    CommandChannelClosed,
+    #[error("worker inspection is unavailable: {0}")]
+    Unavailable(String),
+    #[error("worker rejected inspection request ({code}): {summary}")]
+    WorkerRequest { code: String, summary: String },
+    #[error("worker inspection response is invalid: {0}")]
+    InvalidResponse(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionVariableSummary {
+    pub name: String,
+    pub type_module: String,
+    pub type_name: String,
+    pub supported: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionVariableValue {
+    pub name: String,
+    pub type_module: String,
+    pub type_name: String,
+    pub supported: bool,
+    pub value: Option<Value>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionVariableListResult {
+    variables: Vec<SessionVariableSummary>,
+}
+
+struct InspectionRequest {
+    method: &'static str,
+    payload: Value,
+    response: oneshot::Sender<Result<Value, SessionInspectionError>>,
+}
+
 #[derive(Debug, Clone)]
 pub enum SessionEvent {
     StateChanged {
@@ -114,6 +157,7 @@ pub struct SessionHandle {
     started_at: DateTime<Utc>,
     state_rx: watch::Receiver<SessionState>,
     execute_tx: mpsc::Sender<ExecuteRequest>,
+    inspection_tx: mpsc::Sender<InspectionRequest>,
     control_tx: mpsc::Sender<ControlRequest>,
     events: broadcast::Sender<SessionEvent>,
     current_operation: Arc<StdMutex<Option<OperationId>>>,
@@ -174,6 +218,58 @@ impl SessionHandle {
         });
         permit.send(request);
         Ok(operation_id)
+    }
+
+    pub async fn list_variables(
+        &self,
+    ) -> Result<Vec<SessionVariableSummary>, SessionInspectionError> {
+        let result = self
+            .inspect_worker(worker::method::INSPECT_VARIABLES, json!({}))
+            .await?;
+        let response: SessionVariableListResult = serde_json::from_value(result)
+            .map_err(|error| SessionInspectionError::InvalidResponse(error.to_string()))?;
+        Ok(response.variables)
+    }
+
+    pub async fn get_variable(
+        &self,
+        name: impl Into<String>,
+    ) -> Result<SessionVariableValue, SessionInspectionError> {
+        let name = name.into();
+        let result = self
+            .inspect_worker(
+                worker::method::GET_VARIABLE,
+                json!({ "name": name.clone() }),
+            )
+            .await?;
+        let value: SessionVariableValue = serde_json::from_value(result)
+            .map_err(|error| SessionInspectionError::InvalidResponse(error.to_string()))?;
+        if value.name != name {
+            return Err(SessionInspectionError::InvalidResponse(format!(
+                "worker returned variable {:?} for requested {:?}",
+                value.name, name
+            )));
+        }
+        Ok(value)
+    }
+
+    async fn inspect_worker(
+        &self,
+        method: &'static str,
+        payload: Value,
+    ) -> Result<Value, SessionInspectionError> {
+        let (response, receiver) = oneshot::channel();
+        self.inspection_tx
+            .send(InspectionRequest {
+                method,
+                payload,
+                response,
+            })
+            .await
+            .map_err(|_| SessionInspectionError::CommandChannelClosed)?;
+        receiver
+            .await
+            .map_err(|_| SessionInspectionError::CommandChannelClosed)?
     }
 
     pub async fn interrupt(&self) -> Result<(), SessionError> {

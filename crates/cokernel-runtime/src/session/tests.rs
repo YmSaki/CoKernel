@@ -74,6 +74,48 @@ mod tests {
     }
 
     #[test]
+    fn inspection_result_shapes_match_worker_contract() {
+        let listed: SessionVariableListResult = serde_json::from_value(json!({
+            "variables": [
+                {
+                    "name": "x",
+                    "type_module": "builtins",
+                    "type_name": "int",
+                    "supported": true
+                }
+            ]
+        }))
+        .unwrap();
+        assert_eq!(listed.variables.len(), 1);
+        assert_eq!(listed.variables[0].name, "x");
+        assert!(listed.variables[0].supported);
+
+        let supported: SessionVariableValue = serde_json::from_value(json!({
+            "name": "x",
+            "type_module": "builtins",
+            "type_name": "int",
+            "supported": true,
+            "value": 123
+        }))
+        .unwrap();
+        assert_eq!(supported.value, Some(json!(123)));
+        assert_eq!(supported.reason, None);
+
+        let unsupported: SessionVariableValue = serde_json::from_value(json!({
+            "name": "model",
+            "type_module": "custom",
+            "type_name": "Model",
+            "supported": false,
+            "value": null,
+            "reason": "unsupported variable type: custom.Model"
+        }))
+        .unwrap();
+        assert!(!unsupported.supported);
+        assert_eq!(unsupported.value, None);
+        assert!(unsupported.reason.is_some());
+    }
+
+    #[test]
     fn supervisor_termination_is_not_misclassified_as_process_signal() {
         let (classification, confidence) = crash_classification(None, true);
         assert_eq!(classification, FailureClassification::Unknown);
@@ -131,6 +173,28 @@ mod tests {
         let bounded = bounded_failure_cell_id(Some(&oversized)).expect("bounded cell id");
         assert_eq!(bounded.chars().count(), FAILURE_CELL_ID_CHARS);
         assert!(bounded.ends_with('…'));
+    }
+
+    #[tokio::test]
+    async fn cancelling_pending_inspections_unblocks_waiters() {
+        let (inspection_tx, mut inspection_rx) = mpsc::channel(1);
+        let (response, receiver) = oneshot::channel();
+        inspection_tx
+            .send(InspectionRequest {
+                method: worker::method::GET_VARIABLE,
+                payload: json!({"name": "x"}),
+                response,
+            })
+            .await
+            .unwrap();
+
+        cancel_pending_inspections(&mut inspection_rx);
+
+        assert!(inspection_tx.is_closed());
+        assert!(matches!(
+            receiver.await.unwrap(),
+            Err(SessionInspectionError::CommandChannelClosed)
+        ));
     }
 
     #[tokio::test]

@@ -239,6 +239,7 @@ impl SessionSupervisor {
 
         let (state_tx, state_rx) = watch::channel(SessionState::Idle);
         let (execute_tx, execute_rx) = mpsc::channel(EXECUTE_QUEUE_CAPACITY);
+        let (inspection_tx, inspection_rx) = mpsc::channel(INSPECTION_QUEUE_CAPACITY);
         let (control_tx, control_rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
         let (events, _) = broadcast::channel(EVENT_QUEUE_CAPACITY);
         let current_operation = Arc::new(StdMutex::new(None));
@@ -254,6 +255,7 @@ impl SessionSupervisor {
             started_at,
             state_rx,
             execute_tx,
+            inspection_tx,
             control_tx,
             events: events.clone(),
             current_operation: current_operation.clone(),
@@ -282,6 +284,7 @@ impl SessionSupervisor {
             writer,
             child,
             execute_rx,
+            inspection_rx,
             control_rx,
             worker_frames_rx,
         ));
