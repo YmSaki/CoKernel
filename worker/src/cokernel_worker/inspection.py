@@ -75,6 +75,13 @@ def _is_supported_exact_type(value: Any) -> bool:
 
 def _type_metadata(value: Any, *, max_string_chars: int) -> tuple[str, str]:
     value_type = type(value)
+    # A custom metaclass can install descriptors such as ``__module__`` whose
+    # lookup executes user code even when calling ``type.__getattribute__``
+    # directly. Safe inspection does not need exact metadata badly enough to
+    # cross that boundary: only inspect class metadata when the metaclass is
+    # the exact built-in ``type``.
+    if type(value_type) is not type:
+        return "<unknown>", "<unknown>"
     module = type.__getattribute__(value_type, "__module__")
     type_name = type.__getattribute__(value_type, "__qualname__")
     if type(module) is not str or type(type_name) is not str:

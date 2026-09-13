@@ -229,3 +229,28 @@ def test_type_metadata_never_stringifies_user_controlled_values() -> None:
         assert Hostile.touched is False
     finally:
         OddMetadata.__module__ = original
+
+
+def test_type_metadata_does_not_invoke_custom_metaclass_descriptors() -> None:
+    class HostileMeta(type):
+        touched = False
+
+        @property
+        def __module__(cls):
+            type(cls).touched = True
+            raise AssertionError("metaclass descriptor must not execute")
+
+    class MetaHostile(metaclass=HostileMeta):
+        pass
+
+    HostileMeta.touched = False
+    result = get_variable({"x": MetaHostile()}, "x")
+    assert result.supported is False
+    assert result.type_module == "<unknown>"
+    assert result.type_name == "<unknown>"
+    assert HostileMeta.touched is False
+
+    listed = {item.name: item for item in list_variables({"x": MetaHostile()})}
+    assert listed["x"].type_module == "<unknown>"
+    assert listed["x"].type_name == "<unknown>"
+    assert HostileMeta.touched is False
