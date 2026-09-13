@@ -107,7 +107,7 @@ def main() -> int:
                     "exec-1",
                     "execute",
                     {
-                        "operation_id": "op-1",
+                        "operation_id": "exec-1",
                         "cell_id": "cell-1",
                         "source": "x = 123",
                     },
@@ -131,7 +131,7 @@ def main() -> int:
                     "exec-2",
                     "execute",
                     {
-                        "operation_id": "op-2",
+                        "operation_id": "exec-2",
                         "cell_id": "cell-2",
                         "source": "x + 1",
                     },

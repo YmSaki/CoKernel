@@ -68,7 +68,7 @@ def test_worker_protocol_persists_namespace_and_supports_safe_inspection() -> No
             request(
                 "execute",
                 {"operation_id": "op1", "cell_id": "c1", "source": "x = 123"},
-                "e1",
+                "op1",
             ),
         )
         frames = []
@@ -76,7 +76,7 @@ def test_worker_protocol_persists_namespace_and_supports_safe_inspection() -> No
             frame = receive_frame(client)
             assert frame is not None
             frames.append(frame)
-            if frame.get("type") == "response" and frame.get("id") == "e1":
+            if frame.get("type") == "response" and frame.get("id") == "op1":
                 break
         assert frames[-1]["result"]["status"] == "SUCCEEDED"
 
@@ -91,7 +91,7 @@ def test_worker_protocol_persists_namespace_and_supports_safe_inspection() -> No
             request(
                 "execute",
                 {"operation_id": "op2", "cell_id": "c2", "source": "x + 1"},
-                "e2",
+                "op2",
             ),
         )
         frames = []
@@ -99,7 +99,7 @@ def test_worker_protocol_persists_namespace_and_supports_safe_inspection() -> No
             frame = receive_frame(client)
             assert frame is not None
             frames.append(frame)
-            if frame.get("type") == "response" and frame.get("id") == "e2":
+            if frame.get("type") == "response" and frame.get("id") == "op2":
                 break
         result_events = [
             frame for frame in frames if frame.get("event") == "execute_result"
@@ -141,7 +141,7 @@ def test_worker_emits_heartbeat_while_execution_is_running() -> None:
                     "cell_id": "slow-cell",
                     "source": "import time\ntime.sleep(0.12)\n42",
                 },
-                "slow-request",
+                "slow-op",
             ),
         )
         saw_heartbeat = False
@@ -151,7 +151,7 @@ def test_worker_emits_heartbeat_while_execution_is_running() -> None:
             if frame.get("event") == "heartbeat":
                 saw_heartbeat = True
                 assert type(frame["payload"]["monotonic_ns"]) is int
-            if frame.get("type") == "response" and frame.get("id") == "slow-request":
+            if frame.get("type") == "response" and frame.get("id") == "slow-op":
                 break
         assert saw_heartbeat
     finally:

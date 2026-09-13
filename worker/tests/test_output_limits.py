@@ -54,14 +54,14 @@ def run_execute(outcome: ExecutionOutcome, limits: OutputLimits):
 
     send_frame(
         client,
-        request("execute", {"operation_id": "op1", "source": "ignored"}, "e1"),
+        request("execute", {"operation_id": "op1", "source": "ignored"}, "op1"),
     )
     frames = []
     while True:
         frame = receive_frame(client)
         assert frame is not None
         frames.append(frame)
-        if frame.get("type") == "response" and frame.get("id") == "e1":
+        if frame.get("type") == "response" and frame.get("id") == "op1":
             break
 
     send_frame(client, request("shutdown", request_id="shutdown"))
