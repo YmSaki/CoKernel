@@ -28,6 +28,9 @@ try {
     Write-Host '[v1-check] Worker tests'
     uv run --project worker pytest
 
+    Write-Host '[v1-check] Worker protocol subprocess smoke (Linux/WSL proof; skips on native Windows)'
+    python scripts/v1/smoke_worker_protocol.py
+
     Write-Host '[v1-check] uv Project + worker overlay spike'
     python scripts/v1/spike_uv_worker_overlay.py
 
