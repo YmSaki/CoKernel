@@ -129,7 +129,13 @@ def list_variables(
                 name=name,
                 type_module=module,
                 type_name=type_name,
-                supported=_is_supported_exact_type(value),
+                supported=_supports_get_value(
+                    value,
+                    name=name,
+                    type_module=module,
+                    type_name=type_name,
+                    limits=limits,
+                ),
             )
         )
 
@@ -195,14 +201,61 @@ def get_variable(
         supported=True,
         value=serialized,
     )
+    encoded = _encode_supported_variable_value(
+        name=result.name,
+        type_module=result.type_module,
+        type_name=result.type_name,
+        value=result.value,
+    )
+    if len(encoded) > limits.max_response_bytes:
+        raise InspectionError("variable value exceeds maximum serialized response size")
+    return result
+
+
+def _supports_get_value(
+    value: Any,
+    *,
+    name: str,
+    type_module: str,
+    type_name: str,
+    limits: InspectionLimits,
+) -> bool:
+    if not _is_supported_exact_type(value):
+        return False
     try:
-        encoded = json.dumps(
+        serialized = _serialize(
+            value,
+            limits=limits,
+            budget=_Budget(limits.max_items),
+            depth=0,
+            seen=set(),
+        )
+        encoded = _encode_supported_variable_value(
+            name=name,
+            type_module=type_module,
+            type_name=type_name,
+            value=serialized,
+        )
+    except (InspectionError, TypeError, ValueError, OverflowError):
+        return False
+    return len(encoded) <= limits.max_response_bytes
+
+
+def _encode_supported_variable_value(
+    *,
+    name: str,
+    type_module: str,
+    type_name: str,
+    value: Any,
+) -> bytes:
+    try:
+        return json.dumps(
             {
-                "name": result.name,
-                "type_module": result.type_module,
-                "type_name": result.type_name,
-                "supported": result.supported,
-                "value": result.value,
+                "name": name,
+                "type_module": type_module,
+                "type_name": type_name,
+                "supported": True,
+                "value": value,
             },
             ensure_ascii=False,
             allow_nan=False,
@@ -210,9 +263,6 @@ def get_variable(
         ).encode("utf-8")
     except (TypeError, ValueError, OverflowError) as error:
         raise InspectionError("variable value cannot be encoded safely") from error
-    if len(encoded) > limits.max_response_bytes:
-        raise InspectionError("variable value exceeds maximum serialized response size")
-    return result
 
 
 @dataclass(slots=True)
