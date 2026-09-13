@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import io
+import sys
 import traceback
 from typing import Any
 
 from IPython.core.interactiveshell import ExecutionResult, InteractiveShell
 from IPython.utils.capture import RichOutput, capture_output
+
+DEFAULT_STREAM_CAPTURE_BYTES = 4 * 1024 * 1024
 
 
 @dataclass(slots=True)
@@ -39,6 +43,36 @@ class ExecutionOutcome:
     displays: list[MimeBundle]
     final_result: MimeBundle | None
     error: ExecutionError | None
+    stdout_truncated_bytes: int = 0
+    stderr_truncated_bytes: int = 0
+
+
+class _BoundedTextCapture(io.StringIO):
+    """StringIO-compatible capture that discards bytes after a hard UTF-8 budget."""
+
+    def __init__(self, max_bytes: int) -> None:
+        if type(max_bytes) is not int or max_bytes < 0:
+            raise ValueError("max_bytes must be a non-negative integer")
+        super().__init__()
+        self.max_bytes = max_bytes
+        self.stored_bytes = 0
+        self.truncated_bytes = 0
+
+    def write(self, value: str) -> int:
+        if type(value) is not str:
+            raise TypeError("write() argument must be str")
+        encoded = value.encode("utf-8", errors="replace")
+        remaining = self.max_bytes - self.stored_bytes
+        stored_count = 0
+        if remaining > 0:
+            prefix = encoded[:remaining].decode("utf-8", errors="ignore")
+            if prefix:
+                stored = prefix.encode("utf-8")
+                super().write(prefix)
+                stored_count = len(stored)
+                self.stored_bytes += stored_count
+        self.truncated_bytes += len(encoded) - stored_count
+        return len(value)
 
 
 class ExecutionEngine:
@@ -49,22 +83,47 @@ class ExecutionEngine:
     containment.
     """
 
-    def __init__(self, shell: InteractiveShell | None = None) -> None:
+    def __init__(
+        self,
+        shell: InteractiveShell | None = None,
+        *,
+        max_stream_capture_bytes: int = DEFAULT_STREAM_CAPTURE_BYTES,
+    ) -> None:
         self.shell = shell or InteractiveShell.instance()
         self.shell.autoawait = True
+        if type(max_stream_capture_bytes) is not int or max_stream_capture_bytes < 0:
+            raise ValueError("max_stream_capture_bytes must be a non-negative integer")
+        self.max_stream_capture_bytes = max_stream_capture_bytes
 
     def execute(self, source: str, *, cell_id: str | None = None) -> ExecutionOutcome:
         """Execute one cell using IPython semantics and capture notebook output."""
 
-        with capture_output(stdout=True, stderr=True, display=True) as captured:
-            result = self.shell.run_cell(
-                source,
-                store_history=True,
-                silent=False,
-                cell_id=cell_id,
-            )
+        stdout = _BoundedTextCapture(self.max_stream_capture_bytes)
+        stderr = _BoundedTextCapture(self.max_stream_capture_bytes)
+        with capture_output(stdout=False, stderr=False, display=True) as captured:
+            previous_stdout = sys.stdout
+            previous_stderr = sys.stderr
+            sys.stdout = stdout
+            sys.stderr = stderr
+            try:
+                result = self.shell.run_cell(
+                    source,
+                    store_history=True,
+                    silent=False,
+                    cell_id=cell_id,
+                )
+            finally:
+                sys.stdout = previous_stdout
+                sys.stderr = previous_stderr
 
-        return self._outcome(result, captured.stdout, captured.stderr, captured.outputs)
+        return self._outcome(
+            result,
+            stdout.getvalue(),
+            stderr.getvalue(),
+            captured.outputs,
+            stdout_truncated_bytes=stdout.truncated_bytes,
+            stderr_truncated_bytes=stderr.truncated_bytes,
+        )
 
     def reset(self) -> None:
         """Discard user namespace/history while keeping the worker process alive."""
@@ -77,6 +136,9 @@ class ExecutionEngine:
         stdout: str,
         stderr: str,
         outputs: list[RichOutput],
+        *,
+        stdout_truncated_bytes: int = 0,
+        stderr_truncated_bytes: int = 0,
     ) -> ExecutionOutcome:
         error = result.error_before_exec or result.error_in_exec
         final_result: MimeBundle | None = None
@@ -101,4 +163,6 @@ class ExecutionEngine:
             displays=[MimeBundle.from_rich_output(output) for output in outputs],
             final_result=final_result,
             error=execution_error,
+            stdout_truncated_bytes=stdout_truncated_bytes,
+            stderr_truncated_bytes=stderr_truncated_bytes,
         )
