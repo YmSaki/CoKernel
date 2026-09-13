@@ -16,6 +16,8 @@ pub enum WorkerTransportError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Frame(#[from] FrameError),
+    #[error("worker protocol violation: {0}")]
+    Protocol(String),
 }
 
 pub async fn write_worker_frame<W>(

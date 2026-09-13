@@ -46,6 +46,34 @@ mod tests {
     }
 
     #[test]
+    fn worker_frame_identity_is_strict_after_ready() {
+        let session_id = SessionId::new();
+        let valid = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.to_string(),
+            event: worker::event::HEARTBEAT.into(),
+            payload: json!({"monotonic_ns": 1}),
+        };
+        assert!(validate_worker_frame_identity(session_id, &valid).is_ok());
+
+        let wrong_protocol = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1 + 1,
+            session_id: session_id.to_string(),
+            event: worker::event::HEARTBEAT.into(),
+            payload: json!({"monotonic_ns": 1}),
+        };
+        assert!(validate_worker_frame_identity(session_id, &wrong_protocol).is_err());
+
+        let wrong_session = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: SessionId::new().to_string(),
+            event: worker::event::HEARTBEAT.into(),
+            payload: json!({"monotonic_ns": 1}),
+        };
+        assert!(validate_worker_frame_identity(session_id, &wrong_session).is_err());
+    }
+
+    #[test]
     fn supervisor_termination_is_not_misclassified_as_process_signal() {
         let (classification, confidence) = crash_classification(None, true);
         assert_eq!(classification, FailureClassification::Unknown);

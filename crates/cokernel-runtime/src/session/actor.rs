@@ -257,6 +257,7 @@ fn observe_worker_frame(
     last_worker_activity: &mut Instant,
 ) -> Result<WorkerFrame, SessionError> {
     let frame = inbound.ok_or(SessionError::WorkerDisconnected)??;
+    validate_worker_frame_identity(context.session_id, &frame)?;
     *last_worker_activity = Instant::now();
     if let Some((kind, operation_id, detail)) = session_evidence_from_worker_frame(&frame) {
         record_session_evidence(context.worker_pid, kind, operation_id, detail);
@@ -266,6 +267,28 @@ fn observe_worker_frame(
         frame: frame.clone(),
     });
     Ok(frame)
+}
+
+fn validate_worker_frame_identity(
+    expected_session_id: SessionId,
+    frame: &WorkerFrame,
+) -> Result<(), WorkerTransportError> {
+    if frame.protocol() != WORKER_PROTOCOL_V1 {
+        return Err(WorkerTransportError::Protocol(format!(
+            "worker frame protocol {} does not match expected {}",
+            frame.protocol(),
+            WORKER_PROTOCOL_V1
+        )));
+    }
+    let expected_session_id = expected_session_id.to_string();
+    if frame.session_id() != expected_session_id.as_str() {
+        return Err(WorkerTransportError::Protocol(format!(
+            "worker frame session_id {} does not match expected {}",
+            frame.session_id(),
+            expected_session_id
+        )));
+    }
+    Ok(())
 }
 
 fn session_evidence_from_worker_frame(
