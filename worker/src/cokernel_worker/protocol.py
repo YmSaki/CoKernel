@@ -221,6 +221,8 @@ class WorkerLoop:
         cell_id = payload.get("cell_id")
         if type(operation_id) is not str or not operation_id:
             raise WorkerProtocolError("execute.operation_id must be a non-empty string")
+        if operation_id != request_id:
+            raise WorkerProtocolError("execute.operation_id must match request id")
         if type(source) is not str:
             raise WorkerProtocolError("execute.source must be a string")
         if cell_id is not None and type(cell_id) is not str:
