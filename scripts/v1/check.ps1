@@ -31,6 +31,9 @@ try {
     Write-Host '[v1-check] uv Project + worker overlay spike'
     python scripts/v1/spike_uv_worker_overlay.py
 
+    Write-Host '[v1-check] Worker SIGINT survival spike (Linux/WSL proof; skips on native Windows)'
+    python scripts/v1/spike_worker_interrupt.py
+
     Write-Host '[v1-check] PASS'
 }
 finally {
