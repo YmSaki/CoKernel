@@ -1,464 +1,242 @@
-# CoKernel v0.1 → v1 Asset Inventory
+# CoKernel v0.1 -> v1 Asset Inventory
 
-Status: **design baseline**  
-Migration policy: **fresh v1 install; legacy v0.1 runtime is explicitly destroyed, not upgraded in place**
+Status: **implementation baseline**  
+Migration policy: **fresh v1 install; legacy runtime is disposable and explicitly reset**
 
-## 1. Classification
+v1 is a substantial runtime/product rewrite. This inventory exists to preserve hard-won implementation knowledge without forcing the new architecture to inherit obsolete service boundaries.
 
-Every v0.1 asset is classified as one of:
+## Classification
 
-- **KEEP** — architecture/implementation is sound enough to carry forward substantially unchanged.
-- **KEEP + REFACTOR** — proven behavior is retained but interface/location/ownership changes.
-- **REPLACE** — capability remains but v0.1 implementation is not the v1 product implementation.
-- **DROP** — v0.1-only mechanism is intentionally removed.
-- **NEW** — required by v1 but absent from v0.1.
+- **PORT** — behavior/logic is valuable and should be reimplemented in v1 component ownership.
+- **REFERENCE** — keep tests/lessons/source available while implementing replacement; do not make v1 depend on it.
+- **REUSE** — code/library can likely be carried with limited change after review.
+- **RETIRE** — not part of v1 target architecture.
+- **NEW** — absent in v0.1 and required by v1.
 
-This is a source/design inventory only. It does **not** imply v0.1 runtime state is migrated. The installed v0.1 WSL distro is treated as disposable legacy state at the v1 boundary.
+No classification implies migration of the installed v0.1 distro/state.
 
----
+## 1. Architecture/concepts
 
-# 2. Architectural assets
-
-| Asset / concept | Decision | v1 treatment |
+| v0.1 asset/concept | Decision | v1 treatment |
 |---|---|---|
-| Dedicated `CoKernel` WSL2 distro | KEEP | Remains the primary Linux compute boundary. Freshly provisioned for v1. |
-| WSL2 as Windows GPU Linux runtime | KEEP | Formalized as v1 Compute Plane. |
-| Windows drive automount disabled | KEEP | v1 security invariant. |
-| Windows executable interop disabled | KEEP | v1 security invariant. |
-| Docker as second isolation boundary | KEEP | Retained. |
-| Jupyter + MCP + Tunnel service topology | KEEP + REFACTOR | Same logical services; product-owned runtime layout and contracts replace dev checkout assumptions. |
-| Browser and AI share same Jupyter Server | KEEP | Core product invariant. |
-| Same-existing-kernel attach | KEEP + REFACTOR | Resolver retained; exposed through narrower MCP tools and metadata-preserving wrappers. |
-| WSL localhost socket-proxy bridge | KEEP + REFACTOR | Proven real-machine fix; runtime manager owns it. |
-| Tunnel starts after MCP healthy | KEEP | v1 startup invariant. |
-| No OAuth required for private CoKernel MCP auth | KEEP | Bearer injection remains internal to Tunnel Client. |
-| `/opt/cokernel` vs `/workspace/.venv` split | KEEP + REFACTOR | Elevated to explicit control-plane/workspace invariant; UX fixed per Issue #21. |
-| uv-managed workspace | KEEP | `pyproject.toml` + `uv.lock` remain source of truth. |
-| Git checkout as installed runtime | DROP | v1 uses versioned packaged runtime payload. |
-| `git pull` as product update | DROP | v1 Update Manager uses product artifacts/releases. |
-| `.env` as long-lived external secret store | REPLACE | Windows Secret Store is source of truth for external credentials. |
-| systemd/Docker background processes as WSL lifetime guarantee | DROP | Windows Host explicitly owns lifetime. |
+| Dedicated CoKernel WSL distro | PORT | Fresh managed v1 distro remains Linux/GPU boundary. |
+| WSL GPU through Windows NVIDIA driver | PORT | Keep and validate during install/acceptance. |
+| Disable Windows drive automount | PORT | Keep as v1 security invariant. |
+| Disable Windows executable interop | PORT | Keep as v1 security invariant. |
+| WSL lifetime needs explicit Windows owner | PORT | Implement through long-lived Host<->Runtime bridge instead of keeper scripts. |
+| Browser/JupyterLab as primary UI | RETIRE | Windows CoKernel Desktop becomes primary UI. |
+| Jupyter Server as notebook runtime | RETIRE | Replaced by CoKernel Notebook Document Service + Session Runtime. |
+| Jupyter kernel protocol / ipykernel runtime | RETIRE | Replaced by supervised Project Python/IPython worker protocol. |
+| Jupyter MCP Server as AI execution layer | RETIRE | Replaced by CoKernel-native domain MCP service. |
+| same-live-state Human/AI invariant | PORT | Reexpressed as shared primary Execution Session. |
+| uv-managed user environment | PORT | Expanded: Project is uv environment boundary. |
+| `/opt/cokernel` control Python + `/workspace/.venv` split | REFERENCE | Lesson becomes product tooling vs Project environment separation; implementation no longer depends on Jupyter image layout. |
+| Docker/Compose second execution boundary | RETIRE as core | Not required for primary Notebook execution; may be reused only if a later component benefits concretely. |
+| WSL localhost socket proxy | RETIRE as core | Desktop/Host uses Named Pipe + WSL stdio bridge; no browser localhost Jupyter path required. |
+| tunnel starts after MCP healthy | PORT | Keep in Tunnel Supervisor. |
+| no public inbound listener | PORT | Keep. |
+| internal MCP bearer/tunnel auth isolation | PORT | Keep and strengthen with worker identity separation. |
+| Git checkout as installed runtime | RETIRE | Versioned runtime payload. |
+| `git pull` product update | RETIRE | Artifact-based Update Manager. |
 
----
+## 2. Windows installation/runtime scripts
 
-# 3. Root Windows entrypoints
+### `install.cmd`, `install.ps1`, `install-elevated.ps1`
 
-## `install.cmd`, `install.ps1`, `install-elevated.ps1`
+**Decision: REFERENCE + PORT knowledge.**
 
-**Decision: KEEP + REFACTOR, then demote to recovery/developer compatibility.**
+Preserve lessons:
 
-What is valuable:
+- WSL feature/prerequisite handling;
+- elevation/reboot behavior;
+- distro detection;
+- cloud-init/noninteractive bootstrap;
+- Windows path/line-ending pitfalls;
+- NVIDIA/Docker-era diagnostic sequencing where still relevant;
+- idempotent repair mindset.
 
-- WSL feature/bootstrap knowledge;
-- safe distro detection;
-- reboot/resume behavior;
-- cloud-init/noninteractive user creation;
-- idempotent prerequisite checks;
-- NVIDIA/Docker provisioning sequence;
-- real-machine diagnostics accumulated during v0.1.
+v1 product path becomes native installer/bootstrap logic plus minimal scripts only where Windows/WSL tooling makes scripts simpler.
 
-What changes:
+### `runtime.ps1`, `runtime-keeper.ps1`, `start.cmd`, `stop.cmd`, `status.cmd`
 
-- `CoKernelSetup.exe` becomes the product entrypoint;
-- installer has an explicit legacy-v0.1 destruction flow;
-- runtime payload comes from installer artifacts, not repository sync;
-- normal users do not run PowerShell scripts manually.
+**Decision: REFERENCE, then RETIRE from product.**
 
-The scripts may remain as implementation helpers during bootstrap and as recovery tools until their logic is absorbed behind Installer/Host contracts.
+The discovered lifetime requirement is retained. `cokernel-host` owns the long-lived WSL bridge and desired state instead of detached PowerShell keepers.
 
-## `start.cmd`, `stop.cmd`, `status.cmd`
+### `update.cmd`, `update.ps1`, `sync-wsl-repo.ps1`
 
-**Decision: REPLACE as product UX; KEEP as recovery wrappers.**
+**Decision: RETIRE from product.**
 
-Desktop/Tray calls Host IPC. Host owns desired state and runtime lifecycle.
+Keep lessons around update acceptance and preserving user state. Git checkout synchronization is obsolete in v1.
 
-Recovery wrappers may call the same Host/runtime contract for debugging.
+### `verify-windows-loopback.ps1`
 
-## `runtime.ps1`, `runtime-keeper.ps1`
+**Decision: REFERENCE only.**
 
-**Decision: REPLACE.**
+Useful networking diagnostic history, but v1 does not use the Jupyter localhost bridge as its primary Desktop path.
 
-Retain the discovered requirement that an ordinary persistent WSL client is needed for reliable WSL lifetime. The final owner is CoKernel Host, not detached ad-hoc PowerShell scripts.
+## 3. Linux scripts
 
-The existing scripts remain valuable as a compatibility/reference implementation until Host lifetime ownership passes real-machine acceptance.
+### `scripts/bootstrap-ubuntu.sh`
 
-## `update.cmd`, `update.ps1`
+**Decision: PORT.**
 
-**Decision: REPLACE.**
+Reuse package/bootstrap knowledge after removing assumptions specific to Docker/Jupyter runtime topology. v1 needs uv/product identities/runtime payload/GPU acceptance instead.
 
-Retain:
+### `scripts/harden-wsl.sh`
 
-- active-runtime health acceptance concept;
-- convergent update philosophy;
-- post-update smoke testing;
-- Windows localhost verification.
+**Decision: PORT / possible REUSE.**
 
-Remove:
+Automount/interop policy remains applicable. Review for v1 distro/user layout.
 
-- `git pull --ff-only` product update;
-- Windows checkout → WSL source synchronization;
-- assumption that installed runtime is a Git worktree.
+### `scripts/configure-wsl-loopback-proxy.sh`
 
-## `sync-wsl-repo.ps1`
+**Decision: RETIRE from core v1.**
 
-**Decision: DROP from product.**
+The original problem was Windows browser -> Jupyter Docker listener exposure. v1 primary Desktop communication is Named Pipe -> Host -> persistent WSL stdio bridge.
 
-This exists because v0.1 was developed/run from a Windows Git checkout copied into WSL. v1 runtime payload installation makes it unnecessary.
+Retain source/history until new Host bridge passes real-machine acceptance.
 
-It may remain in a `tools/legacy/` location temporarily if useful for development, but no v1 runtime component may depend on it.
+### `scripts/init-env.sh`
 
-## `verify-windows-loopback.ps1`
+**Decision: RETIRE as architecture.**
 
-**Decision: KEEP + REFACTOR.**
+`.env` is not the v1 central product configuration/secret model. Relevant token-generation/redaction lessons move to Secret Store/Runtime config.
 
-Its checks become part of typed Health Supervisor/Diagnostics acceptance. A script form may remain for recovery.
+### `scripts/up.sh`, `scripts/down.sh`
 
----
+**Decision: REFERENCE.**
 
-# 4. Linux runtime scripts
+Service-ordering and failure-diagnostic lessons are useful. v1 runtime lifecycle is native Runtime/Host state machine.
 
-## `scripts/bootstrap-ubuntu.sh`
+### `scripts/doctor.sh`, `scripts/smoke-test.sh`
 
-**Decision: KEEP + REFACTOR.**
+**Decision: PORT test intent, not necessarily script code.**
 
-Retain package/repository/NVIDIA Container Toolkit provisioning logic. Move behind privileged bootstrap contract and version it as part of product runtime.
+Convert hard-won checks into structured v1 diagnostics/acceptance tests.
 
-## `scripts/harden-wsl.sh`
+### `scripts/container-entrypoint.sh`
 
-**Decision: KEEP.**
+**Decision: RETIRE from primary execution.**
 
-Its policy becomes a formal v1 invariant. Improve idempotence/version reporting as needed.
+Useful uv sync/kernel-environment lesson only. v1 directly manages Project uv environments and workers.
 
-## `scripts/configure-wsl-loopback-proxy.sh`
+## 4. Docker/Compose
 
-**Decision: KEEP + REFACTOR.**
+### `compose.yaml`
 
-This is a proven real-machine networking solution. Runtime Manager owns reconciliation; unit names/config become versioned product state.
+**Decision: RETIRE as core v1 runtime.**
 
-## `scripts/init-env.sh`
+Its service ordering/network/security lessons remain reference material. v1 does not require Compose to execute notebooks or run its core local control path.
 
-**Decision: REPLACE / SPLIT.**
+### `docker/jupyter.Dockerfile`
 
-Retain local Jupyter/MCP token generation and CRLF-hardening lessons.
+**Decision: RETIRE.**
 
-Remove the role of `.env` as the canonical store for user-facing external credentials. v1 separates:
+Notebook execution no longer depends on JupyterLab/Jupyter Server image.
 
-- non-secret runtime config;
-- internally generated local tokens;
-- Windows-stored external credentials.
+### `docker/mcp.Dockerfile`
 
-## `scripts/up.sh`, `scripts/down.sh`
+**Decision: RETIRE.**
 
-**Decision: KEEP + REFACTOR.**
+Replaced by native CoKernel MCP service.
 
-Their proven ordering becomes Runtime Manager operations. The shell scripts may initially back `cokernel-runtime start/stop`, but Host should consume a stable typed contract, not free-form terminal output.
+## 5. MCP extension
 
-## `scripts/doctor.sh`, `scripts/smoke-test.sh`
+### `mcp-extension/`
 
-**Decision: KEEP + REFACTOR.**
+**Decision: REFERENCE, then RETIRE from v1 product.**
 
-These are high-value acceptance assets. Convert results into structured diagnostic checks while preserving CLI forms.
+Do not lose lessons:
 
-Required additions for v1:
+- AI must share exact human execution state;
+- attach must fail closed rather than create hidden compute state;
+- narrow tools reduce unnecessary high-risk capability exposure;
+- annotations/schema precision matters;
+- safe variable inspection must avoid arbitrary representation behavior;
+- DNS rebinding/Host validation must not be disabled globally merely for internal service names.
 
-- default workspace kernel assertion;
-- `sys.executable` workspace assertion;
-- Jupyter extension mutation disabled/read-only assertion;
-- Japanese language pack presence/configuration test;
-- MCP tool annotation/schema tests;
-- narrow variable-inspection safety tests;
-- v1 runtime version/layout assertions.
+v1 reimplements these principles against CoKernel Project/Session domain instead of Jupyter MCP extension hooks.
 
-## `scripts/container-entrypoint.sh`
+## 6. Secure Tunnel integration
 
-**Decision: KEEP + REFACTOR.**
+**Decision: PORT + likely REUSE pinned external tunnel client.**
 
 Retain:
 
-- create minimal `pyproject.toml` when absent;
-- `uv sync`;
-- `cokernel-workspace` kernelspec registration.
-
-Add/fix:
-
-- deterministic Jupyter default kernel = `cokernel-workspace`;
-- control-plane vs workspace environment UX;
-- configured JupyterLab locale;
-- extension manager disabled/read-only;
-- explicit startup validation that workspace Python exists.
-
-## root `up.sh`, `down.sh`, `logs.sh`
-
-**Decision: KEEP as recovery/developer aliases.**
-
-They cease to be primary product UX.
-
----
-
-# 5. Compose and container images
-
-## `compose.yaml`
-
-**Decision: KEEP + REFACTOR.**
-
-Retain:
-
-- service separation (`jupyter`, `mcp`, `tunnel`);
-- loopback-only backend ports;
-- Jupyter GPU exposure;
-- MCP dependency on healthy Jupyter;
-- Tunnel private route to `mcp:4040/mcp`;
-- private bearer injection;
-- Tunnel startup wait concept;
-- no public inbound binding.
+- outbound-only remote access model;
+- tunnel credential model;
+- readiness probe;
+- startup after MCP ready;
+- local MCP bearer injection/authorization;
+- no OAuth requirement where not needed by the chosen CoKernel auth path;
+- admin UI not exposed as a normal product surface;
+- reconnect/diagnostic lessons from connection-refused sequencing.
 
 Change:
 
-- move under versioned runtime payload layout;
-- remove dependence on dev checkout paths;
-- formalize config schema;
-- ensure v1 Host/Runtime Manager is desired-state owner;
-- consider image tags tied to product runtime version instead of only `:local`.
+- target is CoKernel-native MCP endpoint;
+- no Compose network dependency;
+- Tunnel Supervisor is a v1 component;
+- secrets originate from Windows Secret Store and are hidden from workers.
 
-## `docker/jupyter.Dockerfile`
+## 7. Documentation/test assets
 
-**Decision: KEEP + REFACTOR.**
+### `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/WINDOWS_INSTALL.md`, `README.md`
 
-Add:
+**Decision: REFERENCE.**
 
-- supported JupyterLab language packs at build time, including `jupyterlab-language-pack-ja-JP`;
-- immutable/read-only extension policy configuration;
-- v1 version metadata/labels;
-- tests proving `/opt/cokernel` is control-plane and `/workspace/.venv` is notebook compute.
+They describe v0.1 and contain useful operational history, but `docs/v1/` is authoritative for the new branch.
 
-Do **not** add `pip` to `/opt/cokernel` merely to make runtime Jupyter Extension Manager mutation work.
+### Existing CI
 
-## `docker/mcp.Dockerfile`
+**Decision: PORT infrastructure patterns.**
 
-**Decision: KEEP + REFACTOR.**
+Keep GitHub Actions habits, Windows + Linux checks, shell/script validation where relevant. Replace Jupyter/Compose-specific gates with Cargo/Python worker/Tauri/protocol/notebook/MCP/installer gates.
 
-Continue pinned upstream + local extension. Add v1 extension tests/capability surface.
+## 8. v0.1 bug/acceptance knowledge that must survive
 
----
+These are more valuable than the exact source files:
 
-# 6. MCP extension
+1. WSL background Linux processes alone do not guarantee the desired Windows-visible lifetime.
+2. Windows<->WSL networking assumptions must be validated on real machines, not inferred from container health.
+3. GPU acceptance must run inside the actual workload execution context.
+4. Remote tunnel readiness must validate the actual MCP target, not merely a running tunnel process.
+5. Startup dependency ordering matters after daemon/WSL restart, not only first Compose launch.
+6. Secret-bearing internal auth should be injected/brokered, not handed to AI unnecessarily.
+7. Human/AI sharing a notebook file is insufficient; they must share live execution memory state.
+8. Coarse MCP capabilities cause unnecessary policy/safety friction; domain operations should be as narrow as practical.
+9. Error output must distinguish transport failure, runtime failure, and workload failure.
+10. Real-machine acceptance caught issues that static/hosted tests did not.
 
-## `mcp-extension/`
+## 9. New v1 assets
 
-**Decision: KEEP + MAJOR REFACTOR.**
+| New asset | Purpose |
+|---|---|
+| Rust domain/protocol crates | Shared typed domain and wire contracts |
+| Windows `cokernel-host` | WSL lifetime/control/secret/update owner |
+| Linux `cokernel-runtime` | Project/notebook/session domain runtime |
+| uv Environment Manager | Project dependency/environment lifecycle |
+| Notebook Document Service | `.ipynb` create/import/edit/save/revision/output |
+| Session Supervisor | persistent workers, queue, crash containment |
+| Python/IPython worker | interactive Project execution semantics |
+| CoKernel-native MCP service | AI access to domain/runtime |
+| Tunnel Supervisor | managed remote access lifecycle |
+| Tauri Desktop | Project/package/notebook/session UI |
+| Windows installer/bootstrap | fresh managed runtime provisioning |
+| structured FailureRecord/diagnostics | explain Session/runtime failures |
+| versioned update/repair system | stable product lifecycle |
 
-### Preserve
+## 10. Removal discipline
 
-- extension rather than upstream fork;
-- same-kernel path normalization/resolution;
-- fail-closed connect behavior;
-- transport security wrapper keeping DNS-rebinding protection enabled;
-- explicit private Compose hostname allowlist.
+Do not delete v0.1 reference code from the branch merely to make the tree visually clean before replacements are proven.
 
-### Fix immediately for v1
+Recommended sequence:
 
-Issue #22 findings become v1 requirements:
+1. implement new component;
+2. pass component + real-machine acceptance for the replaced capability;
+3. move old implementation to `legacy/` or delete in a dedicated cleanup PR;
+4. ensure no v1 path imports/invokes legacy code;
+5. update docs/README accordingly.
 
-1. Preserve explicit ToolAnnotations when replacing/wrapping `use_notebook`.
-2. Restore precise `Literal["connect", "create"]` schema.
-3. Add regression tests that inspect registered tool metadata.
-4. Add `connect_notebook` with existing-only/no-silent-kernel-create semantics.
-5. Add `create_notebook` with create-only/no-overwrite semantics.
-6. Add safe `list_variables` and `get_variable` inspection primitives.
-7. Keep arbitrary execution tools honestly marked high-risk/open-world.
-8. Do not fork upstream for this work.
-
-### Safe inspection requirements
-
-`get_variable` must:
-
-- accept Python identifiers only;
-- reject attributes/indexing/calls/operators/imports/comprehensions;
-- avoid `repr()`/`str()` on arbitrary objects;
-- avoid custom iteration/attribute access;
-- exact-type-check supported built-ins;
-- bound depth, count, string length, and total response size;
-- return structured unsupported-type results.
-
-Tests include hostile objects and built-in subclasses.
-
----
-
-# 7. Documentation
-
-## `docs/ARCHITECTURE.md`
-
-**Decision: REPLACE for v1.**
-
-The v0.1 document remains historical reference. v1 canonical architecture moves to `docs/v1/` and includes Windows Host, clean install, component contracts, workspace/control-plane UX, and later Node/Fabric extension points.
-
-## `docs/WINDOWS_INSTALL.md`
-
-**Decision: REPLACE.**
-
-v1 user documentation begins with `CoKernelSetup.exe`, not `install.cmd`.
-
-A developer/recovery section may retain script instructions.
-
-## `docs/SECURITY.md`
-
-**Decision: KEEP + REFACTOR.**
-
-Retain the threat model and isolation principles, then add:
-
-- Windows Host/IPC trust boundary;
-- Windows Secret Store;
-- legacy destructive reset behavior;
-- installer/update signing assumptions;
-- runtime management surface;
-- MCP narrow-capability policy.
-
-## `docs/DEBUGGING.md`
-
-**Decision: KEEP + REFACTOR.**
-
-Diagnostics UI/bundle becomes the primary path; manual commands remain advanced recovery.
-
----
-
-# 8. CI and test assets
-
-## `.github/workflows/ci.yml`
-
-**Decision: KEEP + EXPAND.**
-
-Retain current Linux validation, MCP tests, Compose validation, image build, tunnel image pin checks, PowerShell parsing.
-
-Add v1 jobs/tests:
-
-- Windows Desktop/Host build;
-- Installer build artifact;
-- IPC contract tests;
-- config/schema tests;
-- Jupyter image default-kernel test;
-- Jupyter language pack/extension-manager policy test;
-- MCP annotations/schema tests;
-- hostile-object safe-inspection tests;
-- runtime payload manifest/version tests;
-- legacy detection/reset unit tests (without destructive real WSL on hosted CI);
-- diagnostics redaction tests.
-
-Real-machine acceptance remains required for WSL/NVIDIA/localhost/Tunnel behavior that hosted CI cannot reproduce.
-
----
-
-# 9. New v1 components/assets
-
-The following do not exist in v0.1 and are required.
-
-## NEW-01 — CoKernel Host
-
-Long-running Windows user-session control-plane process owning desired state and WSL lifetime.
-
-## NEW-02 — Host IPC protocol
-
-Versioned current-user-only Named Pipe API.
-
-## NEW-03 — CoKernel Desktop
-
-Tray-resident Windows application/dashboard consuming Host IPC only.
-
-## NEW-04 — Product Installer
-
-`CoKernelSetup.exe` with preflight, reboot resume, legacy reset, fresh WSL provisioning, product payload installation.
-
-## NEW-05 — Legacy Reset flow
-
-Explicitly destroys the v0.1 distro and installs fresh v1. No in-place migration.
-
-## NEW-06 — Windows Secret Store
-
-DPAPI/Credential Manager abstraction for Tunnel API key and future external credentials.
-
-## NEW-07 — Stable Linux Runtime Management Contract
-
-A structured `cokernel-runtime` interface returning machine-readable status/health/metrics rather than requiring Windows to scrape arbitrary shell output.
-
-## NEW-08 — Health Supervisor
-
-Layered health graph, bounded recovery, backoff, crash-loop breaker, actionable error codes.
-
-## NEW-09 — Metrics Aggregator
-
-CPU/RAM/WSL RAM/storage/GPU/VRAM/temp/power/kernel/service metrics.
-
-## NEW-10 — Product Update Manager
-
-Versioned artifact update replacing Git pull/sync.
-
-## NEW-11 — Structured diagnostics bundle
-
-Typed checks/logs with double-layer secret redaction.
-
-## NEW-12 — Jupyter UX policy
-
-- default workspace kernel;
-- immutable control-plane extension model;
-- bundled language packs including Japanese;
-- explicit locale setting.
-
-## NEW-13 — MCP narrow capability surface
-
-`connect_notebook`, `create_notebook`, `list_variables`, `get_variable` plus metadata regression tests.
-
-## NEW-14 — Runtime/product version manifest
-
-Defines:
-
-```text
-product_version
-runtime_schema_version
-image versions
-component protocol versions
-```
-
-Required for convergent v1-to-v1 updates.
-
----
-
-# 10. PR #20 prototype inventory
-
-PR #20 was started before the v1 conceptual boundaries were finalized. It must **not be merged as the v1 architecture**.
-
-Potentially reusable implementation ideas:
-
-- Windows dashboard resource fields;
-- DPAPI secret-storage code;
-- diagnostics ZIP/redaction approach;
-- WPF tray/application shell;
-- installer artifact build pipeline;
-- packaged-runtime discovery concept;
-- active-kernel maintenance guard.
-
-Must be redesigned before reuse:
-
-- UI directly controlling runtime scripts instead of Host IPC;
-- UI process owning auto-start/runtime behavior;
-- source-checkout/script path assumptions;
-- installer semantics that preserve the old distro instead of implementing explicit v0.1 Legacy Reset;
-- product update path tied to old runtime scripts;
-- absence of a dedicated Host/control-plane state machine.
-
-The PR branch may remain as a prototype/reference until useful code is selectively ported after the design baseline is accepted.
-
----
-
-# 11. Destructive clean-install boundary
-
-For the current development transition, the intended sequence is:
-
-```text
-export anything worth keeping from v0.1 workspace (optional)
-→ stop old runtime
-→ unregister/destroy old CoKernel WSL distro
-→ remove obsolete v0.1 Windows runtime state
-→ install v1 from scratch
-→ run full acceptance suite
-```
-
-This deliberately removes migration complexity from v1 implementation. From v1 onward, normal v1-to-v1 updates must preserve user state and follow the Update Manager contract.
+The installed legacy runtime is disposable; the repository history remains valuable engineering evidence.
