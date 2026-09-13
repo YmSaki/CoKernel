@@ -6,6 +6,26 @@ __pycache__/
 .ipynb_checkpoints/
 .venv/
 
-# Default local workspace is runtime/user state, not CoKernel infrastructure.
+# Rust
+/target/
+
+# Python test/build state
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Desktop frontend
+node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+
+# IDE/editor local state
+.vscode/
+.idea/
+
+# Legacy v0.1 runtime/user state while reference code remains.
 workspace/*
 !workspace/.gitkeep
