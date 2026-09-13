@@ -19,6 +19,7 @@ class UnsupportedValue(InspectionError):
 class InspectionLimits:
     max_depth: int = 8
     max_items: int = 1024
+    max_namespace_items: int = 4096
     max_string_chars: int = 65536
     max_response_bytes: int = 1_048_576
 
@@ -44,6 +45,17 @@ class VariableValue:
 def _require_exact_namespace(namespace: Mapping[str, Any]) -> dict[str, Any]:
     if type(namespace) is not dict:
         raise InspectionError("inspection namespace must be an exact dict")
+    return namespace
+
+
+def _require_bounded_namespace(
+    namespace: Mapping[str, Any], *, limits: InspectionLimits
+) -> dict[str, Any]:
+    namespace = _require_exact_namespace(namespace)
+    if type(limits.max_namespace_items) is not int or limits.max_namespace_items < 0:
+        raise InspectionError("max_namespace_items must be a non-negative integer")
+    if dict.__len__(namespace) > limits.max_namespace_items:
+        raise InspectionError("inspection namespace exceeds maximum item count")
     return namespace
 
 
@@ -73,8 +85,8 @@ def list_variables(
     max_items: int = 512,
     limits: InspectionLimits | None = None,
 ) -> list[VariableSummary]:
-    namespace = _require_exact_namespace(namespace)
     limits = limits or InspectionLimits()
+    namespace = _require_bounded_namespace(namespace, limits=limits)
     if type(max_items) is not int or max_items < 0:
         raise InspectionError("max_items must be a non-negative integer")
     item_limit = min(max_items, limits.max_items)
@@ -129,9 +141,9 @@ def get_variable(
     *,
     limits: InspectionLimits | None = None,
 ) -> VariableValue:
-    namespace = _require_exact_namespace(namespace)
     validate_identifier(name)
     limits = limits or InspectionLimits()
+    namespace = _require_bounded_namespace(namespace, limits=limits)
 
     found = False
     value: Any = None
