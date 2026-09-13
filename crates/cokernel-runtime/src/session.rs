@@ -256,11 +256,12 @@ impl SessionSupervisor {
                     if existing.state() != SessionState::Stopping {
                         match existing.stop().await {
                             Ok(()) => {}
-                            Err(error) if !is_live_state(existing.state()) => {}
+                            Err(_) if !is_live_state(existing.state()) => {}
                             Err(error) => return Err(error),
                         }
                     }
-                    if !wait_until_terminal(&existing, self.config.shutdown_timeout).await {
+                    let restart_wait = self.config.shutdown_timeout + Duration::from_secs(1);
+                    if !wait_until_terminal(&existing, restart_wait).await {
                         return Err(SessionError::RestartTimeout);
                     }
                 }
