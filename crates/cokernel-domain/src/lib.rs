@@ -1,3 +1,6 @@
+use std::fmt;
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -17,6 +20,20 @@ macro_rules! domain_id {
         impl Default for $name {
             fn default() -> Self {
                 Self::new()
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(formatter)
+            }
+        }
+
+        impl FromStr for $name {
+            type Err = uuid::Error;
+
+            fn from_str(value: &str) -> Result<Self, Self::Err> {
+                Uuid::parse_str(value).map(Self)
             }
         }
     };
@@ -118,4 +135,16 @@ pub struct DomainError {
     pub summary: String,
     pub action: String,
     pub detail: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn domain_ids_round_trip_through_strings() {
+        let id = ProjectId::new();
+        let parsed = id.to_string().parse::<ProjectId>().unwrap();
+        assert_eq!(parsed, id);
+    }
 }
