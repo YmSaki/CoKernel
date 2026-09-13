@@ -9,11 +9,15 @@ macro_rules! domain_id {
         pub struct $name(pub Uuid);
 
         impl $name {
-            pub fn new() -> Self { Self(Uuid::new_v4()) }
+            pub fn new() -> Self {
+                Self(Uuid::new_v4())
+            }
         }
 
         impl Default for $name {
-            fn default() -> Self { Self::new() }
+            fn default() -> Self {
+                Self::new()
+            }
         }
     };
 }
@@ -26,7 +30,10 @@ domain_id!(FailureId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum DesiredRuntimeState { Running, Stopped }
+pub enum DesiredRuntimeState {
+    Running,
+    Stopped,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -44,7 +51,12 @@ pub enum RuntimeState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum EnvironmentState { Absent, Syncing, Ready, Broken }
+pub enum EnvironmentState {
+    Absent,
+    Syncing,
+    Ready,
+    Broken,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -62,7 +74,14 @@ pub enum SessionState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum OperationStatus { Queued, Running, Succeeded, Failed, Interrupted, Cancelled }
+pub enum OperationStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Interrupted,
+    Cancelled,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
