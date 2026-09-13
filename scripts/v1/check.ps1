@@ -28,6 +28,9 @@ try {
     Write-Host '[v1-check] Worker tests'
     uv run --project worker pytest
 
+    Write-Host '[v1-check] uv Project + worker overlay spike'
+    python scripts/v1/spike_uv_worker_overlay.py
+
     Write-Host '[v1-check] PASS'
 }
 finally {
