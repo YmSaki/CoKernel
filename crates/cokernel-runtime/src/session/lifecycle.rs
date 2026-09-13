@@ -141,6 +141,14 @@ async fn failure_record(
         signal,
         last_stderr,
         worker_pid: Some(context.worker_pid),
+        worker_generation: Some(context.worker_generation),
+        worker_started_at: Some(context.worker_started_at),
+        environment_generation: Some(context.environment_generation),
+        cell_id: context
+            .current_cell_id
+            .lock()
+            .expect("cell lock poisoned")
+            .clone(),
         worker_memory_snapshot: evidence.worker_memory_snapshot,
         wsl_memory_snapshot: evidence.wsl_memory_snapshot,
         linux_oom_evidence: evidence.linux_oom_evidence,

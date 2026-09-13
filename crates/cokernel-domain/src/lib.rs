@@ -259,6 +259,14 @@ pub struct FailureRecord {
     #[serde(default)]
     pub worker_pid: Option<u32>,
     #[serde(default)]
+    pub worker_generation: Option<u64>,
+    #[serde(default)]
+    pub worker_started_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub environment_generation: Option<u64>,
+    #[serde(default)]
+    pub cell_id: Option<String>,
+    #[serde(default)]
     pub worker_memory_snapshot: Option<ProcessMemorySnapshot>,
     #[serde(default)]
     pub wsl_memory_snapshot: Option<SystemMemorySnapshot>,

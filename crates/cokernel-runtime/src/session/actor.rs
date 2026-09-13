@@ -16,9 +16,13 @@ enum ControlRequest {
 struct SessionActorContext {
     session_id: SessionId,
     worker_pid: u32,
+    worker_generation: u64,
+    worker_started_at: DateTime<Utc>,
+    environment_generation: u64,
     state_tx: watch::Sender<SessionState>,
     events: broadcast::Sender<SessionEvent>,
     current_operation: Arc<StdMutex<Option<OperationId>>>,
+    current_cell_id: Arc<StdMutex<Option<String>>>,
     stderr_tail: Arc<Mutex<ByteTail>>,
     shutdown_timeout: Duration,
     heartbeat_timeout: Duration,
@@ -160,6 +164,10 @@ async fn execute_one(
         .current_operation
         .lock()
         .expect("operation lock poisoned") = Some(request.operation_id);
+    *context
+        .current_cell_id
+        .lock()
+        .expect("cell lock poisoned") = request.cell_id.clone();
     set_state(context, SessionState::Executing);
 
     let request_id = request.operation_id.to_string();
@@ -362,6 +370,10 @@ fn clear_current_operation(context: &SessionActorContext) {
         .current_operation
         .lock()
         .expect("operation lock poisoned") = None;
+    *context
+        .current_cell_id
+        .lock()
+        .expect("cell lock poisoned") = None;
 }
 
 fn set_state(context: &SessionActorContext, state: SessionState) {

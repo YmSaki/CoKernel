@@ -101,9 +101,13 @@ mod tests {
         let context = SessionActorContext {
             session_id,
             worker_pid: 1,
+            worker_generation: 1,
+            worker_started_at: Utc::now(),
+            environment_generation: 1,
             state_tx,
             events,
             current_operation,
+            current_cell_id: Arc::new(StdMutex::new(None)),
             stderr_tail: Arc::new(Mutex::new(ByteTail::new(16))),
             shutdown_timeout: Duration::from_millis(10),
             heartbeat_timeout: Duration::from_secs(10),

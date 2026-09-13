@@ -242,6 +242,8 @@ impl SessionSupervisor {
         let (control_tx, control_rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
         let (events, _) = broadcast::channel(EVENT_QUEUE_CAPACITY);
         let current_operation = Arc::new(StdMutex::new(None));
+        let current_cell_id = Arc::new(StdMutex::new(None));
+        let worker_started_at = Utc::now();
 
         let handle = SessionHandle {
             session_id,
@@ -266,9 +268,13 @@ impl SessionSupervisor {
             SessionActorContext {
                 session_id,
                 worker_pid: ready.pid,
+                worker_generation,
+                worker_started_at,
+                environment_generation: project.environment_generation,
                 state_tx,
                 events,
                 current_operation,
+                current_cell_id,
                 stderr_tail,
                 shutdown_timeout: self.config.shutdown_timeout,
                 heartbeat_timeout: self.config.heartbeat_timeout,
