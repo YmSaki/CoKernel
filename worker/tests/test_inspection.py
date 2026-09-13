@@ -159,6 +159,28 @@ def test_get_variable_does_not_compare_non_string_namespace_keys() -> None:
     assert CollidingKey.touched is False
 
 
+def test_inspection_rejects_oversized_namespaces_before_scanning_entries() -> None:
+    hostile_key = CollidingKey()
+    namespace = {hostile_key: "ignored", "target": 123}
+    CollidingKey.touched = False
+    limits = InspectionLimits(max_namespace_items=1)
+
+    with pytest.raises(InspectionError, match="namespace exceeds maximum item count"):
+        list_variables(namespace, limits=limits)
+    with pytest.raises(InspectionError, match="namespace exceeds maximum item count"):
+        get_variable(namespace, "target", limits=limits)
+
+    assert CollidingKey.touched is False
+
+
+def test_inspection_rejects_invalid_namespace_item_limit() -> None:
+    limits = InspectionLimits(max_namespace_items=-1)
+    with pytest.raises(InspectionError, match="max_namespace_items"):
+        list_variables({}, limits=limits)
+    with pytest.raises(InspectionError, match="max_namespace_items"):
+        get_variable({}, "x", limits=limits)
+
+
 def test_list_variables_enforces_response_size_limit() -> None:
     namespace = {f"value_{index}": index for index in range(20)}
     with pytest.raises(InspectionError, match="maximum serialized response size"):
