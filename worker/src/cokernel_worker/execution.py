@@ -272,7 +272,7 @@ class ExecutionEngine:
             # operation failure, but keep the supervised worker and persistent
             # namespace alive for subsequent cells.
             execution_error = ExecutionError(
-                name=_safe_exception_name(normalization_error),
+                name="CoKernelOutputNormalizationError",
                 value=str(normalization_error),
                 traceback=traceback.format_exception(
                     type(normalization_error),
