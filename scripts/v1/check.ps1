@@ -4,6 +4,29 @@ Set-StrictMode -Version Latest
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Push-Location $Root
 try {
+    foreach ($RequiredCommand in @('python', 'cargo', 'uv')) {
+        if ($null -eq (Get-Command $RequiredCommand -ErrorAction SilentlyContinue)) {
+            throw "$RequiredCommand is required for the native Windows verification slice"
+        }
+    }
+
+    Write-Host '[v1-check] Environment'
+    python --version
+    cargo --version
+    uv --version
+
+    Write-Host '[v1-check] WBS ledger consistency'
+    python scripts/v1/validate_work_status.py --check
+
+    Write-Host '[v1-check] Local v1 script contract tests'
+    python -m unittest discover -s scripts/v1 -p 'test_*.py' -q
+
+    Write-Host '[v1-check] Protocol fixtures'
+    python scripts/v1/validate_protocol_fixtures.py
+
+    Write-Host '[v1-check] Source-tree worker smoke (Linux/WSL proof; skips on native Windows)'
+    python scripts/v1/smoke_worker_source.py
+
     Write-Host '[v1-check] Rust format'
     cargo fmt --all --check
 
@@ -15,9 +38,6 @@ try {
 
     Write-Host '[v1-check] Rust tests'
     cargo test --workspace
-
-    Write-Host '[v1-check] Protocol fixtures'
-    python scripts/v1/validate_protocol_fixtures.py
 
     Write-Host '[v1-check] Worker sync'
     uv sync --project worker --dev
