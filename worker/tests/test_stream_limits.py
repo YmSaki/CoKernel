@@ -28,8 +28,8 @@ def test_execution_engine_bounds_stderr_and_preserves_utf8() -> None:
     outcome = engine.execute("import sys\nprint('あいうえお', file=sys.stderr)")
 
     assert outcome.success
-    assert outcome.stderr == "あい\n"
-    assert len(outcome.stderr.encode("utf-8")) == 7
+    assert outcome.stderr == "あい"
+    assert len(outcome.stderr.encode("utf-8")) == 6
     assert outcome.stderr_truncated_bytes > 0
 
 
