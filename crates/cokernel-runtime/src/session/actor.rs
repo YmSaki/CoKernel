@@ -145,7 +145,13 @@ async fn run_session_actor(
                 }
             }
             inbound = worker_frames.recv() => {
-                match observe_worker_frame(&context, inbound, &mut last_worker_activity, true) {
+                match observe_worker_frame(
+                    &context,
+                    inbound,
+                    &mut last_worker_activity,
+                    WorkerFrameExpectation::Idle,
+                    true,
+                ) {
                     Ok(_) => {}
                     Err(error) => {
                         cancel_pending_work(&context, &mut execute_rx, &mut inspection_rx);
@@ -190,6 +196,13 @@ enum ExecuteDisposition {
 enum InspectionDisposition {
     Completed(Result<Value, SessionInspectionError>),
     Stopped,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WorkerFrameExpectation<'a> {
+    Idle,
+    Execute(&'a str),
+    Inspection(&'a str),
 }
 
 async fn execute_one(
@@ -250,33 +263,37 @@ async fn execute_one(
                 }
             }
             inbound = worker_frames.recv() => {
-                let frame = observe_worker_frame(context, inbound, last_worker_activity, true)?;
-                if let WorkerFrame::Response { id, ok, result, .. } = &frame {
-                    if id == &request_id {
-                        let succeeded = *ok
-                            && result
-                                .as_ref()
-                                .and_then(|value| value.get("status"))
-                                .and_then(Value::as_str)
-                                == Some("SUCCEEDED");
-                        let status = if interrupted {
-                            OperationStatus::Interrupted
-                        } else if succeeded {
-                            OperationStatus::Succeeded
+                let frame = observe_worker_frame(
+                    context,
+                    inbound,
+                    last_worker_activity,
+                    WorkerFrameExpectation::Execute(&request_id),
+                    true,
+                )?;
+                if let WorkerFrame::Response { ok, result, .. } = &frame {
+                    let succeeded = *ok
+                        && result
+                            .as_ref()
+                            .and_then(|value| value.get("status"))
+                            .and_then(Value::as_str)
+                            == Some("SUCCEEDED");
+                    let status = if interrupted {
+                        OperationStatus::Interrupted
+                    } else if succeeded {
+                        OperationStatus::Succeeded
+                    } else {
+                        OperationStatus::Failed
+                    };
+                    finish_operation(context, request.operation_id, status);
+                    set_state(
+                        context,
+                        if *stale_environment {
+                            SessionState::StaleEnvironment
                         } else {
-                            OperationStatus::Failed
-                        };
-                        finish_operation(context, request.operation_id, status);
-                        set_state(
-                            context,
-                            if *stale_environment {
-                                SessionState::StaleEnvironment
-                            } else {
-                                SessionState::Idle
-                            },
-                        );
-                        return Ok(ExecuteDisposition::Completed);
-                    }
+                            SessionState::Idle
+                        },
+                    );
+                    return Ok(ExecuteDisposition::Completed);
                 }
             }
             _ = sleep(HEALTH_POLL_INTERVAL) => {
@@ -328,9 +345,14 @@ async fn inspect_one(
                 }
             }
             inbound = worker_frames.recv() => {
-                let frame = observe_worker_frame(context, inbound, last_worker_activity, false)?;
+                let frame = observe_worker_frame(
+                    context,
+                    inbound,
+                    last_worker_activity,
+                    WorkerFrameExpectation::Inspection(&request_id),
+                    false,
+                )?;
                 let WorkerFrame::Response {
-                    id,
                     ok,
                     result,
                     error,
@@ -338,9 +360,6 @@ async fn inspect_one(
                 } = &frame else {
                     continue;
                 };
-                if id != &request_id {
-                    continue;
-                }
 
                 if *ok {
                     if error.is_some() {
@@ -389,10 +408,12 @@ fn observe_worker_frame(
     context: &SessionActorContext,
     inbound: Option<Result<WorkerFrame, SessionError>>,
     last_worker_activity: &mut Instant,
+    expectation: WorkerFrameExpectation<'_>,
     publish_event: bool,
 ) -> Result<WorkerFrame, SessionError> {
     let frame = inbound.ok_or(SessionError::WorkerDisconnected)??;
     validate_worker_frame_identity(context.session_id, &frame)?;
+    validate_worker_frame_transaction(expectation, &frame)?;
     *last_worker_activity = Instant::now();
     if let Some((kind, operation_id, detail)) = session_evidence_from_worker_frame(&frame) {
         record_session_evidence(context.worker_pid, kind, operation_id, detail);
@@ -426,6 +447,79 @@ fn validate_worker_frame_identity(
         )));
     }
     Ok(())
+}
+
+fn validate_worker_frame_transaction(
+    expectation: WorkerFrameExpectation<'_>,
+    frame: &WorkerFrame,
+) -> Result<(), WorkerTransportError> {
+    match expectation {
+        WorkerFrameExpectation::Idle => match frame {
+            WorkerFrame::Event { event, .. }
+                if event == worker::event::HEARTBEAT || event == worker::event::WORKER_WARNING =>
+            {
+                Ok(())
+            }
+            other => Err(WorkerTransportError::Protocol(format!(
+                "worker sent transaction frame while Session was idle: {other:?}"
+            ))),
+        },
+        WorkerFrameExpectation::Execute(request_id) => match frame {
+            WorkerFrame::Event { event, .. }
+                if event == worker::event::HEARTBEAT || event == worker::event::WORKER_WARNING =>
+            {
+                Ok(())
+            }
+            WorkerFrame::Event { event, payload, .. } if event != worker::event::READY => {
+                let operation_id = payload
+                    .get("operation_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        WorkerTransportError::Protocol(format!(
+                            "worker execute event {event:?} omitted operation_id"
+                        ))
+                    })?;
+                if operation_id == request_id {
+                    Ok(())
+                } else {
+                    Err(WorkerTransportError::Protocol(format!(
+                        "worker execute event operation_id {operation_id:?} does not match active request {request_id:?}"
+                    )))
+                }
+            }
+            WorkerFrame::Response { id, .. } => {
+                if id == request_id {
+                    Ok(())
+                } else {
+                    Err(WorkerTransportError::Protocol(format!(
+                        "worker response id {id:?} does not match active execute request {request_id:?}"
+                    )))
+                }
+            }
+            other => Err(WorkerTransportError::Protocol(format!(
+                "worker sent invalid frame during execute transaction: {other:?}"
+            ))),
+        },
+        WorkerFrameExpectation::Inspection(request_id) => match frame {
+            WorkerFrame::Event { event, .. }
+                if event == worker::event::HEARTBEAT || event == worker::event::WORKER_WARNING =>
+            {
+                Ok(())
+            }
+            WorkerFrame::Response { id, .. } => {
+                if id == request_id {
+                    Ok(())
+                } else {
+                    Err(WorkerTransportError::Protocol(format!(
+                        "worker response id {id:?} does not match active inspection request {request_id:?}"
+                    )))
+                }
+            }
+            other => Err(WorkerTransportError::Protocol(format!(
+                "worker sent non-response frame during inspection transaction: {other:?}"
+            ))),
+        },
+    }
 }
 
 fn session_evidence_from_worker_frame(
@@ -600,5 +694,111 @@ async fn send_signal(pid: u32, signal: &str) -> Result<(), std::io::Error> {
         Err(std::io::Error::other(format!(
             "kill -{signal} {pid} returned {status}"
         )))
+    }
+}
+
+#[cfg(test)]
+mod transaction_tests {
+    use super::*;
+
+    fn heartbeat(session_id: SessionId) -> WorkerFrame {
+        WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.to_string(),
+            event: worker::event::HEARTBEAT.into(),
+            payload: json!({"monotonic_ns": 1}),
+        }
+    }
+
+    fn execute_event(session_id: SessionId, operation_id: &str) -> WorkerFrame {
+        WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.to_string(),
+            event: worker::event::STDOUT.into(),
+            payload: json!({
+                "operation_id": operation_id,
+                "sequence": 1,
+                "text": "ok",
+            }),
+        }
+    }
+
+    fn response(session_id: SessionId, request_id: &str) -> WorkerFrame {
+        WorkerFrame::Response {
+            protocol: WORKER_PROTOCOL_V1,
+            id: request_id.into(),
+            session_id: session_id.to_string(),
+            ok: true,
+            result: Some(json!({"status": "SUCCEEDED"})),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn idle_accepts_only_background_worker_events() {
+        let session_id = SessionId::new();
+        assert!(validate_worker_frame_transaction(
+            WorkerFrameExpectation::Idle,
+            &heartbeat(session_id),
+        )
+        .is_ok());
+
+        let stale = response(session_id, "stale-request");
+        assert!(validate_worker_frame_transaction(WorkerFrameExpectation::Idle, &stale).is_err());
+    }
+
+    #[test]
+    fn execute_frames_must_match_active_operation() {
+        let session_id = SessionId::new();
+        let active = OperationId::new().to_string();
+        let other = OperationId::new().to_string();
+
+        assert!(validate_worker_frame_transaction(
+            WorkerFrameExpectation::Execute(&active),
+            &execute_event(session_id, &active),
+        )
+        .is_ok());
+        assert!(validate_worker_frame_transaction(
+            WorkerFrameExpectation::Execute(&active),
+            &response(session_id, &active),
+        )
+        .is_ok());
+        assert!(validate_worker_frame_transaction(
+            WorkerFrameExpectation::Execute(&active),
+            &execute_event(session_id, &other),
+        )
+        .is_err());
+        assert!(validate_worker_frame_transaction(
+            WorkerFrameExpectation::Execute(&active),
+            &response(session_id, &other),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn inspection_accepts_only_matching_response_or_background_events() {
+        let session_id = SessionId::new();
+        let active = "inspect-active";
+
+        assert!(validate_worker_frame_transaction(
+            WorkerFrameExpectation::Inspection(active),
+            &heartbeat(session_id),
+        )
+        .is_ok());
+        assert!(validate_worker_frame_transaction(
+            WorkerFrameExpectation::Inspection(active),
+            &response(session_id, active),
+        )
+        .is_ok());
+        assert!(validate_worker_frame_transaction(
+            WorkerFrameExpectation::Inspection(active),
+            &response(session_id, "inspect-stale"),
+        )
+        .is_err());
+        assert!(validate_worker_frame_transaction(
+            WorkerFrameExpectation::Inspection(active),
+            &execute_event(session_id, active),
+        )
+        .is_err());
     }
 }
