@@ -176,10 +176,22 @@ def test_python_error_is_returned_as_structured_failure() -> None:
     engine = ExecutionEngine()
     outcome = engine.execute("raise ValueError('boom')")
     assert not outcome.success
+    assert outcome.stdout == ""
+    assert outcome.stderr == ""
     assert outcome.error is not None
     assert outcome.error.name == "ValueError"
     assert outcome.error.value == "boom"
     assert any("ValueError: boom" in line for line in outcome.error.traceback)
+
+
+def test_syntax_error_is_structured_without_terminal_traceback_stream() -> None:
+    engine = ExecutionEngine()
+    outcome = engine.execute("if:")
+    assert not outcome.success
+    assert outcome.stdout == ""
+    assert outcome.stderr == ""
+    assert outcome.error is not None
+    assert outcome.error.name == "SyntaxError"
 
 
 def test_unnamed_exception_is_normalized_and_session_survives() -> None:
@@ -193,6 +205,8 @@ def test_unnamed_exception_is_normalized_and_session_survives() -> None:
     )
 
     assert not outcome.success
+    assert outcome.stdout == ""
+    assert outcome.stderr == ""
     assert outcome.error is not None
     assert outcome.error.name == "Exception"
     assert outcome.error.value == "boom"
