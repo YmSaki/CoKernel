@@ -11,6 +11,7 @@ from IPython.core.interactiveshell import ExecutionResult, InteractiveShell
 from IPython.utils.capture import RichOutput, capture_output
 
 DEFAULT_STREAM_CAPTURE_BYTES = 4 * 1024 * 1024
+MAX_EXCEPTION_NAME_CHARS = 256
 
 
 def _binary_mime_requires_base64(mime: str) -> bool:
@@ -43,6 +44,21 @@ def _normalize_mime_data(data: dict[str, Any]) -> dict[str, Any]:
                 continue
         normalized[mime] = value
     return normalized
+
+
+def _safe_exception_name(error: BaseException) -> str:
+    """Return a bounded non-empty exception name without invoking user hooks."""
+
+    error_type = type(error)
+    try:
+        name = type.__getattribute__(error_type, "__name__")
+    except Exception:
+        return "Exception"
+    if type(name) is not str or not name:
+        return "Exception"
+    if len(name) <= MAX_EXCEPTION_NAME_CHARS:
+        return name
+    return name[: MAX_EXCEPTION_NAME_CHARS - 1] + "…"
 
 
 @dataclass(slots=True)
@@ -238,7 +254,7 @@ class ExecutionEngine:
         if error is not None:
             final_result = None
             execution_error = ExecutionError(
-                name=type(error).__name__,
+                name=_safe_exception_name(error),
                 value=str(error),
                 traceback=traceback.format_exception(type(error), error, error.__traceback__),
             )
@@ -256,7 +272,7 @@ class ExecutionEngine:
             # operation failure, but keep the supervised worker and persistent
             # namespace alive for subsequent cells.
             execution_error = ExecutionError(
-                name="CoKernelOutputNormalizationError",
+                name=_safe_exception_name(normalization_error),
                 value=str(normalization_error),
                 traceback=traceback.format_exception(
                     type(normalization_error),
