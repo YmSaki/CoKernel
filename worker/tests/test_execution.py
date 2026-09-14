@@ -184,6 +184,30 @@ def test_python_error_is_returned_as_structured_failure() -> None:
     assert any("ValueError: boom" in line for line in outcome.error.traceback)
 
 
+def test_hostile_exception_rendering_cannot_escape_execution_outcome() -> None:
+    engine = ExecutionEngine()
+    outcome = engine.execute(
+        "class FlakyStrError(Exception):\n"
+        "    calls = 0\n"
+        "    def __str__(self):\n"
+        "        type(self).calls += 1\n"
+        "        if type(self).calls <= 2:\n"
+        "            return 'boom'\n"
+        "        raise RuntimeError('later-str-hook')\n"
+        "marker = 41\n"
+        "raise FlakyStrError('x')"
+    )
+
+    assert not outcome.success
+    assert outcome.stdout == ""
+    assert outcome.stderr == ""
+    assert outcome.error is not None
+    assert outcome.error.name == "FlakyStrError"
+    assert outcome.error.value == "<exception text unavailable: RuntimeError>"
+    assert outcome.error.traceback
+    assert text_result(engine, "marker + 1") == "42"
+
+
 def test_syntax_error_is_structured_without_terminal_traceback_stream() -> None:
     engine = ExecutionEngine()
     outcome = engine.execute("if:")
