@@ -150,6 +150,7 @@ async fn run_session_actor(
                     inbound,
                     &mut last_worker_activity,
                     WorkerFrameExpectation::Idle,
+                    None,
                     true,
                 ) {
                     Ok(_) => {}
@@ -205,6 +206,32 @@ enum WorkerFrameExpectation<'a> {
     Inspection(&'a str),
 }
 
+#[derive(Debug)]
+struct ExecuteFinishedSummary {
+    status: String,
+    execution_count: u64,
+    output_count: u64,
+    output_truncated: bool,
+    output_omitted_bytes: u64,
+}
+
+#[derive(Debug)]
+struct ExecuteLifecycle {
+    started: bool,
+    next_sequence: u64,
+    finished: Option<ExecuteFinishedSummary>,
+}
+
+impl ExecuteLifecycle {
+    fn new() -> Self {
+        Self {
+            started: false,
+            next_sequence: 1,
+            finished: None,
+        }
+    }
+}
+
 async fn execute_one(
     context: &SessionActorContext,
     writer: &mut OwnedWriteHalf,
@@ -241,6 +268,7 @@ async fn execute_one(
     write_worker_frame(writer, &frame).await?;
 
     let mut interrupted = false;
+    let mut lifecycle = ExecuteLifecycle::new();
     loop {
         tokio::select! {
             control = control_rx.recv() => {
@@ -268,6 +296,7 @@ async fn execute_one(
                     inbound,
                     last_worker_activity,
                     WorkerFrameExpectation::Execute(&request_id),
+                    Some(&mut lifecycle),
                     true,
                 )?;
                 if let WorkerFrame::Response { ok, result, .. } = &frame {
@@ -350,6 +379,7 @@ async fn inspect_one(
                     inbound,
                     last_worker_activity,
                     WorkerFrameExpectation::Inspection(&request_id),
+                    None,
                     false,
                 )?;
                 let WorkerFrame::Response {
@@ -409,11 +439,15 @@ fn observe_worker_frame(
     inbound: Option<Result<WorkerFrame, SessionError>>,
     last_worker_activity: &mut Instant,
     expectation: WorkerFrameExpectation<'_>,
+    execute_lifecycle: Option<&mut ExecuteLifecycle>,
     publish_event: bool,
 ) -> Result<WorkerFrame, SessionError> {
     let frame = inbound.ok_or(SessionError::WorkerDisconnected)??;
     validate_worker_frame_identity(context.session_id, &frame)?;
     validate_worker_frame_transaction(expectation, &frame)?;
+    if let Some(lifecycle) = execute_lifecycle {
+        validate_execute_lifecycle(lifecycle, &frame)?;
+    }
     *last_worker_activity = Instant::now();
     if let Some((kind, operation_id, detail)) = session_evidence_from_worker_frame(&frame) {
         record_session_evidence(context.worker_pid, kind, operation_id, detail);
@@ -519,6 +553,236 @@ fn validate_worker_frame_transaction(
                 "worker sent non-response frame during inspection transaction: {other:?}"
             ))),
         },
+    }
+}
+
+fn validate_execute_lifecycle(
+    lifecycle: &mut ExecuteLifecycle,
+    frame: &WorkerFrame,
+) -> Result<(), WorkerTransportError> {
+    match frame {
+        WorkerFrame::Event { event, .. }
+            if event == worker::event::HEARTBEAT || event == worker::event::WORKER_WARNING =>
+        {
+            Ok(())
+        }
+        WorkerFrame::Event { event, .. } if event == worker::event::EXECUTION_STARTED => {
+            if lifecycle.started || lifecycle.finished.is_some() {
+                return Err(WorkerTransportError::Protocol(
+                    "worker emitted execution_started more than once for one execute request".into(),
+                ));
+            }
+            lifecycle.started = true;
+            Ok(())
+        }
+        WorkerFrame::Event { event, payload, .. }
+            if matches!(
+                event.as_str(),
+                worker::event::STDOUT
+                    | worker::event::STDERR
+                    | worker::event::EXECUTE_RESULT
+                    | worker::event::DISPLAY_DATA
+                    | worker::event::ERROR
+            ) =>
+        {
+            if !lifecycle.started {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker emitted execute output {event:?} before execution_started"
+                )));
+            }
+            if lifecycle.finished.is_some() {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker emitted execute output {event:?} after execution_finished"
+                )));
+            }
+            let sequence = payload
+                .get("sequence")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(format!(
+                        "worker execute output {event:?} omitted a valid sequence"
+                    ))
+                })?;
+            if sequence != lifecycle.next_sequence {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker execute output sequence {sequence} does not match expected {}",
+                    lifecycle.next_sequence
+                )));
+            }
+            lifecycle.next_sequence = lifecycle.next_sequence.checked_add(1).ok_or_else(|| {
+                WorkerTransportError::Protocol("worker execute output sequence overflowed u64".into())
+            })?;
+            Ok(())
+        }
+        WorkerFrame::Event { event, payload, .. }
+            if event == worker::event::EXECUTION_FINISHED =>
+        {
+            if !lifecycle.started {
+                return Err(WorkerTransportError::Protocol(
+                    "worker emitted execution_finished before execution_started".into(),
+                ));
+            }
+            if lifecycle.finished.is_some() {
+                return Err(WorkerTransportError::Protocol(
+                    "worker emitted execution_finished more than once for one execute request".into(),
+                ));
+            }
+            let output_count = payload
+                .get("output_count")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker execution_finished omitted output_count".into(),
+                    )
+                })?;
+            let expected_output_count = lifecycle.next_sequence.saturating_sub(1);
+            if output_count != expected_output_count {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker execution_finished output_count {output_count} does not match observed {expected_output_count}"
+                )));
+            }
+            let status = payload
+                .get("status")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker execution_finished omitted status".into(),
+                    )
+                })?
+                .to_owned();
+            let execution_count = payload
+                .get("execution_count")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker execution_finished omitted execution_count".into(),
+                    )
+                })?;
+            let output_truncated = payload
+                .get("output_truncated")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker execution_finished omitted output_truncated".into(),
+                    )
+                })?;
+            let output_omitted_bytes = payload
+                .get("output_omitted_bytes")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker execution_finished omitted output_omitted_bytes".into(),
+                    )
+                })?;
+            lifecycle.finished = Some(ExecuteFinishedSummary {
+                status,
+                execution_count,
+                output_count,
+                output_truncated,
+                output_omitted_bytes,
+            });
+            Ok(())
+        }
+        WorkerFrame::Response {
+            ok,
+            result,
+            error,
+            ..
+        } => {
+            if !lifecycle.started {
+                return Err(WorkerTransportError::Protocol(
+                    "worker returned execute response before execution_started".into(),
+                ));
+            }
+            let finished = lifecycle.finished.as_ref().ok_or_else(|| {
+                WorkerTransportError::Protocol(
+                    "worker returned execute response before execution_finished".into(),
+                )
+            })?;
+            if !*ok || error.is_some() {
+                return Err(WorkerTransportError::Protocol(
+                    "started execute request must finish with a successful response envelope".into(),
+                ));
+            }
+            let result = result.as_ref().and_then(Value::as_object).ok_or_else(|| {
+                WorkerTransportError::Protocol(
+                    "worker execute response result must be an object".into(),
+                )
+            })?;
+            let status = result.get("status").and_then(Value::as_str).ok_or_else(|| {
+                WorkerTransportError::Protocol("worker execute response omitted status".into())
+            })?;
+            if status != finished.status {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker execute response status {status:?} does not match execution_finished {:?}",
+                    finished.status
+                )));
+            }
+            let execution_count = result
+                .get("execution_count")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker execute response omitted execution_count".into(),
+                    )
+                })?;
+            if execution_count != finished.execution_count {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker execute response execution_count {execution_count} does not match execution_finished {}",
+                    finished.execution_count
+                )));
+            }
+            let output_truncated = result
+                .get("output_truncated")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker execute response omitted output_truncated".into(),
+                    )
+                })?;
+            if output_truncated != finished.output_truncated {
+                return Err(WorkerTransportError::Protocol(
+                    "worker execute response output_truncated does not match execution_finished"
+                        .into(),
+                ));
+            }
+            let output_omitted_bytes = result
+                .get("output_omitted_bytes")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker execute response omitted output_omitted_bytes".into(),
+                    )
+                })?;
+            if output_omitted_bytes != finished.output_omitted_bytes {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker execute response output_omitted_bytes {output_omitted_bytes} does not match execution_finished {}",
+                    finished.output_omitted_bytes
+                )));
+            }
+            let operation_id = result
+                .get("operation_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker execute response omitted operation_id".into(),
+                    )
+                })?;
+            if operation_id.is_empty() {
+                return Err(WorkerTransportError::Protocol(
+                    "worker execute response operation_id must be non-empty".into(),
+                ));
+            }
+            if finished.output_count != lifecycle.next_sequence.saturating_sub(1) {
+                return Err(WorkerTransportError::Protocol(
+                    "worker execute lifecycle output count changed after execution_finished".into(),
+                ));
+            }
+            Ok(())
+        }
+        other => Err(WorkerTransportError::Protocol(format!(
+            "worker emitted invalid frame in execute lifecycle: {other:?}"
+        ))),
     }
 }
 
@@ -734,6 +998,46 @@ mod transaction_tests {
         }
     }
 
+    fn lifecycle_event(
+        session_id: SessionId,
+        operation_id: &str,
+        event: &str,
+        payload: Value,
+    ) -> WorkerFrame {
+        let mut payload = payload.as_object().cloned().unwrap_or_default();
+        payload.insert("operation_id".into(), json!(operation_id));
+        WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.to_string(),
+            event: event.into(),
+            payload: Value::Object(payload),
+        }
+    }
+
+    fn lifecycle_response(
+        session_id: SessionId,
+        operation_id: &str,
+        status: &str,
+        execution_count: u64,
+        output_truncated: bool,
+        output_omitted_bytes: u64,
+    ) -> WorkerFrame {
+        WorkerFrame::Response {
+            protocol: WORKER_PROTOCOL_V1,
+            id: operation_id.into(),
+            session_id: session_id.to_string(),
+            ok: true,
+            result: Some(json!({
+                "operation_id": operation_id,
+                "status": status,
+                "execution_count": execution_count,
+                "output_truncated": output_truncated,
+                "output_omitted_bytes": output_omitted_bytes,
+            })),
+            error: None,
+        }
+    }
+
     #[test]
     fn idle_accepts_only_background_worker_events() {
         let session_id = SessionId::new();
@@ -800,5 +1104,147 @@ mod transaction_tests {
             &execute_event(session_id, active),
         )
         .is_err());
+    }
+
+    #[test]
+    fn execute_lifecycle_requires_ordered_outputs_and_matching_terminal_response() {
+        let session_id = SessionId::new();
+        let operation_id = OperationId::new().to_string();
+        let mut lifecycle = ExecuteLifecycle::new();
+
+        let started = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::EXECUTION_STARTED,
+            json!({}),
+        );
+        assert!(validate_execute_lifecycle(&mut lifecycle, &started).is_ok());
+
+        for sequence in 1..=2 {
+            let output = lifecycle_event(
+                session_id,
+                &operation_id,
+                worker::event::STDOUT,
+                json!({"sequence": sequence, "text": "ok"}),
+            );
+            assert!(validate_execute_lifecycle(&mut lifecycle, &output).is_ok());
+        }
+
+        let finished = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::EXECUTION_FINISHED,
+            json!({
+                "status": "SUCCEEDED",
+                "execution_count": 7,
+                "output_count": 2,
+                "output_truncated": false,
+                "output_omitted_bytes": 0,
+                "output_truncation_reasons": [],
+            }),
+        );
+        assert!(validate_execute_lifecycle(&mut lifecycle, &finished).is_ok());
+
+        let response = lifecycle_response(
+            session_id,
+            &operation_id,
+            "SUCCEEDED",
+            7,
+            false,
+            0,
+        );
+        assert!(validate_execute_lifecycle(&mut lifecycle, &response).is_ok());
+    }
+
+    #[test]
+    fn execute_lifecycle_rejects_output_before_start_sequence_gaps_and_bad_output_count() {
+        let session_id = SessionId::new();
+        let operation_id = OperationId::new().to_string();
+        let output = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::STDOUT,
+            json!({"sequence": 1, "text": "early"}),
+        );
+        assert!(validate_execute_lifecycle(&mut ExecuteLifecycle::new(), &output).is_err());
+
+        let mut lifecycle = ExecuteLifecycle::new();
+        let started = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::EXECUTION_STARTED,
+            json!({}),
+        );
+        validate_execute_lifecycle(&mut lifecycle, &started).unwrap();
+        let gap = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::STDOUT,
+            json!({"sequence": 2, "text": "gap"}),
+        );
+        assert!(validate_execute_lifecycle(&mut lifecycle, &gap).is_err());
+
+        let mut lifecycle = ExecuteLifecycle::new();
+        validate_execute_lifecycle(&mut lifecycle, &started).unwrap();
+        let output = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::STDOUT,
+            json!({"sequence": 1, "text": "ok"}),
+        );
+        validate_execute_lifecycle(&mut lifecycle, &output).unwrap();
+        let bad_finished = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::EXECUTION_FINISHED,
+            json!({
+                "status": "SUCCEEDED",
+                "execution_count": 1,
+                "output_count": 0,
+                "output_truncated": false,
+                "output_omitted_bytes": 0,
+                "output_truncation_reasons": [],
+            }),
+        );
+        assert!(validate_execute_lifecycle(&mut lifecycle, &bad_finished).is_err());
+    }
+
+    #[test]
+    fn execute_lifecycle_rejects_response_before_finished_and_terminal_mismatch() {
+        let session_id = SessionId::new();
+        let operation_id = OperationId::new().to_string();
+        let started = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::EXECUTION_STARTED,
+            json!({}),
+        );
+        let mut lifecycle = ExecuteLifecycle::new();
+        validate_execute_lifecycle(&mut lifecycle, &started).unwrap();
+        let response = lifecycle_response(
+            session_id,
+            &operation_id,
+            "SUCCEEDED",
+            1,
+            false,
+            0,
+        );
+        assert!(validate_execute_lifecycle(&mut lifecycle, &response).is_err());
+
+        let finished = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::EXECUTION_FINISHED,
+            json!({
+                "status": "FAILED",
+                "execution_count": 1,
+                "output_count": 0,
+                "output_truncated": false,
+                "output_omitted_bytes": 0,
+                "output_truncation_reasons": [],
+            }),
+        );
+        validate_execute_lifecycle(&mut lifecycle, &finished).unwrap();
+        assert!(validate_execute_lifecycle(&mut lifecycle, &response).is_err());
     }
 }
