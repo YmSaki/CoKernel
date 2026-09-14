@@ -6,9 +6,12 @@ use cokernel_protocol::worker::{self, WorkerFrame};
 use cokernel_protocol::{
     decode_json_payload, encode_json_frame, FrameError, DEFAULT_MAX_FRAME_BYTES,
 };
+use serde_json::Value;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
+
+const MAX_WORKER_CORRELATION_ID_CHARS: usize = 256;
 
 #[derive(Debug, Error)]
 pub enum WorkerTransportError {
@@ -62,8 +65,13 @@ fn validate_worker_inbound_frame(frame: &WorkerFrame) -> Result<(), WorkerTransp
             "worker must not send request frames to the Runtime".into(),
         )),
         WorkerFrame::Response {
-            ok, result, error, ..
+            id,
+            ok,
+            result,
+            error,
+            ..
         } => {
+            validate_correlation_id("response id", id)?;
             if *ok {
                 if error.is_some() {
                     return Err(WorkerTransportError::Protocol(
@@ -100,8 +108,174 @@ fn validate_worker_inbound_frame(frame: &WorkerFrame) -> Result<(), WorkerTransp
                     "worker event {event:?} payload must be an object"
                 )));
             }
+            validate_worker_event_payload(event, payload)
+        }
+    }
+}
+
+fn validate_correlation_id(label: &str, value: &str) -> Result<(), WorkerTransportError> {
+    if value.is_empty() {
+        return Err(WorkerTransportError::Protocol(format!(
+            "worker {label} must be non-empty"
+        )));
+    }
+    if value.chars().count() > MAX_WORKER_CORRELATION_ID_CHARS {
+        return Err(WorkerTransportError::Protocol(format!(
+            "worker {label} exceeds maximum length"
+        )));
+    }
+    Ok(())
+}
+
+fn required_string<'a>(
+    event: &str,
+    payload: &'a Value,
+    field: &str,
+) -> Result<&'a str, WorkerTransportError> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            WorkerTransportError::Protocol(format!(
+                "worker event {event:?} requires non-empty string field {field:?}"
+            ))
+        })
+}
+
+fn required_u64(event: &str, payload: &Value, field: &str) -> Result<u64, WorkerTransportError> {
+    payload.get(field).and_then(Value::as_u64).ok_or_else(|| {
+        WorkerTransportError::Protocol(format!(
+            "worker event {event:?} requires unsigned integer field {field:?}"
+        ))
+    })
+}
+
+fn require_operation_id(event: &str, payload: &Value) -> Result<(), WorkerTransportError> {
+    let operation_id = required_string(event, payload, "operation_id")?;
+    validate_correlation_id("operation_id", operation_id)
+}
+
+fn require_sequence(event: &str, payload: &Value) -> Result<(), WorkerTransportError> {
+    if required_u64(event, payload, "sequence")? == 0 {
+        return Err(WorkerTransportError::Protocol(format!(
+            "worker event {event:?} sequence must be positive"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_worker_event_payload(event: &str, payload: &Value) -> Result<(), WorkerTransportError> {
+    match event {
+        worker::event::READY => {
+            let pid = required_u64(event, payload, "pid")?;
+            if pid == 0 || pid > u32::MAX as u64 {
+                return Err(WorkerTransportError::Protocol(
+                    "worker ready pid must fit a positive u32".into(),
+                ));
+            }
+            if required_u64(event, payload, "heartbeat_interval_ms")? == 0 {
+                return Err(WorkerTransportError::Protocol(
+                    "worker ready heartbeat_interval_ms must be positive".into(),
+                ));
+            }
+            required_string(event, payload, "worker_version")?;
+            required_string(event, payload, "python_version")?;
+            required_string(event, payload, "ipython_version")?;
             Ok(())
         }
+        worker::event::HEARTBEAT => {
+            if required_u64(event, payload, "monotonic_ns")? == 0 {
+                return Err(WorkerTransportError::Protocol(
+                    "worker heartbeat monotonic_ns must be positive".into(),
+                ));
+            }
+            Ok(())
+        }
+        worker::event::EXECUTION_STARTED => require_operation_id(event, payload),
+        worker::event::STDOUT | worker::event::STDERR => {
+            require_operation_id(event, payload)?;
+            require_sequence(event, payload)?;
+            payload.get("text").and_then(Value::as_str).ok_or_else(|| {
+                WorkerTransportError::Protocol(format!(
+                    "worker event {event:?} requires string field \"text\""
+                ))
+            })?;
+            Ok(())
+        }
+        worker::event::EXECUTE_RESULT | worker::event::DISPLAY_DATA => {
+            require_operation_id(event, payload)?;
+            require_sequence(event, payload)?;
+            if !payload.get("data").is_some_and(Value::is_object) {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker event {event:?} requires object field \"data\""
+                )));
+            }
+            if !payload.get("metadata").is_some_and(Value::is_object) {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker event {event:?} requires object field \"metadata\""
+                )));
+            }
+            Ok(())
+        }
+        worker::event::ERROR => {
+            require_operation_id(event, payload)?;
+            require_sequence(event, payload)?;
+            required_string(event, payload, "ename")?;
+            payload.get("evalue").and_then(Value::as_str).ok_or_else(|| {
+                WorkerTransportError::Protocol(
+                    "worker error event requires string field \"evalue\"".into(),
+                )
+            })?;
+            let traceback = payload.get("traceback").and_then(Value::as_array).ok_or_else(|| {
+                WorkerTransportError::Protocol(
+                    "worker error event requires array field \"traceback\"".into(),
+                )
+            })?;
+            if traceback.iter().any(|line| !line.is_string()) {
+                return Err(WorkerTransportError::Protocol(
+                    "worker error traceback entries must be strings".into(),
+                ));
+            }
+            Ok(())
+        }
+        worker::event::EXECUTION_FINISHED => {
+            require_operation_id(event, payload)?;
+            match required_string(event, payload, "status")? {
+                "SUCCEEDED" | "FAILED" => {}
+                other => {
+                    return Err(WorkerTransportError::Protocol(format!(
+                        "worker execution_finished status {other:?} is invalid"
+                    )));
+                }
+            }
+            required_u64(event, payload, "output_count")?;
+            if payload.get("output_truncated").and_then(Value::as_bool).is_none() {
+                return Err(WorkerTransportError::Protocol(
+                    "worker execution_finished requires boolean field \"output_truncated\"".into(),
+                ));
+            }
+            required_u64(event, payload, "output_omitted_bytes")?;
+            let reasons = payload
+                .get("output_truncation_reasons")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker execution_finished requires array field \"output_truncation_reasons\""
+                            .into(),
+                    )
+                })?;
+            if reasons.iter().any(|reason| !reason.is_string()) {
+                return Err(WorkerTransportError::Protocol(
+                    "worker output_truncation_reasons entries must be strings".into(),
+                ));
+            }
+            Ok(())
+        }
+        worker::event::WORKER_WARNING => Ok(()),
+        _ => Err(WorkerTransportError::Protocol(format!(
+            "worker sent unknown v1 event {event:?}"
+        ))),
     }
 }
 
@@ -192,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn worker_response_envelope_is_unambiguous() {
+    fn worker_response_envelope_is_unambiguous_and_correlated() {
         let session_id = SessionId::new().to_string();
         let successful = WorkerFrame::Response {
             protocol: WORKER_PROTOCOL_V1,
@@ -203,6 +377,16 @@ mod tests {
             error: None,
         };
         assert!(validate_worker_inbound_frame(&successful).is_ok());
+
+        let blank_id = WorkerFrame::Response {
+            protocol: WORKER_PROTOCOL_V1,
+            id: "".into(),
+            session_id: session_id.clone(),
+            ok: true,
+            result: Some(json!({})),
+            error: None,
+        };
+        assert!(validate_worker_inbound_frame(&blank_id).is_err());
 
         let success_with_error = WorkerFrame::Response {
             protocol: WORKER_PROTOCOL_V1,
@@ -230,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn worker_events_are_known_v1_object_payloads() {
+    fn worker_events_require_liveness_and_operation_correlation_fields() {
         let session_id = SessionId::new().to_string();
         let heartbeat = WorkerFrame::Event {
             protocol: WORKER_PROTOCOL_V1,
@@ -239,6 +423,30 @@ mod tests {
             payload: json!({"monotonic_ns": 1}),
         };
         assert!(validate_worker_inbound_frame(&heartbeat).is_ok());
+
+        let malformed_heartbeat = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.clone(),
+            event: worker::event::HEARTBEAT.into(),
+            payload: json!({}),
+        };
+        assert!(validate_worker_inbound_frame(&malformed_heartbeat).is_err());
+
+        let stdout_missing_operation = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.clone(),
+            event: worker::event::STDOUT.into(),
+            payload: json!({"sequence": 1, "text": "hello"}),
+        };
+        assert!(validate_worker_inbound_frame(&stdout_missing_operation).is_err());
+
+        let stdout_zero_sequence = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.clone(),
+            event: worker::event::STDOUT.into(),
+            payload: json!({"operation_id": "op-1", "sequence": 0, "text": "hello"}),
+        };
+        assert!(validate_worker_inbound_frame(&stdout_zero_sequence).is_err());
 
         let unknown = WorkerFrame::Event {
             protocol: WORKER_PROTOCOL_V1,
@@ -255,5 +463,40 @@ mod tests {
             payload: json!(1),
         };
         assert!(validate_worker_inbound_frame(&scalar_payload).is_err());
+    }
+
+    #[test]
+    fn worker_execution_finished_contract_is_strict() {
+        let session_id = SessionId::new().to_string();
+        let valid = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.clone(),
+            event: worker::event::EXECUTION_FINISHED.into(),
+            payload: json!({
+                "operation_id": "op-1",
+                "status": "FAILED",
+                "execution_count": 1,
+                "output_count": 2,
+                "output_truncated": true,
+                "output_omitted_bytes": 10,
+                "output_truncation_reasons": ["invalid_json"],
+            }),
+        };
+        assert!(validate_worker_inbound_frame(&valid).is_ok());
+
+        let invalid_status = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id,
+            event: worker::event::EXECUTION_FINISHED.into(),
+            payload: json!({
+                "operation_id": "op-1",
+                "status": "MAYBE",
+                "output_count": 0,
+                "output_truncated": false,
+                "output_omitted_bytes": 0,
+                "output_truncation_reasons": [],
+            }),
+        };
+        assert!(validate_worker_inbound_frame(&invalid_status).is_err());
     }
 }
