@@ -114,7 +114,7 @@ def test_worker_json_integer_range_matches_rust_serde_json_value():
         encode_json({"nested": [SERDE_JSON_MAX_INTEGER + 1]})
 
 
-def test_out_of_range_rich_output_fails_request_without_killing_worker():
+def test_invalid_rich_output_fails_operation_with_complete_lifecycle():
     limits = OutputLimits(
         max_event_bytes=2048,
         max_operation_bytes=4096,
@@ -125,16 +125,27 @@ def test_out_of_range_rich_output_fails_request_without_killing_worker():
     )
     frames = run_execute(outcome(displays=[display]), limits)
 
+    error = next(frame for frame in frames if frame.get("event") == "error")
+    assert error["payload"]["ename"] == "CoKernelOutputTransportError"
+    assert error["payload"]["evalue"] == (
+        "JSON integer is outside the Rust serde_json range"
+    )
+
+    finished = next(
+        frame for frame in frames if frame.get("event") == "execution_finished"
+    )
+    assert finished["payload"]["status"] == "FAILED"
+    assert finished["payload"]["output_truncated"] is True
+    assert "invalid_json" in finished["payload"]["output_truncation_reasons"]
+
     response = next(
         frame
         for frame in frames
         if frame.get("type") == "response" and frame.get("id") == "op1"
     )
-    assert response["ok"] is False
-    assert response["error"]["summary"] == (
-        "JSON integer is outside the Rust serde_json range"
-    )
-    assert not any(frame.get("event") == "execution_finished" for frame in frames)
+    assert response["ok"] is True
+    assert response["result"]["status"] == "FAILED"
+    assert response["result"]["output_truncated"] is True
 
 
 def test_stream_event_is_truncated_and_records_metadata():
