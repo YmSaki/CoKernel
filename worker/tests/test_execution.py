@@ -6,7 +6,7 @@ import json
 import pytest
 from IPython.core.interactiveshell import InteractiveShell
 
-from cokernel_worker.execution import ExecutionEngine
+from cokernel_worker.execution import ExecutionEngine, _normalize_mime_data
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +112,33 @@ def test_binary_rich_mime_is_base64_normalized_for_wire_and_ipynb() -> None:
 
     json.dumps(outcome.displays[0].data, ensure_ascii=False)
     json.dumps(outcome.final_result.data, ensure_ascii=False)
+
+
+def test_bytes_like_binary_mime_values_are_base64_normalized() -> None:
+    raw = b"CoKernel-bytes-like"
+    normalized = _normalize_mime_data(
+        {
+            "image/png": bytearray(raw),
+            "application/pdf": memoryview(raw),
+        }
+    )
+
+    assert base64.b64decode(normalized["image/png"]) == raw
+    assert base64.b64decode(normalized["application/pdf"]) == raw
+    json.dumps(normalized, ensure_ascii=False)
+
+
+def test_svg_bytes_are_utf8_text_normalized_for_notebook_json() -> None:
+    svg = "<svg xmlns='http://www.w3.org/2000/svg'><text>界</text></svg>"
+    normalized = _normalize_mime_data({"image/svg+xml": svg.encode("utf-8")})
+
+    assert normalized["image/svg+xml"] == svg
+    json.dumps(normalized, ensure_ascii=False)
+
+
+def test_invalid_utf8_svg_bytes_fail_closed() -> None:
+    with pytest.raises(UnicodeDecodeError):
+        _normalize_mime_data({"image/svg+xml": b"<svg>\xff</svg>"})
 
 
 def test_top_level_await_uses_ipython_semantics() -> None:
