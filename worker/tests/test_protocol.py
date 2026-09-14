@@ -128,6 +128,83 @@ def test_worker_rejects_wrong_session_without_terminating() -> None:
         server.close()
 
 
+def test_output_normalization_failure_completes_operation_and_worker_survives() -> None:
+    server, client, thread, _ = start_loop()
+    try:
+        send_frame(
+            client,
+            request(
+                "execute",
+                {
+                    "operation_id": "bad-output",
+                    "cell_id": "bad-output-cell",
+                    "source": (
+                        "from IPython.display import display\n"
+                        "display({'image/svg+xml': b'<svg>\\xff</svg>'}, raw=True)\n"
+                        "marker = 41"
+                    ),
+                },
+                "bad-output",
+            ),
+        )
+
+        frames = []
+        while True:
+            frame = receive_frame(client)
+            assert frame is not None
+            frames.append(frame)
+            if frame.get("type") == "response" and frame.get("id") == "bad-output":
+                break
+
+        transaction_frames = [
+            frame
+            for frame in frames
+            if frame.get("event") != "heartbeat"
+        ]
+        assert [
+            frame.get("event") or frame.get("type") for frame in transaction_frames
+        ] == ["execution_started", "error", "execution_finished", "response"]
+
+        error = transaction_frames[1]
+        assert error["payload"]["ename"] == "CoKernelOutputNormalizationError"
+        finished = transaction_frames[2]
+        assert finished["payload"]["status"] == "FAILED"
+        response = transaction_frames[3]
+        assert response["ok"] is True
+        assert response["result"]["status"] == "FAILED"
+
+        # The namespace mutation happened before output normalization failed and
+        # must remain usable in the same persistent worker Session.
+        send_frame(
+            client,
+            request(
+                "execute",
+                {
+                    "operation_id": "after-output-error",
+                    "cell_id": "after-output-error-cell",
+                    "source": "marker + 1",
+                },
+                "after-output-error",
+            ),
+        )
+        frames = []
+        while True:
+            frame = receive_frame(client)
+            assert frame is not None
+            frames.append(frame)
+            if (
+                frame.get("type") == "response"
+                and frame.get("id") == "after-output-error"
+            ):
+                break
+        result = next(frame for frame in frames if frame.get("event") == "execute_result")
+        assert result["payload"]["data"]["text/plain"] == "42"
+        assert frames[-1]["result"]["status"] == "SUCCEEDED"
+    finally:
+        stop_loop(client, thread)
+        server.close()
+
+
 def test_worker_emits_heartbeat_while_execution_is_running() -> None:
     server, client, thread, ready = start_loop(heartbeat_interval_seconds=0.02)
     try:
