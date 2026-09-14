@@ -52,13 +52,47 @@ def _safe_exception_name(error: BaseException) -> str:
     error_type = type(error)
     try:
         name = type.__getattribute__(error_type, "__name__")
-    except Exception:
+    except BaseException:
         return "Exception"
     if type(name) is not str or not name:
         return "Exception"
     if len(name) <= MAX_EXCEPTION_NAME_CHARS:
         return name
     return name[: MAX_EXCEPTION_NAME_CHARS - 1] + "…"
+
+
+def _safe_exception_value(error: BaseException) -> str:
+    """Render exception text without allowing a broken ``__str__`` to escape."""
+
+    try:
+        return str(error)
+    except BaseException as render_error:
+        return f"<exception text unavailable: {_safe_exception_name(render_error)}>"
+
+
+def _safe_exception_traceback(
+    error: BaseException, *, name: str, value: str
+) -> list[str]:
+    """Format traceback data while containing hostile exception rendering hooks."""
+
+    try:
+        traceback_object = BaseException.__getattribute__(error, "__traceback__")
+    except BaseException:
+        traceback_object = None
+
+    try:
+        return traceback.format_exception(type(error), error, traceback_object)
+    except BaseException:
+        try:
+            frames = (
+                traceback.format_tb(traceback_object)
+                if traceback_object is not None
+                else []
+            )
+        except BaseException:
+            frames = []
+        frames.append(f"{name}: {value}\n")
+        return frames
 
 
 @dataclass(slots=True)
@@ -264,10 +298,16 @@ class ExecutionEngine:
         execution_error: ExecutionError | None = None
         if error is not None:
             final_result = None
+            error_name = _safe_exception_name(error)
+            error_value = _safe_exception_value(error)
             execution_error = ExecutionError(
-                name=_safe_exception_name(error),
-                value=str(error),
-                traceback=traceback.format_exception(type(error), error, error.__traceback__),
+                name=error_name,
+                value=error_value,
+                traceback=_safe_exception_traceback(
+                    error,
+                    name=error_name,
+                    value=error_value,
+                ),
             )
 
         try:
@@ -282,13 +322,15 @@ class ExecutionEngine:
             # hooks. Treat malformed notebook/wire representations as an
             # operation failure, but keep the supervised worker and persistent
             # namespace alive for subsequent cells.
+            error_name = "CoKernelOutputNormalizationError"
+            error_value = _safe_exception_value(normalization_error)
             execution_error = ExecutionError(
-                name="CoKernelOutputNormalizationError",
-                value=str(normalization_error),
-                traceback=traceback.format_exception(
-                    type(normalization_error),
+                name=error_name,
+                value=error_value,
+                traceback=_safe_exception_traceback(
                     normalization_error,
-                    normalization_error.__traceback__,
+                    name=error_name,
+                    value=error_value,
                 ),
             )
             normalized_displays = []
