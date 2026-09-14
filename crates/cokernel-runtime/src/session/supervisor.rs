@@ -1,5 +1,7 @@
 include!("handshake.rs");
 
+const MAX_WORKER_PROCESS_ANCESTRY_DEPTH: usize = 64;
+
 struct SocketPathCleanup {
     path: PathBuf,
 }
@@ -186,6 +188,15 @@ impl SessionSupervisor {
             session_id,
         );
         let mut child = command.spawn()?;
+        let launcher_pid = match child.id() {
+            Some(pid) => pid,
+            None => {
+                terminate_child(&mut child).await;
+                return Err(SessionError::InvalidReady(
+                    "spawned worker launcher did not expose a process id".into(),
+                ));
+            }
+        };
         let stderr_tail = Arc::new(Mutex::new(ByteTail::new(
             self.config.diagnostic_tail_bytes,
         )));
@@ -234,6 +245,10 @@ impl SessionSupervisor {
                 return Err(error);
             }
         };
+        if let Err(error) = validate_worker_peer_lineage(launcher_pid, peer_pid) {
+            terminate_child(&mut child).await;
+            return Err(error);
+        }
         let ready = match timeout(self.config.startup_timeout, read_worker_frame(&mut stream)).await {
             Ok(Ok(Some(frame))) => frame,
             Ok(Ok(None)) => {
@@ -393,6 +408,59 @@ fn worker_peer_pid(stream: &tokio::net::UnixStream) -> Result<u32, SessionError>
     })
 }
 
+fn validate_worker_peer_lineage(launcher_pid: u32, peer_pid: u32) -> Result<(), SessionError> {
+    validate_process_descendant(launcher_pid, peer_pid, proc_parent_pid)
+}
+
+fn validate_process_descendant<F>(
+    ancestor_pid: u32,
+    pid: u32,
+    mut parent_pid: F,
+) -> Result<(), SessionError>
+where
+    F: FnMut(u32) -> Result<Option<u32>, SessionError>,
+{
+    let mut current = pid;
+    for _ in 0..MAX_WORKER_PROCESS_ANCESTRY_DEPTH {
+        if current == ancestor_pid {
+            return Ok(());
+        }
+        let Some(parent) = parent_pid(current)? else {
+            break;
+        };
+        if parent == 0 || parent == current {
+            break;
+        }
+        current = parent;
+    }
+
+    Err(SessionError::InvalidReady(format!(
+        "worker Unix socket peer pid {pid} is not in spawned launcher process tree rooted at {ancestor_pid}"
+    )))
+}
+
+fn proc_parent_pid(pid: u32) -> Result<Option<u32>, SessionError> {
+    let path = format!("/proc/{pid}/status");
+    let status = match fs::read_to_string(&path) {
+        Ok(status) => status,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let parent = status
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("PPid:")
+                .and_then(|value| value.split_whitespace().next())
+                .and_then(|value| value.parse::<u32>().ok())
+        })
+        .ok_or_else(|| {
+            SessionError::InvalidReady(format!(
+                "worker peer process {pid} status omitted a valid PPid"
+            ))
+        })?;
+    Ok(Some(parent))
+}
+
 fn validate_ready_peer_pid(reported_pid: u32, peer_pid: u32) -> Result<(), SessionError> {
     if reported_pid == peer_pid {
         Ok(())
@@ -443,6 +511,37 @@ fn validate_ready(
 #[cfg(test)]
 mod supervisor_peer_tests {
     use super::*;
+
+    #[test]
+    fn socket_peer_must_descend_from_spawned_launcher() {
+        let parent_pid = |pid| {
+            Ok(match pid {
+                300 => Some(200),
+                200 => Some(100),
+                100 => Some(1),
+                _ => None,
+            })
+        };
+        assert!(validate_process_descendant(100, 300, parent_pid).is_ok());
+
+        let parent_pid = |pid| {
+            Ok(match pid {
+                300 => Some(200),
+                200 => Some(100),
+                100 => Some(1),
+                _ => None,
+            })
+        };
+        let error = validate_process_descendant(999, 300, parent_pid).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("not in spawned launcher process tree"));
+    }
+
+    #[test]
+    fn socket_peer_may_be_launcher_after_exec() {
+        assert!(validate_process_descendant(1234, 1234, |_| Ok(None)).is_ok());
+    }
 
     #[test]
     fn ready_pid_must_match_authenticated_unix_peer() {
