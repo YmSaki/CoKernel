@@ -148,13 +148,14 @@ class OperationOutputBudget:
 
 
 def _validate_json_integer_range(value: Any, seen: set[int] | None = None) -> None:
-    """Reject integers that Rust serde_json::Value cannot represent.
+    """Reject values that cannot cross the Python -> Rust JSON wire exactly.
 
-    Python's JSON encoder accepts arbitrary-precision integers. The Runtime uses
-    serde_json without the arbitrary_precision feature, whose integer range is
-    i64::MIN through u64::MAX. Reject wider values before they cross the worker
-    wire so malformed rich output fails the operation instead of crashing the
-    supervised Session during Rust frame decoding.
+    Python's JSON encoder accepts arbitrary-precision integers and silently
+    coerces non-string mapping keys such as ``1`` into JSON member names such as
+    ``"1"``. The Runtime uses ``serde_json::Value`` and treats decoded object
+    keys as authoritative strings. Reject wider integers and non-exact-string
+    object keys before transmission so user-controlled rich output cannot change
+    meaning while crossing the worker wire.
     """
 
     if seen is None:
@@ -192,7 +193,9 @@ def _validate_json_integer_range(value: Any, seen: set[int] | None = None) -> No
             raise ValueError("circular JSON container")
         seen.add(container_id)
         try:
-            for item in dict.values(value):
+            for key, item in dict.items(value):
+                if type(key) is not str:
+                    raise ValueError("JSON object keys must be exact strings")
                 _validate_json_integer_range(item, seen)
         finally:
             seen.remove(container_id)
