@@ -114,6 +114,14 @@ def test_worker_json_integer_range_matches_rust_serde_json_value():
         encode_json({"nested": [SERDE_JSON_MAX_INTEGER + 1]})
 
 
+def test_worker_json_object_keys_are_not_silently_coerced():
+    assert encode_json({"nested": {"1": "preserved"}})
+
+    for invalid in ({1: "integer"}, {False: "boolean"}, {None: "null"}):
+        with pytest.raises(ValueError, match="object keys must be exact strings"):
+            encode_json({"nested": invalid})
+
+
 def test_invalid_rich_output_fails_operation_with_complete_lifecycle():
     limits = OutputLimits(
         max_event_bytes=2048,
@@ -146,6 +154,35 @@ def test_invalid_rich_output_fails_operation_with_complete_lifecycle():
     assert response["ok"] is True
     assert response["result"]["status"] == "FAILED"
     assert response["result"]["output_truncated"] is True
+
+
+def test_non_string_rich_output_key_fails_without_wire_coercion():
+    limits = OutputLimits(
+        max_event_bytes=2048,
+        max_operation_bytes=4096,
+        max_blob_bytes=512,
+    )
+    display = MimeBundle(data={"application/json": {1: "must-not-become-string-one"}})
+    frames = run_execute(outcome(displays=[display]), limits)
+
+    error = next(frame for frame in frames if frame.get("event") == "error")
+    assert error["payload"]["ename"] == "CoKernelOutputTransportError"
+    assert error["payload"]["evalue"] == "JSON object keys must be exact strings"
+
+    finished = next(
+        frame for frame in frames if frame.get("event") == "execution_finished"
+    )
+    assert finished["payload"]["status"] == "FAILED"
+    assert finished["payload"]["output_truncated"] is True
+    assert "invalid_json" in finished["payload"]["output_truncation_reasons"]
+
+    response = next(
+        frame
+        for frame in frames
+        if frame.get("type") == "response" and frame.get("id") == "op1"
+    )
+    assert response["ok"] is True
+    assert response["result"]["status"] == "FAILED"
 
 
 def test_stream_event_is_truncated_and_records_metadata():
