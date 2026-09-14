@@ -177,6 +177,23 @@ def test_python_error_is_returned_as_structured_failure() -> None:
     assert any("ValueError: boom" in line for line in outcome.error.traceback)
 
 
+def test_unnamed_exception_is_normalized_and_session_survives() -> None:
+    engine = ExecutionEngine()
+    outcome = engine.execute(
+        "class NamelessError(Exception):\n"
+        "    pass\n"
+        "NamelessError.__name__ = ''\n"
+        "marker = 41\n"
+        "raise NamelessError('boom')"
+    )
+
+    assert not outcome.success
+    assert outcome.error is not None
+    assert outcome.error.name == "Exception"
+    assert outcome.error.value == "boom"
+    assert text_result(engine, "marker + 1") == "42"
+
+
 def test_reset_discards_live_namespace() -> None:
     engine = ExecutionEngine()
     assert engine.execute("x = 123").success
