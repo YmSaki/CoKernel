@@ -1,6 +1,6 @@
 # CoKernel v1 Work Status
 
-Purpose: execution ledger for `cokernel-v1`. Authoritative requirements remain `IMPLEMENTATION_ORDER.md`, `docs/v1/*`, and Issues #26-#35. Update this file when a phase gate changes, not for every small commit.
+Purpose: execution ledger for `cokernel-v1`. Authoritative requirements remain `IMPLEMENTATION_ORDER.md`, `docs/v1/*`, and Issues #26-#35. Update this file when a phase gate changes or the active-phase completion boundary changes, not for every small commit.
 
 ## Phase tracker
 
@@ -8,7 +8,7 @@ Purpose: execution ledger for `cokernel-v1`. Authoritative requirements remain `
 |---|---:|---|---|---|
 | 0 | #27 | DONE | feasibility spikes complete | none |
 | 1-2 | #28 | DONE | domain/protocol + uv Project manager complete | none |
-| 3 | #29 | ACTIVE | must pass Session execution/concurrency/crash-containment gate before Phase 4 | finish protocol/session invariants, then run canonical local/WSL gate |
+| 3 | #29 | ACTIVE | must pass Session execution/concurrency/crash-containment gate before Phase 4 | run canonical local/WSL Gate; fix only failures or newly proven Phase-3 contract holes |
 | 4 | #30 | BLOCKED | depends on Phase 3 gate | notebook document service |
 | 5 | #31 | BLOCKED | depends on lower Runtime contracts | Windows Host / WSL bridge |
 | 6-7 | #32 | BLOCKED | depends on Runtime + Host contracts | native MCP + tunnel |
@@ -34,13 +34,15 @@ Umbrella: #26 remains open until v1 release acceptance is complete.
 - oversized request preflight so a caller error does not crash a healthy Session;
 - output normalization/transport failures converted into bounded FAILED outcomes while preserving worker/session liveness;
 - worker JSON transport rejects lossy non-string object-key coercion;
-- user exception names are bounded/non-empty before crossing the protocol boundary.
+- user exception names are bounded/non-empty before crossing the protocol boundary;
+- successful worker responses that carry `result.operation_id` must bind it exactly to the response/request correlation ID;
+- execute terminal truncation accounting is fail-closed: `output_truncated`, `output_omitted_bytes`, and unique non-empty `output_truncation_reasons` must be internally consistent and match between `execution_finished` and the final response.
 
 ### Remaining implementation audit
 
-1. Final execute response must bind its result `operation_id` exactly to the active Runtime operation, not merely validate it as non-empty.
-2. `execution_finished` truncation accounting must be self-consistent (`output_truncated`, `output_omitted_bytes`, `output_truncation_reasons`) and agree with the final response.
-3. Any newly found Phase-3 contract hole is fixed fail-closed with a focused regression test before moving to Phase 4.
+- [x] Final execute response binds `result.operation_id` exactly to the active Runtime operation.
+- [x] `execution_finished` truncation accounting is self-consistent and agrees with the final response.
+- [ ] Fix any newly proven Phase-3 contract hole found by the canonical local/WSL Gate; do not perform speculative re-audits before running that Gate.
 
 ### Verification debt before closing #29
 
@@ -58,4 +60,4 @@ Run on a Rust-equipped Linux/WSL checkout, without GitHub-hosted CI:
 
 ## Working rule
 
-Always resume from the first unfinished row above. Within the active phase, consume `Remaining implementation audit` top-to-bottom. Do not re-audit completed phases unless a regression or specification change points back to them. GitHub Actions / GitHub-hosted CI are not part of the v1 validation path.
+Always resume from the first unfinished row above. Within the active phase, consume `Remaining implementation audit` top-to-bottom, then `Verification debt`. Do not re-audit completed phases unless a regression, failed Gate, or specification change points back to them. GitHub Actions / GitHub-hosted CI are not part of the v1 validation path.

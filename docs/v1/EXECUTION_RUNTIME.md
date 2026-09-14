@@ -138,7 +138,7 @@ Example payload:
 }
 ```
 
-For `execute`, the request envelope `id` is the operation correlation ID and must equal payload `operation_id`. The worker rejects a mismatch before executing user code or emitting operation output. This keeps responses/events tied to one bounded identifier and prevents caller-controlled correlation divergence.
+For `execute`, the request envelope `id` is the operation correlation ID and must equal payload `operation_id`. The worker rejects a mismatch before executing user code or emitting operation output. A successful final execute response also carries `result.operation_id`; it must equal the response envelope `id`, which in turn must equal the Runtime's active operation ID. The Runtime treats any divergence as a fatal worker protocol violation before the frame can refresh liveness or be published as a Session event.
 
 The source comes from the authoritative NotebookDocument revision selected by the caller/runtime. The worker does not read notebook files to determine code.
 
@@ -223,6 +223,16 @@ To protect Runtime/Desktop/MCP from unbounded output:
 - configurable image/blob limit;
 - truncation is explicit and recorded in result metadata;
 - raw worker stdout/stderr diagnostic tails are separately bounded.
+
+Execute terminal accounting is part of the worker protocol contract. Both `execution_finished` and the successful final execute response carry the same `output_truncated`, `output_omitted_bytes`, and `output_truncation_reasons` values. The Runtime validates them fail-closed before accepting the response.
+
+The accounting invariants are:
+
+- when `output_truncated=false`, `output_omitted_bytes` must be `0` and `output_truncation_reasons` must be empty;
+- when `output_truncated=true`, at least one non-empty truncation reason is required;
+- truncation reasons must not contain duplicates;
+- `output_omitted_bytes` may be `0` when output was rejected for a non-byte-countable transport/normalization reason such as `invalid_json`;
+- `execution_finished` and the final response must agree exactly on all three fields.
 
 Exact default numeric limits are configuration constants established during implementation benchmarking and tested as contract values.
 
