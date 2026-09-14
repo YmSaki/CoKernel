@@ -7,6 +7,8 @@ from typing import Any, Callable
 DEFAULT_MAX_OUTPUT_EVENT_BYTES = 6 * 1024 * 1024
 DEFAULT_MAX_OUTPUT_OPERATION_BYTES = 24 * 1024 * 1024
 DEFAULT_MAX_OUTPUT_BLOB_BYTES = 4 * 1024 * 1024
+SERDE_JSON_MIN_INTEGER = -(1 << 63)
+SERDE_JSON_MAX_INTEGER = (1 << 64) - 1
 
 MessageBuilder = Callable[[str, dict[str, Any]], dict[str, Any]]
 
@@ -145,7 +147,62 @@ class OperationOutputBudget:
         self.reasons.update(reasons or {"output_limit"})
 
 
+def _validate_json_integer_range(value: Any, seen: set[int] | None = None) -> None:
+    """Reject integers that Rust serde_json::Value cannot represent.
+
+    Python's JSON encoder accepts arbitrary-precision integers. The Runtime uses
+    serde_json without the arbitrary_precision feature, whose integer range is
+    i64::MIN through u64::MAX. Reject wider values before they cross the worker
+    wire so malformed rich output fails the operation instead of crashing the
+    supervised Session during Rust frame decoding.
+    """
+
+    if seen is None:
+        seen = set()
+    if value is None or isinstance(value, (bool, str, float)):
+        return
+    if isinstance(value, int):
+        if not SERDE_JSON_MIN_INTEGER <= value <= SERDE_JSON_MAX_INTEGER:
+            raise ValueError("JSON integer is outside the Rust serde_json range")
+        return
+
+    container_id = id(value)
+    if isinstance(value, list):
+        if container_id in seen:
+            raise ValueError("circular JSON container")
+        seen.add(container_id)
+        try:
+            for item in list.__iter__(value):
+                _validate_json_integer_range(item, seen)
+        finally:
+            seen.remove(container_id)
+        return
+    if isinstance(value, tuple):
+        if container_id in seen:
+            raise ValueError("circular JSON container")
+        seen.add(container_id)
+        try:
+            for item in tuple.__iter__(value):
+                _validate_json_integer_range(item, seen)
+        finally:
+            seen.remove(container_id)
+        return
+    if isinstance(value, dict):
+        if container_id in seen:
+            raise ValueError("circular JSON container")
+        seen.add(container_id)
+        try:
+            for item in dict.values(value):
+                _validate_json_integer_range(item, seen)
+        finally:
+            seen.remove(container_id)
+
+
 def encode_json(value: Any) -> bytes:
+    try:
+        _validate_json_integer_range(value)
+    except RecursionError as error:
+        raise ValueError("JSON value exceeds recursion limit") from error
     return json.dumps(
         value,
         ensure_ascii=False,
