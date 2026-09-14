@@ -262,41 +262,67 @@ class WorkerLoop:
                 self._send_message(sock, message)
                 sequence = next_sequence
 
-        if outcome.stdout or outcome.stdout_truncated_bytes:
-            output(
-                "stdout",
-                {"text": outcome.stdout},
-                source_omitted_bytes=outcome.stdout_truncated_bytes,
-                source_reason="stream_capture_limit",
-            )
-        if outcome.stderr or outcome.stderr_truncated_bytes:
-            output(
-                "stderr",
-                {"text": outcome.stderr},
-                source_omitted_bytes=outcome.stderr_truncated_bytes,
-                source_reason="stream_capture_limit",
-            )
-        for display in outcome.displays:
-            output("display_data", asdict(display))
-        if outcome.final_result is not None:
-            output(
-                "execute_result",
-                {
-                    "execution_count": outcome.execution_count,
-                    **asdict(outcome.final_result),
-                },
-            )
-        if outcome.error is not None:
-            output(
+        output_error: str | None = None
+        try:
+            if outcome.stdout or outcome.stdout_truncated_bytes:
+                output(
+                    "stdout",
+                    {"text": outcome.stdout},
+                    source_omitted_bytes=outcome.stdout_truncated_bytes,
+                    source_reason="stream_capture_limit",
+                )
+            if outcome.stderr or outcome.stderr_truncated_bytes:
+                output(
+                    "stderr",
+                    {"text": outcome.stderr},
+                    source_omitted_bytes=outcome.stderr_truncated_bytes,
+                    source_reason="stream_capture_limit",
+                )
+            for display in outcome.displays:
+                output("display_data", asdict(display))
+            if outcome.final_result is not None:
+                output(
+                    "execute_result",
+                    {
+                        "execution_count": outcome.execution_count,
+                        **asdict(outcome.final_result),
+                    },
+                )
+            if outcome.error is not None:
+                output(
+                    "error",
+                    {
+                        "ename": outcome.error.name,
+                        "evalue": outcome.error.value,
+                        "traceback": outcome.error.traceback,
+                    },
+                )
+        except (TypeError, ValueError, OverflowError) as error:
+            output_error = _bounded_text(str(error), MAX_ERROR_SUMMARY_CHARS)
+            sequence += 1
+            self._send_event(
+                sock,
                 "error",
                 {
-                    "ename": outcome.error.name,
-                    "evalue": outcome.error.value,
-                    "traceback": outcome.error.traceback,
+                    "operation_id": operation_id,
+                    "sequence": sequence,
+                    "ename": "CoKernelOutputTransportError",
+                    "evalue": output_error,
+                    "traceback": [],
                 },
             )
 
-        status = "SUCCEEDED" if outcome.success else "FAILED"
+        status = (
+            "FAILED"
+            if output_error is not None
+            else "SUCCEEDED"
+            if outcome.success
+            else "FAILED"
+        )
+        output_truncated = budget.truncated or output_error is not None
+        output_truncation_reasons = set(budget.reasons)
+        if output_error is not None:
+            output_truncation_reasons.add("invalid_json")
         self._send_event(
             sock,
             "execution_finished",
@@ -305,9 +331,9 @@ class WorkerLoop:
                 "status": status,
                 "execution_count": outcome.execution_count,
                 "output_count": sequence,
-                "output_truncated": budget.truncated,
+                "output_truncated": output_truncated,
                 "output_omitted_bytes": budget.omitted_bytes,
-                "output_truncation_reasons": sorted(budget.reasons),
+                "output_truncation_reasons": sorted(output_truncation_reasons),
             },
         )
         self._send_response(
@@ -317,7 +343,7 @@ class WorkerLoop:
                 "operation_id": operation_id,
                 "status": status,
                 "execution_count": outcome.execution_count,
-                "output_truncated": budget.truncated,
+                "output_truncated": output_truncated,
                 "output_omitted_bytes": budget.omitted_bytes,
             },
         )
