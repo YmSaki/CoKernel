@@ -174,6 +174,8 @@ class ExecutionEngine:
         original_write_output_prompt = displayhook.write_output_prompt
         original_write_format_data = displayhook.write_format_data
         original_finish_displayhook = displayhook.finish_displayhook
+        original_showtraceback = self.shell.showtraceback
+        original_showsyntaxerror = self.shell.showsyntaxerror
 
         def capture_execute_result(
             format_dict: dict[str, Any], metadata: dict[str, Any] | None = None
@@ -200,6 +202,13 @@ class ExecutionEngine:
         displayhook.finish_displayhook = lambda: setattr(
             displayhook, "_is_active", False
         )
+        # InteractiveShell is terminal-oriented: run_cell calls showtraceback or
+        # showsyntaxerror even though it also returns the exception in
+        # ExecutionResult. CoKernel converts that exception into one structured
+        # notebook `error` event, so suppress terminal rendering to avoid an ANSI
+        # traceback being duplicated into stdout before the structured error.
+        self.shell.showtraceback = lambda *args, **kwargs: None
+        self.shell.showsyntaxerror = lambda *args, **kwargs: None
 
         try:
             with capture_output(stdout=False, stderr=False, display=True) as captured:
@@ -221,6 +230,8 @@ class ExecutionEngine:
             displayhook.write_output_prompt = original_write_output_prompt
             displayhook.write_format_data = original_write_format_data
             displayhook.finish_displayhook = original_finish_displayhook
+            self.shell.showtraceback = original_showtraceback
+            self.shell.showsyntaxerror = original_showsyntaxerror
 
         return self._outcome(
             result,
