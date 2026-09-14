@@ -79,6 +79,8 @@ Transport: private Unix domain socket owned/permissioned for runtime/user identi
 
 Wire format for v1: length-prefixed UTF-8 JSON frames.
 
+Worker-wire JSON must be representable by the Runtime's default `serde_json::Value` model. Integer tokens are therefore bounded to `i64::MIN..=u64::MAX`; wider Python integers are rejected before transmission rather than being allowed to become a Runtime decode failure and Session crash. Non-finite floating-point tokens are not valid worker-wire JSON.
+
 Envelope:
 
 ```json
