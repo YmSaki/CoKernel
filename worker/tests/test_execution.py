@@ -6,7 +6,12 @@ import json
 import pytest
 from IPython.core.interactiveshell import InteractiveShell
 
-from cokernel_worker.execution import ExecutionEngine, _normalize_mime_data
+from cokernel_worker.execution import (
+    MAX_EXCEPTION_NAME_CHARS,
+    ExecutionEngine,
+    _normalize_mime_data,
+    _safe_exception_name,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -192,6 +197,17 @@ def test_unnamed_exception_is_normalized_and_session_survives() -> None:
     assert outcome.error.name == "Exception"
     assert outcome.error.value == "boom"
     assert text_result(engine, "marker + 1") == "42"
+
+
+def test_exception_name_is_bounded_for_worker_wire() -> None:
+    class LongNamedError(Exception):
+        pass
+
+    LongNamedError.__name__ = "x" * (MAX_EXCEPTION_NAME_CHARS + 100)
+    name = _safe_exception_name(LongNamedError())
+
+    assert len(name) == MAX_EXCEPTION_NAME_CHARS
+    assert name.endswith("…")
 
 
 def test_reset_discards_live_namespace() -> None:
