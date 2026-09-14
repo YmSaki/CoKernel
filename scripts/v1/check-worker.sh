@@ -12,8 +12,8 @@ command -v python3 >/dev/null 2>&1 || {
 echo '[v1-check-worker] WBS ledger consistency'
 python3 scripts/v1/validate_work_status.py --check
 
-echo '[v1-check-worker] WBS ledger tests'
-python3 -m unittest discover -s scripts/v1 -p 'test_work_status.py' -q
+echo '[v1-check-worker] Local v1 script contract tests'
+python3 -m unittest discover -s scripts/v1 -p 'test_*.py' -q
 
 echo '[v1-check-worker] Protocol fixtures'
 python3 scripts/v1/validate_protocol_fixtures.py
