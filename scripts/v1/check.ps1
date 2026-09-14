@@ -40,6 +40,28 @@ try {
     Write-Host '[v1-check] Runtime Project + uv smoke'
     python scripts/v1/smoke_runtime_project.py
 
+    # The production Runtime/worker path is Linux inside WSL. Native Windows
+    # checks alone cannot execute the Unix Session Supervisor, peer-credential,
+    # SIGINT, or Unix-socket acceptance gates. Re-run the authoritative shell
+    # gate inside WSL before reporting PASS so check.ps1 cannot produce a false
+    # green result after the Windows-only portions skipped production-path proof.
+    Write-Host '[v1-check] WSL production-path gate'
+    $Wsl = Get-Command 'wsl.exe' -ErrorAction SilentlyContinue
+    if ($null -eq $Wsl) {
+        throw 'wsl.exe is required to verify the CoKernel v1 production Runtime path'
+    }
+
+    $WslArgs = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:COKERNEL_WSL_DISTRO)) {
+        $WslArgs += @('--distribution', $env:COKERNEL_WSL_DISTRO)
+    }
+    $WslArgs += @('bash', 'scripts/v1/check.sh')
+
+    & wsl.exe @WslArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "WSL production-path gate failed with exit code $LASTEXITCODE"
+    }
+
     Write-Host '[v1-check] PASS'
 }
 finally {
