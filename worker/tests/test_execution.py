@@ -141,6 +141,26 @@ def test_invalid_utf8_svg_bytes_fail_closed() -> None:
         _normalize_mime_data({"image/svg+xml": b"<svg>\xff</svg>"})
 
 
+def test_invalid_rich_output_becomes_structured_failure_and_session_survives() -> None:
+    engine = ExecutionEngine()
+    outcome = engine.execute(
+        "from IPython.display import display\n"
+        "display({'image/svg+xml': b'<svg>\\xff</svg>'}, raw=True)\n"
+        "marker = 41"
+    )
+
+    assert not outcome.success
+    assert outcome.error is not None
+    assert outcome.error.name == "CoKernelOutputNormalizationError"
+    assert "utf-8" in outcome.error.value
+    assert outcome.displays == []
+    assert outcome.final_result is None
+
+    # Output serialization failure must not destroy the persistent worker
+    # namespace or poison subsequent execution.
+    assert text_result(engine, "marker + 1") == "42"
+
+
 def test_top_level_await_uses_ipython_semantics() -> None:
     engine = ExecutionEngine()
     result = text_result(engine, "import asyncio\nawait asyncio.sleep(0)\n40 + 2")
