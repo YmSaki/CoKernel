@@ -83,6 +83,22 @@ fn validate_worker_inbound_frame(frame: &WorkerFrame) -> Result<(), WorkerTransp
                         "successful worker response omitted result".into(),
                     ));
                 }
+                if let Some(operation_id) = result
+                    .as_ref()
+                    .and_then(|value| value.get("operation_id"))
+                {
+                    let operation_id = operation_id.as_str().ok_or_else(|| {
+                        WorkerTransportError::Protocol(
+                            "worker response result operation_id must be a string".into(),
+                        )
+                    })?;
+                    validate_correlation_id("response result operation_id", operation_id)?;
+                    if operation_id != id {
+                        return Err(WorkerTransportError::Protocol(format!(
+                            "worker response result operation_id {operation_id:?} does not match response id {id:?}"
+                        )));
+                    }
+                }
             } else {
                 if result.is_some() {
                     return Err(WorkerTransportError::Protocol(
@@ -377,6 +393,36 @@ mod tests {
             error: None,
         };
         assert!(validate_worker_inbound_frame(&successful).is_ok());
+
+        let correlated_operation = WorkerFrame::Response {
+            protocol: WORKER_PROTOCOL_V1,
+            id: "op-1".into(),
+            session_id: session_id.clone(),
+            ok: true,
+            result: Some(json!({"operation_id": "op-1", "status": "SUCCEEDED"})),
+            error: None,
+        };
+        assert!(validate_worker_inbound_frame(&correlated_operation).is_ok());
+
+        let mismatched_operation = WorkerFrame::Response {
+            protocol: WORKER_PROTOCOL_V1,
+            id: "op-1".into(),
+            session_id: session_id.clone(),
+            ok: true,
+            result: Some(json!({"operation_id": "op-2", "status": "SUCCEEDED"})),
+            error: None,
+        };
+        assert!(validate_worker_inbound_frame(&mismatched_operation).is_err());
+
+        let non_string_operation = WorkerFrame::Response {
+            protocol: WORKER_PROTOCOL_V1,
+            id: "op-1".into(),
+            session_id: session_id.clone(),
+            ok: true,
+            result: Some(json!({"operation_id": 1, "status": "SUCCEEDED"})),
+            error: None,
+        };
+        assert!(validate_worker_inbound_frame(&non_string_operation).is_err());
 
         let blank_id = WorkerFrame::Response {
             protocol: WORKER_PROTOCOL_V1,
