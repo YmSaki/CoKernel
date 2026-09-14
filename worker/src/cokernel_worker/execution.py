@@ -21,24 +21,27 @@ def _binary_mime_requires_base64(mime: str) -> bool:
 
 
 def _normalize_mime_data(data: dict[str, Any]) -> dict[str, Any]:
-    """Normalize IPython binary MIME values into notebook/wire-safe JSON values.
+    """Normalize IPython MIME values into notebook/wire-safe JSON values.
 
     IPython formatters commonly return raw ``bytes`` for image/png, image/jpeg,
-    and PDF representations. Standard notebook MIME bundles carry those binary
-    values as base64 text. Normalize at the execution boundary so downstream
-    output budgeting and framed JSON transport never see raw bytes.
+    and PDF representations. Custom formatters may also return ``bytearray`` or
+    ``memoryview`` values, and SVG is textual even when supplied as UTF-8 bytes.
+    Normalize these at the execution boundary so downstream output budgeting and
+    framed JSON transport never see bytes-like MIME payloads that have a standard
+    notebook representation.
     """
 
     normalized: dict[str, Any] = {}
     for mime, value in data.items():
-        if (
-            type(mime) is str
-            and _binary_mime_requires_base64(mime)
-            and type(value) is bytes
-        ):
-            normalized[mime] = base64.b64encode(value).decode("ascii")
-        else:
-            normalized[mime] = value
+        if type(mime) is str and isinstance(value, (bytes, bytearray, memoryview)):
+            raw = bytes(value)
+            if _binary_mime_requires_base64(mime):
+                normalized[mime] = base64.b64encode(raw).decode("ascii")
+                continue
+            if mime == "image/svg+xml":
+                normalized[mime] = raw.decode("utf-8")
+                continue
+        normalized[mime] = value
     return normalized
 
 
