@@ -323,6 +323,7 @@ class WorkerLoop:
         output_truncation_reasons = set(budget.reasons)
         if output_error is not None:
             output_truncation_reasons.add("invalid_json")
+        truncation_reasons = sorted(output_truncation_reasons)
         self._send_event(
             sock,
             "execution_finished",
@@ -333,7 +334,7 @@ class WorkerLoop:
                 "output_count": sequence,
                 "output_truncated": output_truncated,
                 "output_omitted_bytes": budget.omitted_bytes,
-                "output_truncation_reasons": sorted(output_truncation_reasons),
+                "output_truncation_reasons": truncation_reasons,
             },
         )
         self._send_response(
@@ -345,6 +346,7 @@ class WorkerLoop:
                 "execution_count": outcome.execution_count,
                 "output_truncated": output_truncated,
                 "output_omitted_bytes": budget.omitted_bytes,
+                "output_truncation_reasons": truncation_reasons,
             },
         )
 

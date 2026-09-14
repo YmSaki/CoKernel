@@ -213,18 +213,21 @@ struct ExecuteFinishedSummary {
     output_count: u64,
     output_truncated: bool,
     output_omitted_bytes: u64,
+    output_truncation_reasons: Vec<String>,
 }
 
 #[derive(Debug)]
 struct ExecuteLifecycle {
+    operation_id: String,
     started: bool,
     next_sequence: u64,
     finished: Option<ExecuteFinishedSummary>,
 }
 
 impl ExecuteLifecycle {
-    fn new() -> Self {
+    fn new(operation_id: impl Into<String>) -> Self {
         Self {
+            operation_id: operation_id.into(),
             started: false,
             next_sequence: 1,
             finished: None,
@@ -268,7 +271,7 @@ async fn execute_one(
     write_worker_frame(writer, &frame).await?;
 
     let mut interrupted = false;
-    let mut lifecycle = ExecuteLifecycle::new();
+    let mut lifecycle = ExecuteLifecycle::new(request_id.clone());
     loop {
         tokio::select! {
             control = control_rx.recv() => {
@@ -556,6 +559,52 @@ fn validate_worker_frame_transaction(
     }
 }
 
+fn parse_truncation_reasons(
+    label: &str,
+    value: Option<&Value>,
+) -> Result<Vec<String>, WorkerTransportError> {
+    let reasons = value.and_then(Value::as_array).ok_or_else(|| {
+        WorkerTransportError::Protocol(format!(
+            "{label} omitted output_truncation_reasons"
+        ))
+    })?;
+    let mut parsed = Vec::with_capacity(reasons.len());
+    for reason in reasons {
+        let reason = reason.as_str().filter(|reason| !reason.is_empty()).ok_or_else(|| {
+            WorkerTransportError::Protocol(format!(
+                "{label} output_truncation_reasons entries must be non-empty strings"
+            ))
+        })?;
+        if parsed.iter().any(|existing| existing == reason) {
+            return Err(WorkerTransportError::Protocol(format!(
+                "{label} output_truncation_reasons contains duplicate {reason:?}"
+            )));
+        }
+        parsed.push(reason.to_owned());
+    }
+    Ok(parsed)
+}
+
+fn validate_truncation_accounting(
+    label: &str,
+    output_truncated: bool,
+    output_omitted_bytes: u64,
+    output_truncation_reasons: &[String],
+) -> Result<(), WorkerTransportError> {
+    if output_truncated {
+        if output_truncation_reasons.is_empty() {
+            return Err(WorkerTransportError::Protocol(format!(
+                "{label} marked output_truncated without a truncation reason"
+            )));
+        }
+    } else if output_omitted_bytes != 0 || !output_truncation_reasons.is_empty() {
+        return Err(WorkerTransportError::Protocol(format!(
+            "{label} reported truncation accounting while output_truncated was false"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_execute_lifecycle(
     lifecycle: &mut ExecuteLifecycle,
     frame: &WorkerFrame,
@@ -674,12 +723,23 @@ fn validate_execute_lifecycle(
                         "worker execution_finished omitted output_omitted_bytes".into(),
                     )
                 })?;
+            let output_truncation_reasons = parse_truncation_reasons(
+                "worker execution_finished",
+                payload.get("output_truncation_reasons"),
+            )?;
+            validate_truncation_accounting(
+                "worker execution_finished",
+                output_truncated,
+                output_omitted_bytes,
+                &output_truncation_reasons,
+            )?;
             lifecycle.finished = Some(ExecuteFinishedSummary {
                 status,
                 execution_count,
                 output_count,
                 output_truncated,
                 output_omitted_bytes,
+                output_truncation_reasons,
             });
             Ok(())
         }
@@ -760,6 +820,22 @@ fn validate_execute_lifecycle(
                     finished.output_omitted_bytes
                 )));
             }
+            let output_truncation_reasons = parse_truncation_reasons(
+                "worker execute response",
+                result.get("output_truncation_reasons"),
+            )?;
+            validate_truncation_accounting(
+                "worker execute response",
+                output_truncated,
+                output_omitted_bytes,
+                &output_truncation_reasons,
+            )?;
+            if output_truncation_reasons != finished.output_truncation_reasons {
+                return Err(WorkerTransportError::Protocol(
+                    "worker execute response output_truncation_reasons do not match execution_finished"
+                        .into(),
+                ));
+            }
             let operation_id = result
                 .get("operation_id")
                 .and_then(Value::as_str)
@@ -768,10 +844,11 @@ fn validate_execute_lifecycle(
                         "worker execute response omitted operation_id".into(),
                     )
                 })?;
-            if operation_id.is_empty() {
-                return Err(WorkerTransportError::Protocol(
-                    "worker execute response operation_id must be non-empty".into(),
-                ));
+            if operation_id != lifecycle.operation_id {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker execute response operation_id {operation_id:?} does not match active operation {:?}",
+                    lifecycle.operation_id
+                )));
             }
             if finished.output_count != lifecycle.next_sequence.saturating_sub(1) {
                 return Err(WorkerTransportError::Protocol(
@@ -1016,23 +1093,26 @@ mod transaction_tests {
 
     fn lifecycle_response(
         session_id: SessionId,
-        operation_id: &str,
+        request_id: &str,
+        result_operation_id: &str,
         status: &str,
         execution_count: u64,
         output_truncated: bool,
         output_omitted_bytes: u64,
+        output_truncation_reasons: &[&str],
     ) -> WorkerFrame {
         WorkerFrame::Response {
             protocol: WORKER_PROTOCOL_V1,
-            id: operation_id.into(),
+            id: request_id.into(),
             session_id: session_id.to_string(),
             ok: true,
             result: Some(json!({
-                "operation_id": operation_id,
+                "operation_id": result_operation_id,
                 "status": status,
                 "execution_count": execution_count,
                 "output_truncated": output_truncated,
                 "output_omitted_bytes": output_omitted_bytes,
+                "output_truncation_reasons": output_truncation_reasons,
             })),
             error: None,
         }
@@ -1110,7 +1190,7 @@ mod transaction_tests {
     fn execute_lifecycle_requires_ordered_outputs_and_matching_terminal_response() {
         let session_id = SessionId::new();
         let operation_id = OperationId::new().to_string();
-        let mut lifecycle = ExecuteLifecycle::new();
+        let mut lifecycle = ExecuteLifecycle::new(operation_id.clone());
 
         let started = lifecycle_event(
             session_id,
@@ -1148,10 +1228,12 @@ mod transaction_tests {
         let response = lifecycle_response(
             session_id,
             &operation_id,
+            &operation_id,
             "SUCCEEDED",
             7,
             false,
             0,
+            &[],
         );
         assert!(validate_execute_lifecycle(&mut lifecycle, &response).is_ok());
     }
@@ -1166,9 +1248,13 @@ mod transaction_tests {
             worker::event::STDOUT,
             json!({"sequence": 1, "text": "early"}),
         );
-        assert!(validate_execute_lifecycle(&mut ExecuteLifecycle::new(), &output).is_err());
+        assert!(validate_execute_lifecycle(
+            &mut ExecuteLifecycle::new(operation_id.clone()),
+            &output,
+        )
+        .is_err());
 
-        let mut lifecycle = ExecuteLifecycle::new();
+        let mut lifecycle = ExecuteLifecycle::new(operation_id.clone());
         let started = lifecycle_event(
             session_id,
             &operation_id,
@@ -1184,7 +1270,7 @@ mod transaction_tests {
         );
         assert!(validate_execute_lifecycle(&mut lifecycle, &gap).is_err());
 
-        let mut lifecycle = ExecuteLifecycle::new();
+        let mut lifecycle = ExecuteLifecycle::new(operation_id.clone());
         validate_execute_lifecycle(&mut lifecycle, &started).unwrap();
         let output = lifecycle_event(
             session_id,
@@ -1219,15 +1305,17 @@ mod transaction_tests {
             worker::event::EXECUTION_STARTED,
             json!({}),
         );
-        let mut lifecycle = ExecuteLifecycle::new();
+        let mut lifecycle = ExecuteLifecycle::new(operation_id.clone());
         validate_execute_lifecycle(&mut lifecycle, &started).unwrap();
         let response = lifecycle_response(
             session_id,
+            &operation_id,
             &operation_id,
             "SUCCEEDED",
             1,
             false,
             0,
+            &[],
         );
         assert!(validate_execute_lifecycle(&mut lifecycle, &response).is_err());
 
@@ -1246,5 +1334,93 @@ mod transaction_tests {
         );
         validate_execute_lifecycle(&mut lifecycle, &finished).unwrap();
         assert!(validate_execute_lifecycle(&mut lifecycle, &response).is_err());
+    }
+
+    #[test]
+    fn execute_lifecycle_rejects_mismatched_operation_and_truncation_accounting() {
+        let session_id = SessionId::new();
+        let operation_id = OperationId::new().to_string();
+        let started = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::EXECUTION_STARTED,
+            json!({}),
+        );
+
+        let mut lifecycle = ExecuteLifecycle::new(operation_id.clone());
+        validate_execute_lifecycle(&mut lifecycle, &started).unwrap();
+        let inconsistent_finished = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::EXECUTION_FINISHED,
+            json!({
+                "status": "SUCCEEDED",
+                "execution_count": 1,
+                "output_count": 0,
+                "output_truncated": false,
+                "output_omitted_bytes": 1,
+                "output_truncation_reasons": ["event_limit"],
+            }),
+        );
+        assert!(validate_execute_lifecycle(&mut lifecycle, &inconsistent_finished).is_err());
+
+        let mut lifecycle = ExecuteLifecycle::new(operation_id.clone());
+        validate_execute_lifecycle(&mut lifecycle, &started).unwrap();
+        let truncated_without_reason = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::EXECUTION_FINISHED,
+            json!({
+                "status": "SUCCEEDED",
+                "execution_count": 1,
+                "output_count": 0,
+                "output_truncated": true,
+                "output_omitted_bytes": 0,
+                "output_truncation_reasons": [],
+            }),
+        );
+        assert!(validate_execute_lifecycle(&mut lifecycle, &truncated_without_reason).is_err());
+
+        let mut lifecycle = ExecuteLifecycle::new(operation_id.clone());
+        validate_execute_lifecycle(&mut lifecycle, &started).unwrap();
+        let valid_finished = lifecycle_event(
+            session_id,
+            &operation_id,
+            worker::event::EXECUTION_FINISHED,
+            json!({
+                "status": "SUCCEEDED",
+                "execution_count": 1,
+                "output_count": 0,
+                "output_truncated": true,
+                "output_omitted_bytes": 10,
+                "output_truncation_reasons": ["event_limit"],
+            }),
+        );
+        validate_execute_lifecycle(&mut lifecycle, &valid_finished).unwrap();
+
+        let other_operation = OperationId::new().to_string();
+        let mismatched_operation = lifecycle_response(
+            session_id,
+            &operation_id,
+            &other_operation,
+            "SUCCEEDED",
+            1,
+            true,
+            10,
+            &["event_limit"],
+        );
+        assert!(validate_execute_lifecycle(&mut lifecycle, &mismatched_operation).is_err());
+
+        let mismatched_reasons = lifecycle_response(
+            session_id,
+            &operation_id,
+            &operation_id,
+            "SUCCEEDED",
+            1,
+            true,
+            10,
+            &["operation_limit"],
+        );
+        assert!(validate_execute_lifecycle(&mut lifecycle, &mismatched_reasons).is_err());
     }
 }

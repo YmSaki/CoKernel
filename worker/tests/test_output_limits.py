@@ -154,6 +154,9 @@ def test_invalid_rich_output_fails_operation_with_complete_lifecycle():
     assert response["ok"] is True
     assert response["result"]["status"] == "FAILED"
     assert response["result"]["output_truncated"] is True
+    assert response["result"]["output_truncation_reasons"] == finished["payload"][
+        "output_truncation_reasons"
+    ]
 
 
 def test_non_string_rich_output_key_fails_without_wire_coercion():
@@ -183,6 +186,9 @@ def test_non_string_rich_output_key_fails_without_wire_coercion():
     )
     assert response["ok"] is True
     assert response["result"]["status"] == "FAILED"
+    assert response["result"]["output_truncation_reasons"] == finished["payload"][
+        "output_truncation_reasons"
+    ]
 
 
 def test_stream_event_is_truncated_and_records_metadata():
@@ -206,6 +212,21 @@ def test_stream_event_is_truncated_and_records_metadata():
     )
     assert finished["payload"]["output_truncated"] is True
     assert finished["payload"]["output_omitted_bytes"] > 0
+
+    response = next(
+        frame
+        for frame in frames
+        if frame.get("type") == "response" and frame.get("id") == "op1"
+    )
+    assert response["result"]["output_truncated"] == finished["payload"][
+        "output_truncated"
+    ]
+    assert response["result"]["output_omitted_bytes"] == finished["payload"][
+        "output_omitted_bytes"
+    ]
+    assert response["result"]["output_truncation_reasons"] == finished["payload"][
+        "output_truncation_reasons"
+    ]
 
 
 def test_engine_stream_capture_omission_is_exposed_when_no_text_remains():
@@ -261,6 +282,15 @@ def test_operation_budget_bounds_later_output_and_reports_truncation():
     )
     assert finished["payload"]["output_truncated"] is True
     assert "operation_limit" in finished["payload"]["output_truncation_reasons"]
+
+    response = next(
+        frame
+        for frame in frames
+        if frame.get("type") == "response" and frame.get("id") == "op1"
+    )
+    assert response["result"]["output_truncation_reasons"] == finished["payload"][
+        "output_truncation_reasons"
+    ]
 
 
 def test_handshake_advertises_output_contract_limits():
