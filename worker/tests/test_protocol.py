@@ -205,6 +205,80 @@ def test_output_normalization_failure_completes_operation_and_worker_survives() 
         server.close()
 
 
+def test_nameless_exception_completes_operation_and_worker_survives() -> None:
+    server, client, thread, _ = start_loop()
+    try:
+        send_frame(
+            client,
+            request(
+                "execute",
+                {
+                    "operation_id": "nameless-error",
+                    "cell_id": "nameless-error-cell",
+                    "source": (
+                        "class NamelessError(Exception):\n"
+                        "    pass\n"
+                        "NamelessError.__name__ = ''\n"
+                        "marker = 41\n"
+                        "raise NamelessError('boom')"
+                    ),
+                },
+                "nameless-error",
+            ),
+        )
+
+        frames = []
+        while True:
+            frame = receive_frame(client)
+            assert frame is not None
+            frames.append(frame)
+            if (
+                frame.get("type") == "response"
+                and frame.get("id") == "nameless-error"
+            ):
+                break
+
+        transaction_frames = [
+            frame for frame in frames if frame.get("event") != "heartbeat"
+        ]
+        assert [
+            frame.get("event") or frame.get("type") for frame in transaction_frames
+        ] == ["execution_started", "error", "execution_finished", "response"]
+        assert transaction_frames[1]["payload"]["ename"] == "Exception"
+        assert transaction_frames[1]["payload"]["evalue"] == "boom"
+        assert transaction_frames[2]["payload"]["status"] == "FAILED"
+        assert transaction_frames[3]["result"]["status"] == "FAILED"
+
+        send_frame(
+            client,
+            request(
+                "execute",
+                {
+                    "operation_id": "after-nameless-error",
+                    "cell_id": "after-nameless-error-cell",
+                    "source": "marker + 1",
+                },
+                "after-nameless-error",
+            ),
+        )
+        frames = []
+        while True:
+            frame = receive_frame(client)
+            assert frame is not None
+            frames.append(frame)
+            if (
+                frame.get("type") == "response"
+                and frame.get("id") == "after-nameless-error"
+            ):
+                break
+        result = next(frame for frame in frames if frame.get("event") == "execute_result")
+        assert result["payload"]["data"]["text/plain"] == "42"
+        assert frames[-1]["result"]["status"] == "SUCCEEDED"
+    finally:
+        stop_loop(client, thread)
+        server.close()
+
+
 def test_worker_emits_heartbeat_while_execution_is_running() -> None:
     server, client, thread, ready = start_loop(heartbeat_interval_seconds=0.02)
     try:
