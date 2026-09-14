@@ -70,7 +70,12 @@ def _is_supported_exact_type(value: Any) -> bool:
     value_type = type(value)
     if value_type is int:
         return _is_interoperable_json_integer(value)
-    return value_type in (type(None), bool, float, str, list, tuple, dict)
+    # Tuple/set membership compares or hashes class objects. Custom metaclasses
+    # can override those operations; only identity is safe for type dispatch.
+    return any(
+        value_type is allowed
+        for allowed in (type(None), bool, float, str, list, tuple, dict)
+    )
 
 
 def _type_metadata(value: Any, *, max_string_chars: int) -> tuple[str, str]:
@@ -144,16 +149,19 @@ def list_variables(
             )
         )
 
+    # Match WorkerLoop's result object, not just the inner summaries array.
     encoded = json.dumps(
-        [
-            {
-                "name": item.name,
-                "type_module": item.type_module,
-                "type_name": item.type_name,
-                "supported": item.supported,
-            }
-            for item in result
-        ],
+        {
+            "variables": [
+                {
+                    "name": item.name,
+                    "type_module": item.type_module,
+                    "type_name": item.type_name,
+                    "supported": item.supported,
+                }
+                for item in result
+            ]
+        },
         ensure_ascii=False,
         allow_nan=False,
         separators=(",", ":"),
@@ -190,7 +198,7 @@ def get_variable(
     try:
         serialized = _serialize(value, limits=limits, budget=budget, depth=0, seen=set())
     except UnsupportedValue as error:
-        return VariableValue(
+        result = VariableValue(
             name=name,
             type_module=module,
             type_name=type_name,
@@ -198,20 +206,18 @@ def get_variable(
             value=None,
             reason=str(error),
         )
+    else:
+        result = VariableValue(
+            name=name,
+            type_module=module,
+            type_name=type_name,
+            supported=True,
+            value=serialized,
+        )
 
-    result = VariableValue(
-        name=name,
-        type_module=module,
-        type_name=type_name,
-        supported=True,
-        value=serialized,
-    )
-    encoded = _encode_supported_variable_value(
-        name=result.name,
-        type_module=result.type_module,
-        type_name=result.type_name,
-        value=result.value,
-    )
+    # The same bound applies to supported and unsupported values, including
+    # metadata and the reason field sent by WorkerLoop via asdict(result).
+    encoded = _encode_variable_value(result)
     if len(encoded) > limits.max_response_bytes:
         raise InspectionError("variable value exceeds maximum serialized response size")
     return result
@@ -253,14 +259,22 @@ def _encode_supported_variable_value(
     type_name: str,
     value: Any,
 ) -> bytes:
+    # Share the actual get_variable result shape with the list support probe.
+    return _encode_variable_value(
+        VariableValue(name, type_module, type_name, supported=True, value=value)
+    )
+
+
+def _encode_variable_value(result: VariableValue) -> bytes:
     try:
         return json.dumps(
             {
-                "name": name,
-                "type_module": type_module,
-                "type_name": type_name,
-                "supported": True,
-                "value": value,
+                "name": result.name,
+                "type_module": result.type_module,
+                "type_name": result.type_name,
+                "supported": result.supported,
+                "value": result.value,
+                "reason": result.reason,
             },
             ensure_ascii=False,
             allow_nan=False,
@@ -311,7 +325,7 @@ def _serialize(
             raise InspectionError("string value exceeds maximum length")
         return value
 
-    if value_type not in (list, tuple, dict):
+    if not (value_type is list or value_type is tuple or value_type is dict):
         module, type_name = _type_metadata(
             value, max_string_chars=limits.max_string_chars
         )
