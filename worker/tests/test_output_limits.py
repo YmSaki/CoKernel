@@ -8,6 +8,11 @@ import threading
 import pytest
 
 from cokernel_worker.execution import ExecutionOutcome, MimeBundle
+from cokernel_worker.output_limits import (
+    SERDE_JSON_MAX_INTEGER,
+    SERDE_JSON_MIN_INTEGER,
+    encode_json,
+)
 from cokernel_worker.protocol import (
     OutputLimits,
     PROTOCOL_V1,
@@ -97,6 +102,39 @@ def test_output_limits_require_positive_values_and_event_below_frame_limit():
         OutputLimits(max_event_bytes=0).validate(max_frame_bytes=frame_limit)
     with pytest.raises(ValueError):
         OutputLimits(max_event_bytes=frame_limit).validate(max_frame_bytes=frame_limit)
+
+
+def test_worker_json_integer_range_matches_rust_serde_json_value():
+    assert encode_json({"value": SERDE_JSON_MIN_INTEGER})
+    assert encode_json({"value": SERDE_JSON_MAX_INTEGER})
+
+    with pytest.raises(ValueError, match="Rust serde_json range"):
+        encode_json({"value": SERDE_JSON_MIN_INTEGER - 1})
+    with pytest.raises(ValueError, match="Rust serde_json range"):
+        encode_json({"nested": [SERDE_JSON_MAX_INTEGER + 1]})
+
+
+def test_out_of_range_rich_output_fails_request_without_killing_worker():
+    limits = OutputLimits(
+        max_event_bytes=2048,
+        max_operation_bytes=4096,
+        max_blob_bytes=512,
+    )
+    display = MimeBundle(
+        data={"application/json": {"too_large": SERDE_JSON_MAX_INTEGER + 1}}
+    )
+    frames = run_execute(outcome(displays=[display]), limits)
+
+    response = next(
+        frame
+        for frame in frames
+        if frame.get("type") == "response" and frame.get("id") == "op1"
+    )
+    assert response["ok"] is False
+    assert response["error"]["summary"] == (
+        "JSON integer is outside the Rust serde_json range"
+    )
+    assert not any(frame.get("event") == "execution_finished" for frame in frames)
 
 
 def test_stream_event_is_truncated_and_records_metadata():
