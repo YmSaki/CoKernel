@@ -16,33 +16,33 @@ Purpose: this file is the executable work-management ledger for `cokernel-v1`. R
 - Resume work from the first unfinished item in **Execution order** unless new evidence creates a higher-priority blocker.
 - One development run targets about **five actionable work items**, including implementation, regression tests, execution and evidence updates. Do not stop after one small fix or count five commands/commits as five completed deliverables.
 - If an environment blocks a group, record the blocker once and continue independent verification within the active Phase. Do not repeatedly add preflight-only commits, invent work to fill the batch, weaken a gate, or cross a blocked Phase boundary.
-- Component evidence closes only the stated component criterion. It does not close the full worker suite, Rust/WSL integration, Session acceptance, or a parent gate.
+- Component evidence closes only the stated component criterion. It does not close the Rust/WSL integration, Session acceptance, or a parent gate.
 - Recompute counts with `python3 scripts/v1/validate_work_status.py --check` whenever task states change.
 
 ## Current progress
 
 - Total tracked work items: **201**
-- DONE: **32**
-- READY_VERIFY: **31**
+- DONE: **43**
+- READY_VERIFY: **21**
 - IN_PROGRESS: **0**
-- TODO: **1**
+- TODO: **0**
 - BLOCKED: **137**
-- Ledger DONE ratio (`DONE / total`, equal-weight rows, not effort or product completeness): **15.9%**
-- Phase gates completed: **3 / 12 phases = 25.0%** (Phase 0, 1, 2; inherited closure records, not revalidated by this batch)
+- Ledger DONE ratio (`DONE / total`, equal-weight rows, not effort or product completeness): **21.4%**
+- Phase gates completed: **3 / 12 phases = 25.0%** (Phase 0, 1, 2; inherited closure records)
 - Active Phase: **Phase 3 / #29**
-- Phase 3: **7 component implementation rows DONE, 31 READY_VERIFY; 1 fixture verification DONE, 1 verification TODO, 13 verification/acceptance/gate rows BLOCKED**.
+- Phase 3: **17 / 38 implementation rows DONE, 21 READY_VERIFY; worker pytest + protocol fixtures DONE; 13 Rust/WSL/Windows verification/acceptance/gate rows BLOCKED**.
 
-This batch closes seven existing component work items using recorded tests; it also reconciles the previously recorded `P3-V-06` fixture evidence. It does not claim that all worker tests or the Phase 3 canonical Gate passed. The original 24 DONE rows are inherited from #27/#28 closure records.
+The worker-side independent verification slice is now exhausted in this executor: the exact-source worker suite passed 137/137 and the real AF_UNIX source subprocess smoke passed. The remaining Phase 3 critical path requires a Rust-equipped Linux/WSL checkout and, for Windows-side checks, a Windows/WSL target. The original 24 DONE rows are inherited from #27/#28 closure records.
 
 ## Execution order
 
-1. Unblock `P3-V-01` .. `P3-V-04` with a Rust-equipped Linux/WSL checkout. The present executor has no cargo/rustc/rustfmt and external dependency hosts do not resolve.
-2. While that environment is unavailable, finish the independent **full worker suite** (`P3-V-05`); the receipt below covers selected execution/inspection/stream components, not the whole suite or uv launch.
-3. Run `P3-V-07` .. `P3-V-10` on the appropriate Linux/WSL/Windows machines, then `P3-A-01` .. `P3-A-04` and `P3-GATE`.
+1. `P3-V-01` .. `P3-V-04` — run cargo fmt/check/clippy/test on a Rust-equipped Linux/WSL checkout.
+2. `P3-V-07` .. `P3-V-10` — run canonical `check.sh`, applicable `check.ps1`, and real Runtime Session Supervisor/inspection smokes. `check-worker.sh` now includes WBS/fixture checks and a source-tree AF_UNIX smoke before its mandatory uv path.
+3. `P3-A-01` .. `P3-A-04` — persistent-state, A/B concurrency, crash containment and hostile-inspection acceptance.
 4. A failed test reopens its owning implementation row; fix it and rerun the affected tests in the same batch. No speculative re-audit loop and no gate bypass.
-5. After `P3-GATE`, proceed with `P4-01` onward, then Phases 5–11. Close #29/#39/#40 only when their respective evidence requirements are met.
+5. `P3-GATE` — close #29 only after all acceptance evidence passes; then proceed to Phase 4 in numeric WBS order.
 
-Current component receipt: [E-BATCH](evidence/phase3-worker-components-946d479.md). Existing fixture receipt: [E-FIX](evidence/phase3-protocol-fixtures-9a22667.md).
+Evidence: [E-WORKER-FULL](evidence/phase3-worker-full-e7b208f.md), [E-BATCH](evidence/phase3-worker-components-946d479.md), [E-FIX](evidence/phase3-protocol-fixtures-9a22667.md).
 
 ## Phase summary
 
@@ -50,7 +50,7 @@ Current component receipt: [E-BATCH](evidence/phase3-worker-components-946d479.m
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | 0 | #27 | 8 | 8 | 0 | 0 | 0 | 0 | DONE |
 | 1-2 | #28 | 16 | 16 | 0 | 0 | 0 | 0 | DONE |
-| 3 | #29 | 53 | 8 | 31 | 0 | 1 | 13 | ACTIVE |
+| 3 | #29 | 53 | 19 | 21 | 0 | 0 | 13 | ACTIVE / ENV-BLOCKED |
 | 4 | #30 | 14 | 0 | 0 | 0 | 0 | 14 | BLOCKED |
 | 5 | #31 | 13 | 0 | 0 | 0 | 0 | 13 | BLOCKED |
 | 6 | #32 | 11 | 0 | 0 | 0 | 0 | 11 | BLOCKED |
@@ -100,57 +100,57 @@ Umbrella #26 remains open until Phase 11 release acceptance closes.
 
 | ID | Work package | Work item | State | Depends on | Done when | Evidence / note |
 |---|---|---|---|---|---|---|
-| P3-WRK-01 | Worker | Production cokernel_worker package + private Unix socket loop | READY_VERIFY | P12-GATE | Worker serves framed requests over private Unix socket | implemented baseline |
-| P3-WRK-02 | Worker | ready/heartbeat/ping/reset/shutdown protocol | READY_VERIFY | P3-WRK-01 | Lifecycle control frames behave per contract | implemented baseline |
-| P3-WRK-03 | Worker | Worker frame shape/version/size validation | READY_VERIFY | P3-WRK-01 | Malformed/oversized frames fail closed | implemented baseline |
-| P3-WRK-04 | Worker | Preserve JSON semantics across worker transport | READY_VERIFY | P3-WRK-03 | Lossy non-string object keys and invalid values rejected | 69ad6c7 lineage |
-| P3-WRK-05 | Worker | Normalize user exception names at protocol boundary | READY_VERIFY | P3-WRK-03 | ename is bounded/non-empty without user hooks | 69ad6c7 lineage |
-| P3-EXE-01 | Execution | Persistent IPython namespace | DONE | P3-WRK-01 | State survives sequential executions | E-BATCH: test_namespace_persists_across_cells; component PASS |
-| P3-EXE-02 | Execution | Capture stdout/stderr | READY_VERIFY | P3-EXE-01 | Streams emitted as bounded output events | E-BATCH: capture and stream-bound tests PASS; wire emission remains P3-WRK-01 |
-| P3-EXE-03 | Execution | Capture final expression result | DONE | P3-EXE-01 | Expression result returned with MIME data | E-BATCH: final-expression, single-format/history and semicolon tests PASS |
-| P3-EXE-04 | Execution | Capture explicit rich MIME display | READY_VERIFY | P3-EXE-01 | Rich display normalized and bounded | E-BATCH: HTML, binary, SVG normalization tests PASS; transport budget remains P3-EXE-07 |
-| P3-EXE-05 | Execution | Support top-level async | DONE | P3-EXE-01 | Supported await execution completes correctly | E-BATCH: test_top_level_await_uses_ipython_semantics PASS |
-| P3-EXE-06 | Execution | Convert Python exceptions to structured FAILED outcomes | READY_VERIFY | P3-EXE-01 | User exception does not crash worker/session | E-BATCH: ValueError, SyntaxError, nameless/hostile rendering and namespace-survival tests PASS; process gate remains open |
-| P3-EXE-07 | Execution | Bound output and produce truncation accounting | READY_VERIFY | P3-EXE-02..04 | Output limits/truncation metadata produced | stream component PASS in E-BATCH; full output/wire suite pending |
-| P3-EXE-08 | Execution | Contain output normalization/transport failures | READY_VERIFY | P3-EXE-04 | Bad rich output becomes FAILED outcome and worker survives | normalization component PASS in E-BATCH; transport suite pending |
+| P3-WRK-01 | Worker | Production cokernel_worker package + private Unix socket loop | DONE | P12-GATE | Worker serves framed requests over private Unix socket | E-WORKER-FULL: separate python -m cokernel_worker over Supervisor-owned AF_UNIX socket PASS |
+| P3-WRK-02 | Worker | ready/heartbeat/ping/reset/shutdown protocol | DONE | P3-WRK-01 | Lifecycle control frames behave per contract | E-WORKER-FULL: full suite + source subprocess ready/reset/shutdown PASS |
+| P3-WRK-03 | Worker | Worker frame shape/version/size validation | DONE | P3-WRK-01 | Malformed/oversized frames fail closed | E-WORKER-FULL: frame/version/type/session/id/method/payload rejection + survival PASS |
+| P3-WRK-04 | Worker | Preserve JSON semantics across worker transport | DONE | P3-WRK-03 | Lossy non-string object keys and invalid values rejected | E-WORKER-FULL: integer/key/non-finite JSON boundaries PASS |
+| P3-WRK-05 | Worker | Normalize user exception names at protocol boundary | DONE | P3-WRK-03 | ename is bounded/non-empty without user hooks | E-WORKER-FULL: bounded + nameless exception serialization PASS |
+| P3-EXE-01 | Execution | Persistent IPython namespace | DONE | P3-WRK-01 | State survives sequential executions | E-BATCH: test_namespace_persists_across_cells PASS |
+| P3-EXE-02 | Execution | Capture stdout/stderr | DONE | P3-EXE-01 | Streams emitted as bounded output events | E-WORKER-FULL: 7MB stdout/stderr become bounded ordered WorkerLoop events |
+| P3-EXE-03 | Execution | Capture final expression result | DONE | P3-EXE-01 | Expression result returned with MIME data | E-BATCH: final-expression, history and semicolon tests PASS |
+| P3-EXE-04 | Execution | Capture explicit rich MIME display | DONE | P3-EXE-01 | Rich display normalized and bounded | E-WORKER-FULL: HTML/binary/SVG normalization + blob limits PASS |
+| P3-EXE-05 | Execution | Support top-level async | DONE | P3-EXE-01 | Supported await execution completes correctly | E-BATCH: top-level await PASS |
+| P3-EXE-06 | Execution | Convert Python exceptions to structured FAILED outcomes | DONE | P3-EXE-01 | User exception does not crash worker/session | E-WORKER-FULL: structured failures + same-process namespace survival PASS |
+| P3-EXE-07 | Execution | Bound output and produce truncation accounting | DONE | P3-EXE-02..04 | Output limits/truncation metadata produced | E-WORKER-FULL: event/operation/blob/stream bounds and omitted-byte/reason accounting PASS |
+| P3-EXE-08 | Execution | Contain output normalization/transport failures | DONE | P3-EXE-04 | Bad rich output becomes FAILED outcome and worker survives | E-WORKER-FULL: normalization/invalid-JSON failure + persistent worker survival PASS |
 | P3-INSP-01 | Inspection | Implement list_variables | DONE | P3-EXE-01 | Lists safe/coarse variable metadata | E-BATCH: list/support/metadata tests PASS |
 | P3-INSP-02 | Inspection | Implement get_variable | DONE | P3-INSP-01 | Returns bounded exact built-in safe values | E-BATCH: exact built-in, integer, identifier and rejection tests PASS |
-| P3-INSP-03 | Inspection | Reject hostile/custom object behavior | DONE | P3-INSP-01..02 | No repr/str/iter/getattr/operator hooks invoked | E-BATCH: identity-only dispatch fix; 24 metaclass + 16 hostile/subclass regressions PASS |
-| P3-INSP-04 | Inspection | Bound inspection depth/items/string/response size | DONE | P3-INSP-02 | Inspection cannot generate unbounded response | E-BATCH: complete get/list result budget fix; exact byte/depth boundaries PASS |
-| P3-SUP-01 | Supervisor | Own one worker process per Session | READY_VERIFY | P3-WRK-01 | Each Session has independent worker/process ownership | implemented baseline |
-| P3-SUP-02 | Supervisor | Private listener/socket + ready handshake | READY_VERIFY | P3-SUP-01 | Runtime establishes and validates worker readiness | implemented baseline |
-| P3-SUP-03 | Supervisor | Per-Session FIFO single-flight queue shared by callers | READY_VERIFY | P3-SUP-02 | Human/AI operations serialize in accepted order | implemented baseline |
-| P3-SUP-04 | Supervisor | Interrupt active execution | READY_VERIFY | P3-SUP-03 | Interrupt terminates active operation without corrupting Session | implemented baseline |
-| P3-SUP-05 | Supervisor | Graceful stop | READY_VERIFY | P3-SUP-02 | Session stops cleanly and reports state | implemented baseline |
-| P3-SUP-06 | Supervisor | Restart Session | READY_VERIFY | P3-SUP-05 | Worker restarts with explicit Session semantics | implemented baseline |
+| P3-INSP-03 | Inspection | Reject hostile/custom object behavior | DONE | P3-INSP-01..02 | No repr/str/iter/getattr/operator hooks invoked | E-BATCH: identity-only dispatch; hostile/metaclass regressions PASS |
+| P3-INSP-04 | Inspection | Bound inspection depth/items/string/response size | DONE | P3-INSP-02 | Inspection cannot generate unbounded response | E-BATCH: complete get/list result budget and exact boundaries PASS |
+| P3-SUP-01 | Supervisor | Own one worker process per Session | READY_VERIFY | P3-WRK-01 | Each Session has independent worker/process ownership | implemented baseline; Rust/WSL Gate pending |
+| P3-SUP-02 | Supervisor | Private listener/socket + ready handshake | READY_VERIFY | P3-SUP-01 | Runtime establishes and validates worker readiness | implemented baseline; Rust/WSL Gate pending |
+| P3-SUP-03 | Supervisor | Per-Session FIFO single-flight queue shared by callers | READY_VERIFY | P3-SUP-02 | Human/AI operations serialize in accepted order | implemented baseline; Rust/WSL Gate pending |
+| P3-SUP-04 | Supervisor | Interrupt active execution | READY_VERIFY | P3-SUP-03 | Interrupt terminates active operation without corrupting Session | implemented baseline; Rust/WSL Gate pending |
+| P3-SUP-05 | Supervisor | Graceful stop | READY_VERIFY | P3-SUP-02 | Session stops cleanly and reports state | implemented baseline; Rust/WSL Gate pending |
+| P3-SUP-06 | Supervisor | Restart Session | READY_VERIFY | P3-SUP-05 | Worker restarts with explicit Session semantics | implemented baseline; Rust/WSL Gate pending |
 | P3-SUP-07 | Supervisor | Heartbeat timeout/liveness semantics | READY_VERIFY | P3-WRK-02,P3-SUP-02 | Lost/stale worker is detected deterministically | actor heartbeat_timeout path present; canonical Gate pending |
-| P3-SUP-08 | Supervisor | Crash containment | READY_VERIFY | P3-SUP-01 | Worker crash does not kill Runtime or other Sessions | implemented baseline |
-| P3-SUP-09 | Supervisor | FailureRecord capture | READY_VERIFY | P3-SUP-08 | Crash records exit/failure evidence and last operation | implemented baseline |
-| P3-SUP-10 | Supervisor | Environment generation/stale marking | READY_VERIFY | P12-13,P3-SUP-01 | Existing Session stays alive but becomes stale after env mutation | implemented baseline |
-| P3-SUP-11 | Supervisor | Concurrent independent Sessions | READY_VERIFY | P3-SUP-01 | A/B overlap and namespaces remain isolated | implemented baseline |
-| P3-LC-01 | Protocol invariants | Bind worker frames to active transaction | READY_VERIFY | P3-SUP-03 | Stale/wrong transaction frames fail closed | 4eeb763 lineage |
-| P3-LC-02 | Protocol invariants | Require single execution_started before outputs | READY_VERIFY | P3-LC-01 | Duplicate/missing/out-of-order start rejected | acefea7 lineage |
-| P3-LC-03 | Protocol invariants | Allow outputs only between start and finish | READY_VERIFY | P3-LC-02 | Output before start/after finish rejected | acefea7 lineage |
-| P3-LC-04 | Protocol invariants | Require contiguous output sequence 1..N | READY_VERIFY | P3-LC-02 | Sequence gaps/duplicates rejected | acefea7 lineage |
-| P3-LC-05 | Protocol invariants | Validate execution_finished.output_count | READY_VERIFY | P3-LC-04 | Count equals accepted outputs | acefea7 lineage |
-| P3-LC-06 | Protocol invariants | Require final response after execution_finished | READY_VERIFY | P3-LC-05 | Early/missing response rejected | acefea7 lineage |
-| P3-LC-07 | Protocol invariants | Align status/execution_count between finish and response | READY_VERIFY | P3-LC-06 | Terminal response agrees with lifecycle | acefea7 lineage |
-| P3-LC-08 | Protocol invariants | Preflight oversized execute requests | READY_VERIFY | P3-SUP-03 | Oversized caller request rejected without crashing healthy Session | ecdcc65 lineage |
-| P3-LC-09 | Protocol invariants | Bind final result.operation_id exactly to active Runtime operation | READY_VERIFY | P3-LC-06 | Mismatch is rejected fail-closed with regression test | de52f4b + c68db10 |
-| P3-LC-10 | Protocol invariants | Validate truncation accounting self-consistency and final-response agreement | READY_VERIFY | P3-EXE-07,P3-LC-05 | Flags/omitted bytes/reasons are internally consistent and identical at finish/response | c68db10 |
-| P3-V-01 | Verification | cargo fmt --check | BLOCKED | P3-WRK-01..P3-LC-10 | exit 0 on Rust-equipped checkout | E-BATCH: cargo/rustfmt unavailable |
-| P3-V-02 | Verification | cargo check --workspace | BLOCKED | P3-WRK-01..P3-LC-10 | exit 0 | E-BATCH: cargo/rustc unavailable |
-| P3-V-03 | Verification | cargo clippy --workspace --all-targets -- -D warnings | BLOCKED | P3-WRK-01..P3-LC-10 | exit 0 with no warnings | E-BATCH: Rust toolchain unavailable |
-| P3-V-04 | Verification | cargo test --workspace | BLOCKED | P3-WRK-01..P3-LC-10 | all tests pass | E-BATCH: Rust toolchain unavailable |
-| P3-V-05 | Verification | worker pytest | TODO | P3-WRK-01..P3-LC-10 | all worker tests pass | E-BATCH: selected component suite 95 PASS, NOT full worker/uv verification |
-| P3-V-06 | Verification | protocol fixture validation | DONE | P3-WRK-01..P3-LC-10 | all fixtures pass | E-FIX: 5/5; prior evidence at 9a22667 reconciled, not rerun in this batch |
-| P3-V-07 | Verification | scripts/v1/check.sh | BLOCKED | P3-V-01..06 | canonical Linux/WSL local gate exits 0 | Rust checks and full worker verification pending |
+| P3-SUP-08 | Supervisor | Crash containment | READY_VERIFY | P3-SUP-01 | Worker crash does not kill Runtime or other Sessions | implemented baseline; Rust/WSL Gate pending |
+| P3-SUP-09 | Supervisor | FailureRecord capture | READY_VERIFY | P3-SUP-08 | Crash records exit/failure evidence and last operation | implemented baseline; Rust/WSL Gate pending |
+| P3-SUP-10 | Supervisor | Environment generation/stale marking | READY_VERIFY | P12-13,P3-SUP-01 | Existing Session stays alive but becomes stale after env mutation | implemented baseline; Rust/WSL Gate pending |
+| P3-SUP-11 | Supervisor | Concurrent independent Sessions | READY_VERIFY | P3-SUP-01 | A/B overlap and namespaces remain isolated | implemented baseline; Rust/WSL Gate pending |
+| P3-LC-01 | Protocol invariants | Bind worker frames to active transaction | READY_VERIFY | P3-SUP-03 | Stale/wrong transaction frames fail closed | 4eeb763 lineage; Rust tests pending |
+| P3-LC-02 | Protocol invariants | Require single execution_started before outputs | READY_VERIFY | P3-LC-01 | Duplicate/missing/out-of-order start rejected | acefea7 lineage; Rust tests pending |
+| P3-LC-03 | Protocol invariants | Allow outputs only between start and finish | READY_VERIFY | P3-LC-02 | Output before start/after finish rejected | acefea7 lineage; Rust tests pending |
+| P3-LC-04 | Protocol invariants | Require contiguous output sequence 1..N | READY_VERIFY | P3-LC-02 | Sequence gaps/duplicates rejected | acefea7 lineage; Rust tests pending |
+| P3-LC-05 | Protocol invariants | Validate execution_finished.output_count | READY_VERIFY | P3-LC-04 | Count equals accepted outputs | acefea7 lineage; Rust tests pending |
+| P3-LC-06 | Protocol invariants | Require final response after execution_finished | READY_VERIFY | P3-LC-05 | Early/missing response rejected | acefea7 lineage; Rust tests pending |
+| P3-LC-07 | Protocol invariants | Align status/execution_count between finish and response | READY_VERIFY | P3-LC-06 | Terminal response agrees with lifecycle | acefea7 lineage; Rust tests pending |
+| P3-LC-08 | Protocol invariants | Preflight oversized execute requests | READY_VERIFY | P3-SUP-03 | Oversized caller request rejected without crashing healthy Session | ecdcc65 lineage; Rust tests pending |
+| P3-LC-09 | Protocol invariants | Bind final result.operation_id exactly to active Runtime operation | READY_VERIFY | P3-LC-06 | Mismatch is rejected fail-closed with regression test | de52f4b + c68db10; Rust tests pending |
+| P3-LC-10 | Protocol invariants | Validate truncation accounting self-consistency and final-response agreement | READY_VERIFY | P3-EXE-07,P3-LC-05 | Flags/omitted bytes/reasons are internally consistent and identical at finish/response | c68db10; Rust tests pending |
+| P3-V-01 | Verification | cargo fmt --check | BLOCKED | P3-WRK-01..P3-LC-10 | exit 0 on Rust-equipped checkout | cargo/rustfmt unavailable in current executor |
+| P3-V-02 | Verification | cargo check --workspace | BLOCKED | P3-WRK-01..P3-LC-10 | exit 0 | cargo/rustc unavailable in current executor |
+| P3-V-03 | Verification | cargo clippy --workspace --all-targets -- -D warnings | BLOCKED | P3-WRK-01..P3-LC-10 | exit 0 with no warnings | Rust toolchain unavailable in current executor |
+| P3-V-04 | Verification | cargo test --workspace | BLOCKED | P3-WRK-01..P3-LC-10 | all tests pass | Rust toolchain unavailable in current executor |
+| P3-V-05 | Verification | worker pytest | DONE | P3-WRK-01..P3-LC-10 | all worker tests pass | E-WORKER-FULL: exact-source worker/tests 137/137 PASS; failures/errors/skips 0 |
+| P3-V-06 | Verification | protocol fixture validation | DONE | P3-WRK-01..P3-LC-10 | all fixtures pass | E-FIX: 5/5 PASS |
+| P3-V-07 | Verification | scripts/v1/check.sh | BLOCKED | P3-V-01..06 | canonical Linux/WSL local gate exits 0 | worker source preflight integrated; uv dependency sync + Rust Gate unavailable here |
 | P3-V-08 | Verification | scripts/v1/check.ps1 applicable checks | BLOCKED | P3-V-01..06 | canonical Windows-side checks exit 0 | No Windows/PowerShell/WSL execution target |
 | P3-V-09 | Verification | Supervisor real-process/socket smoke | BLOCKED | P3-V-07 | start/handshake/queue/interrupt/restart/stop/crash paths pass | Rust/WSL Gate pending |
-| P3-V-10 | Verification | Inspection hostile-object smoke | BLOCKED | P3-V-07 | safe inspection passes against real worker | Rust/WSL Gate pending; E-BATCH is component-only |
-| P3-A-01 | Acceptance | Persistent state proof: x=123 then x+1 == 124 | BLOCKED | P3-V-09 | returns 124 in same Session | Supervisor proof pending; engine unit proof is not a substitute |
-| P3-A-02 | Acceptance | Parallel A/B Session proof | BLOCKED | P3-V-09 | actual overlap + isolated namespace/PID | Supervisor proof pending |
-| P3-A-03 | Acceptance | Crash containment proof | BLOCKED | P3-V-09 | kill A; B survives; A has FailureRecord | Supervisor proof pending |
+| P3-V-10 | Verification | Inspection hostile-object smoke | BLOCKED | P3-V-07 | safe inspection passes against real worker | Runtime/WSL Gate pending; worker-only hostile corpus PASS |
+| P3-A-01 | Acceptance | Persistent state proof: x=123 then x+1 == 124 | BLOCKED | P3-V-09 | returns 124 in same Session | Runtime Supervisor proof pending; worker proof is not substitute |
+| P3-A-02 | Acceptance | Parallel A/B Session proof | BLOCKED | P3-V-09 | actual overlap + isolated namespace/PID | Runtime Supervisor proof pending |
+| P3-A-03 | Acceptance | Crash containment proof | BLOCKED | P3-V-09 | kill A; B survives; A has FailureRecord | Runtime Supervisor proof pending |
 | P3-A-04 | Acceptance | Hostile inspection acceptance | BLOCKED | P3-V-10 | hostile object corpus does not execute user hooks | Runtime real-worker proof pending |
 | P3-GATE | Gate | Close Phase 3 / #29 | BLOCKED | P3-A-01..04 | All Phase 3 deliverables and canonical gate evidence PASS | #29 remains open; no gate waiver |
 
@@ -185,7 +185,7 @@ Umbrella #26 remains open until Phase 11 release acceptance closes.
 | P5-06 | IPC | Current-user Named Pipe RPC/events | BLOCKED | P5-01 | Authorized local clients can RPC/subscribe | Phase 5 |
 | P5-07 | IPC | Event forwarding and request correlation | BLOCKED | P5-03,P5-06 | Runtime events correlate correctly to clients | Phase 5 |
 | P5-08 | Autostart | Install/user auto-start behavior | BLOCKED | P5-01 | Host can run independently of Desktop | Phase 5 |
-| P5-09 | Metrics | Aggregate Windows + WSL metrics | BLOCKED | P5-02 | CPU/RAM/WSL metrics exposed | Phase 5 |
+| P5-09 | Metrics | Aggregate Windows + WSL metrics | BLOCKED | P5-02 | CPU/RAM/WSL RAM/GPU/VRAM/storage dashboard | Phase 5 |
 | P5-10 | Import bridge | Stream Windows notebook bytes to Runtime | BLOCKED | P4-GATE,P5-06 | Notebook import works without unsafe path assumptions | Phase 5 |
 | P5-11 | Verification | Host fake-runtime component tests | BLOCKED | P5-01..10 | desired state/reconnect/ACL/events/secrets/UI disconnect tests pass | TEST_ACCEPTANCE L2 Host |
 | P5-A-01 | Acceptance | UI-independent Host/Runtime lifetime proof | BLOCKED | P5-11 | Host keeps Runtime/Sessions alive across client reconnects | Phase 5 gate |
