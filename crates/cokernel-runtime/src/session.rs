@@ -206,6 +206,7 @@ impl SessionHandle {
             cell_id: Some(cell_id.into()),
             source: source.into(),
         };
+        validate_execute_request_frame(self.session_id, &request)?;
         let permit = self
             .execute_tx
             .reserve()
@@ -299,6 +300,61 @@ fn queue_depth(sender: &mpsc::Sender<ExecuteRequest>) -> usize {
         0
     } else {
         sender.max_capacity().saturating_sub(sender.capacity())
+    }
+}
+
+fn validate_execute_request_frame(
+    session_id: SessionId,
+    request: &ExecuteRequest,
+) -> Result<(), SessionError> {
+    let frame = WorkerFrame::Request {
+        protocol: WORKER_PROTOCOL_V1,
+        id: request.operation_id.to_string(),
+        session_id: session_id.to_string(),
+        method: worker::method::EXECUTE.into(),
+        payload: json!({
+            "operation_id": request.operation_id.to_string(),
+            "cell_id": request.cell_id,
+            "source": request.source,
+            "origin": request.origin,
+        }),
+    };
+    cokernel_protocol::encode_json_frame(&frame, cokernel_protocol::DEFAULT_MAX_FRAME_BYTES)
+        .map(|_| ())
+        .map_err(WorkerTransportError::from)
+        .map_err(SessionError::from)
+}
+
+#[cfg(test)]
+mod request_frame_tests {
+    use super::*;
+
+    #[test]
+    fn execute_request_preflight_accepts_small_frame() {
+        let request = ExecuteRequest {
+            operation_id: OperationId::new(),
+            origin: ExecutionOrigin::Human,
+            cell_id: Some("cell-1".into()),
+            source: "x = 1\nx + 1".into(),
+        };
+        assert!(validate_execute_request_frame(SessionId::new(), &request).is_ok());
+    }
+
+    #[test]
+    fn execute_request_preflight_rejects_oversized_frame() {
+        let request = ExecuteRequest {
+            operation_id: OperationId::new(),
+            origin: ExecutionOrigin::Human,
+            cell_id: Some("cell-oversized".into()),
+            source: "x".repeat(cokernel_protocol::DEFAULT_MAX_FRAME_BYTES),
+        };
+        let error = validate_execute_request_frame(SessionId::new(), &request).unwrap_err();
+        assert!(matches!(
+            error,
+            SessionError::WorkerTransport(WorkerTransportError::Frame(
+                cokernel_protocol::FrameError::TooLarge(_)
+            ))
+        ));
     }
 }
 
