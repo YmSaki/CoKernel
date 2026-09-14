@@ -59,6 +59,13 @@ class MimeBundle:
             transient=dict(getattr(output, "transient", None) or {}),
         )
 
+    def normalized(self) -> "MimeBundle":
+        return MimeBundle(
+            data=_normalize_mime_data(dict(self.data)),
+            metadata=dict(self.metadata),
+            transient=dict(self.transient),
+        )
+
 
 @dataclass(slots=True)
 class ExecutionError:
@@ -156,8 +163,13 @@ class ExecutionEngine:
             format_dict: dict[str, Any], metadata: dict[str, Any] | None = None
         ) -> None:
             nonlocal final_result
+            # Keep formatter output raw until _outcome(). MIME normalization can
+            # legitimately reject malformed custom formatter data (for example,
+            # non-UTF-8 SVG bytes). Deferring normalization lets that failure be
+            # converted into a structured failed ExecutionOutcome instead of
+            # escaping after the worker already emitted execution_started.
             final_result = MimeBundle(
-                data=_normalize_mime_data(dict(format_dict)),
+                data=dict(format_dict),
                 metadata=dict(metadata or {}),
             )
 
@@ -231,13 +243,37 @@ class ExecutionEngine:
                 traceback=traceback.format_exception(type(error), error, error.__traceback__),
             )
 
+        try:
+            normalized_displays = [
+                MimeBundle.from_rich_output(output) for output in outputs
+            ]
+            normalized_final_result = (
+                final_result.normalized() if final_result is not None else None
+            )
+        except Exception as normalization_error:
+            # Rich MIME values are user-controlled through formatter/display
+            # hooks. Treat malformed notebook/wire representations as an
+            # operation failure, but keep the supervised worker and persistent
+            # namespace alive for subsequent cells.
+            execution_error = ExecutionError(
+                name="CoKernelOutputNormalizationError",
+                value=str(normalization_error),
+                traceback=traceback.format_exception(
+                    type(normalization_error),
+                    normalization_error,
+                    normalization_error.__traceback__,
+                ),
+            )
+            normalized_displays = []
+            normalized_final_result = None
+
         return ExecutionOutcome(
-            success=error is None,
+            success=execution_error is None,
             execution_count=getattr(result, "execution_count", None),
             stdout=stdout,
             stderr=stderr,
-            displays=[MimeBundle.from_rich_output(output) for output in outputs],
-            final_result=final_result,
+            displays=normalized_displays,
+            final_result=normalized_final_result,
             error=execution_error,
             stdout_truncated_bytes=stdout_truncated_bytes,
             stderr_truncated_bytes=stderr_truncated_bytes,
