@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::Stdio;
 
 use cokernel_domain::SessionId;
-use cokernel_protocol::worker::WorkerFrame;
+use cokernel_protocol::worker::{self, WorkerFrame};
 use cokernel_protocol::{
     decode_json_payload, encode_json_frame, FrameError, DEFAULT_MAX_FRAME_BYTES,
 };
@@ -51,10 +51,74 @@ where
     }
     let mut payload = vec![0_u8; size];
     reader.read_exact(&mut payload).await?;
-    Ok(Some(decode_json_payload(
-        &payload,
-        DEFAULT_MAX_FRAME_BYTES,
-    )?))
+    let frame = decode_json_payload(&payload, DEFAULT_MAX_FRAME_BYTES)?;
+    validate_worker_inbound_frame(&frame)?;
+    Ok(Some(frame))
+}
+
+fn validate_worker_inbound_frame(frame: &WorkerFrame) -> Result<(), WorkerTransportError> {
+    match frame {
+        WorkerFrame::Request { .. } => Err(WorkerTransportError::Protocol(
+            "worker must not send request frames to the Runtime".into(),
+        )),
+        WorkerFrame::Response {
+            ok, result, error, ..
+        } => {
+            if *ok {
+                if error.is_some() {
+                    return Err(WorkerTransportError::Protocol(
+                        "successful worker response included an error".into(),
+                    ));
+                }
+                if result.is_none() {
+                    return Err(WorkerTransportError::Protocol(
+                        "successful worker response omitted result".into(),
+                    ));
+                }
+            } else {
+                if result.is_some() {
+                    return Err(WorkerTransportError::Protocol(
+                        "failed worker response included a result".into(),
+                    ));
+                }
+                if error.is_none() {
+                    return Err(WorkerTransportError::Protocol(
+                        "failed worker response omitted error".into(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+        WorkerFrame::Event { event, payload, .. } => {
+            if !known_worker_event(event) {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker sent unknown v1 event {event:?}"
+                )));
+            }
+            if !payload.is_object() {
+                return Err(WorkerTransportError::Protocol(format!(
+                    "worker event {event:?} payload must be an object"
+                )));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn known_worker_event(event: &str) -> bool {
+    matches!(
+        event,
+        worker::event::READY
+            | worker::event::EXECUTION_STARTED
+            | worker::event::STDOUT
+            | worker::event::STDERR
+            | worker::event::EXECUTE_RESULT
+            | worker::event::DISPLAY_DATA
+            | worker::event::ERROR
+            | worker::event::EXECUTION_FINISHED
+            | worker::event::HEARTBEAT
+            | worker::event::WORKER_WARNING
+    )
 }
 
 pub fn uv_worker_command(
@@ -88,7 +152,7 @@ pub fn uv_worker_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cokernel_protocol::worker::{method, WORKER_PROTOCOL_V1};
+    use cokernel_protocol::worker::{WorkerError, WORKER_PROTOCOL_V1};
     use serde_json::json;
     use tokio::io::duplex;
 
@@ -96,12 +160,11 @@ mod tests {
     async fn worker_frame_round_trip_uses_shared_length_prefix_codec() {
         let (mut left, mut right) = duplex(4096);
         let session_id = SessionId::new().to_string();
-        let expected = WorkerFrame::Request {
+        let expected = WorkerFrame::Event {
             protocol: WORKER_PROTOCOL_V1,
-            id: "req-1".into(),
             session_id,
-            method: method::PING.into(),
-            payload: json!({}),
+            event: worker::event::HEARTBEAT.into(),
+            payload: json!({"monotonic_ns": 1}),
         };
         let writer_frame = expected.clone();
         let writer = tokio::spawn(async move {
@@ -110,5 +173,87 @@ mod tests {
         let actual = read_worker_frame(&mut right).await.unwrap().unwrap();
         writer.await.unwrap();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn worker_cannot_send_runtime_request_frames() {
+        let frame = WorkerFrame::Request {
+            protocol: WORKER_PROTOCOL_V1,
+            id: "req-1".into(),
+            session_id: SessionId::new().to_string(),
+            method: worker::method::PING.into(),
+            payload: json!({}),
+        };
+        assert!(matches!(
+            validate_worker_inbound_frame(&frame),
+            Err(WorkerTransportError::Protocol(message))
+                if message.contains("must not send request frames")
+        ));
+    }
+
+    #[test]
+    fn worker_response_envelope_is_unambiguous() {
+        let session_id = SessionId::new().to_string();
+        let successful = WorkerFrame::Response {
+            protocol: WORKER_PROTOCOL_V1,
+            id: "ok".into(),
+            session_id: session_id.clone(),
+            ok: true,
+            result: Some(json!({"pong": true})),
+            error: None,
+        };
+        assert!(validate_worker_inbound_frame(&successful).is_ok());
+
+        let success_with_error = WorkerFrame::Response {
+            protocol: WORKER_PROTOCOL_V1,
+            id: "bad-success".into(),
+            session_id: session_id.clone(),
+            ok: true,
+            result: Some(json!({})),
+            error: Some(WorkerError {
+                code: "CK-TEST".into(),
+                summary: "unexpected".into(),
+                error_type: None,
+            }),
+        };
+        assert!(validate_worker_inbound_frame(&success_with_error).is_err());
+
+        let failed_without_error = WorkerFrame::Response {
+            protocol: WORKER_PROTOCOL_V1,
+            id: "bad-failure".into(),
+            session_id,
+            ok: false,
+            result: None,
+            error: None,
+        };
+        assert!(validate_worker_inbound_frame(&failed_without_error).is_err());
+    }
+
+    #[test]
+    fn worker_events_are_known_v1_object_payloads() {
+        let session_id = SessionId::new().to_string();
+        let heartbeat = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.clone(),
+            event: worker::event::HEARTBEAT.into(),
+            payload: json!({"monotonic_ns": 1}),
+        };
+        assert!(validate_worker_inbound_frame(&heartbeat).is_ok());
+
+        let unknown = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id: session_id.clone(),
+            event: "future-or-corrupt-event".into(),
+            payload: json!({}),
+        };
+        assert!(validate_worker_inbound_frame(&unknown).is_err());
+
+        let scalar_payload = WorkerFrame::Event {
+            protocol: WORKER_PROTOCOL_V1,
+            session_id,
+            event: worker::event::HEARTBEAT.into(),
+            payload: json!(1),
+        };
+        assert!(validate_worker_inbound_frame(&scalar_payload).is_err());
     }
 }
