@@ -128,12 +128,21 @@ async fn main() -> Result<()> {
         other => bail!("invalid identifier returned unexpected result: {other:?}"),
     }
 
+    // Caller-controlled inspection payloads must be bounded before they enter the
+    // Session actor. Otherwise write_worker_frame failure would be treated as a
+    // worker/runtime crash and unnecessarily destroy a healthy persistent Session.
+    let oversized_name = "x".repeat(cokernel_protocol::DEFAULT_MAX_FRAME_BYTES);
+    match session.get_variable(oversized_name).await {
+        Err(SessionInspectionError::InvalidRequest(_)) => {}
+        other => bail!("oversized inspection returned unexpected result: {other:?}"),
+    }
+
     let survivor = session
         .execute_cell(ExecutionOrigin::Mcp, "survivor", "x['answer'] + 1")
         .await?;
     let survivor_status = wait_operation(&mut events, survivor).await?;
     if survivor_status != OperationStatus::Succeeded {
-        bail!("worker did not survive rejected inspection: {survivor_status:?}");
+        bail!("worker did not survive rejected inspection input: {survivor_status:?}");
     }
 
     session.stop().await?;
