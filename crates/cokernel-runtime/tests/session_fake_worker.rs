@@ -289,10 +289,10 @@ async fn startup_rejects_worker_missing_required_handshake_capability() -> Resul
     let project = project(&temp.0.join("bad-handshake"))?;
     let supervisor = supervisor(&temp, Duration::from_secs(3))?;
 
-    let error = supervisor
-        .ensure_primary(&project, NotebookId::new())
-        .await
-        .expect_err("worker missing get_variable capability must not start");
+    let error = match supervisor.ensure_primary(&project, NotebookId::new()).await {
+        Ok(_) => anyhow::bail!("worker missing get_variable capability unexpectedly started"),
+        Err(error) => error,
+    };
     assert!(matches!(error, SessionError::WorkerTransport(_)));
     assert!(supervisor.list().await.is_empty());
     Ok(())
@@ -304,10 +304,10 @@ async fn startup_rejects_ready_pid_that_disagrees_with_unix_peer_credentials() -
     let project = project(&temp.0.join("bad-ready-pid"))?;
     let supervisor = supervisor(&temp, Duration::from_secs(3))?;
 
-    let error = supervisor
-        .ensure_primary(&project, NotebookId::new())
-        .await
-        .expect_err("ready pid mismatch must not start a Session");
+    let error = match supervisor.ensure_primary(&project, NotebookId::new()).await {
+        Ok(_) => anyhow::bail!("ready pid mismatch unexpectedly started a Session"),
+        Err(error) => error,
+    };
     assert!(matches!(error, SessionError::InvalidReady(_)));
     assert!(supervisor.list().await.is_empty());
     Ok(())
