@@ -88,6 +88,8 @@ pub enum SessionError {
 pub enum SessionInspectionError {
     #[error("session inspection channel is closed")]
     CommandChannelClosed,
+    #[error("session inspection request is invalid: {0}")]
+    InvalidRequest(String),
     #[error("worker inspection is unavailable: {0}")]
     Unavailable(String),
     #[error("worker rejected inspection request ({code}): {summary}")]
@@ -257,6 +259,23 @@ fn validate_variable_value_result(
     Ok(value)
 }
 
+fn validate_inspection_request_frame(
+    session_id: SessionId,
+    method: &'static str,
+    payload: &Value,
+) -> Result<(), SessionInspectionError> {
+    let frame = WorkerFrame::Request {
+        protocol: WORKER_PROTOCOL_V1,
+        id: format!("inspect-{}", OperationId::new()),
+        session_id: session_id.to_string(),
+        method: method.into(),
+        payload: payload.clone(),
+    };
+    cokernel_protocol::encode_json_frame(&frame, cokernel_protocol::DEFAULT_MAX_FRAME_BYTES)
+        .map(|_| ())
+        .map_err(|error| SessionInspectionError::InvalidRequest(error.to_string()))
+}
+
 struct InspectionRequest {
     method: &'static str,
     payload: Value,
@@ -390,6 +409,7 @@ impl SessionHandle {
         method: &'static str,
         payload: Value,
     ) -> Result<Value, SessionInspectionError> {
+        validate_inspection_request_frame(self.session_id, method, &payload)?;
         let (response, receiver) = oneshot::channel();
         self.inspection_tx
             .send(InspectionRequest {
@@ -486,6 +506,27 @@ mod request_frame_tests {
                 cokernel_protocol::FrameError::TooLarge(_)
             ))
         ));
+    }
+
+    #[test]
+    fn inspection_request_preflight_accepts_small_frame() {
+        assert!(validate_inspection_request_frame(
+            SessionId::new(),
+            worker::method::GET_VARIABLE,
+            &json!({"name": "x"}),
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn inspection_request_preflight_rejects_oversized_frame() {
+        let error = validate_inspection_request_frame(
+            SessionId::new(),
+            worker::method::GET_VARIABLE,
+            &json!({"name": "x".repeat(cokernel_protocol::DEFAULT_MAX_FRAME_BYTES)}),
+        )
+        .unwrap_err();
+        assert!(matches!(error, SessionInspectionError::InvalidRequest(_)));
     }
 }
 
