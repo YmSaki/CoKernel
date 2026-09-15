@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use cokernel_domain::{FailureRecord, FailureTrigger, NotebookId, Project, ProjectId, SessionState};
+use cokernel_domain::{
+    ExecutionOrigin, FailureRecord, FailureTrigger, NotebookId, OperationId, OperationStatus,
+    Project, ProjectId, SessionState,
+};
 use cokernel_runtime::session::{
     SessionError, SessionEvent, SessionHandle, SessionSupervisor, SessionSupervisorConfig,
 };
@@ -93,6 +96,30 @@ async fn wait_failure(
     })
     .await
     .context("timed out waiting for Session Failure")?
+}
+
+async fn wait_operation_finished(
+    events: &mut broadcast::Receiver<SessionEvent>,
+    operation_id: OperationId,
+) -> Result<OperationStatus> {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            match events.recv().await {
+                Ok(SessionEvent::OperationFinished {
+                    operation_id: observed,
+                    status,
+                    ..
+                }) if observed == operation_id => return Ok(status),
+                Ok(_) => {}
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => {
+                    anyhow::bail!("Session event stream closed before OperationFinished")
+                }
+            }
+        }
+    })
+    .await
+    .with_context(|| format!("timed out waiting for operation {operation_id} to finish"))?
 }
 
 async fn wait_state(session: &SessionHandle, expected: SessionState) -> Result<()> {
@@ -285,6 +312,163 @@ async fn environment_stale_marks_only_matching_live_project_and_does_not_replace
     let same_primary = supervisor.ensure_primary(&project_a, notebook_a).await?;
     assert_eq!(same_primary.session_id(), session_a.session_id());
     assert_eq!(same_primary.state(), SessionState::StaleEnvironment);
+
+    session_a.stop().await?;
+    session_b.stop().await?;
+    wait_state(&session_a, SessionState::Stopped).await?;
+    wait_state(&session_b, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn human_and_mcp_execution_requests_complete_in_fifo_order() -> Result<()> {
+    let temp = TempWorkspace::new("fifo")?;
+    let project = project(&temp.0.join("execute-fifo"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let session = supervisor
+        .ensure_primary(&project, NotebookId::new())
+        .await?;
+    let mut events = session.subscribe();
+
+    let first = session
+        .execute_cell(ExecutionOrigin::Human, "human-cell", "sleep:0.5")
+        .await?;
+    wait_state(&session, SessionState::Executing).await?;
+    let second = session
+        .execute_cell(ExecutionOrigin::Mcp, "mcp-cell", "sleep:0.0")
+        .await?;
+
+    assert_eq!(session.snapshot().queue_depth, 1);
+    assert_eq!(
+        wait_operation_finished(&mut events, first).await?,
+        OperationStatus::Succeeded
+    );
+    assert_eq!(
+        wait_operation_finished(&mut events, second).await?,
+        OperationStatus::Succeeded
+    );
+    wait_state(&session, SessionState::Idle).await?;
+
+    session.stop().await?;
+    wait_state(&session, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn interrupt_finishes_active_operation_and_same_worker_survives() -> Result<()> {
+    let temp = TempWorkspace::new("interrupt")?;
+    let project = project(&temp.0.join("execute-interrupt"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let session = supervisor
+        .ensure_primary(&project, NotebookId::new())
+        .await?;
+    let mut events = session.subscribe();
+
+    let interrupted = session
+        .execute_cell(ExecutionOrigin::Human, "blocking-cell", "sleep:2.0")
+        .await?;
+    wait_state(&session, SessionState::Executing).await?;
+    session.interrupt().await?;
+    assert_eq!(
+        wait_operation_finished(&mut events, interrupted).await?,
+        OperationStatus::Interrupted
+    );
+    wait_state(&session, SessionState::Idle).await?;
+
+    let survivor = session
+        .execute_cell(ExecutionOrigin::Human, "survivor-cell", "sleep:0.0")
+        .await?;
+    assert_eq!(
+        wait_operation_finished(&mut events, survivor).await?,
+        OperationStatus::Succeeded
+    );
+    assert_eq!(session.state(), SessionState::Idle);
+
+    session.stop().await?;
+    wait_state(&session, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn forced_worker_exit_correlates_failure_and_other_session_survives() -> Result<()> {
+    let temp = TempWorkspace::new("crash")?;
+    let crash_project = project(&temp.0.join("execute-crash"))?;
+    let survivor_project = project(&temp.0.join("execute-survivor"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let crashed = supervisor
+        .ensure_primary(&crash_project, NotebookId::new())
+        .await?;
+    let survivor = supervisor
+        .ensure_primary(&survivor_project, NotebookId::new())
+        .await?;
+    let mut crash_events = crashed.subscribe();
+    let mut survivor_events = survivor.subscribe();
+
+    let crashing_operation = crashed
+        .execute_cell(ExecutionOrigin::Human, "crash-cell", "crash")
+        .await?;
+    let record = wait_failure(&mut crash_events).await?;
+
+    assert_eq!(crashed.state(), SessionState::Crashed);
+    assert_eq!(record.session_id, Some(crashed.session_id()));
+    assert_eq!(record.operation_id, Some(crashing_operation));
+    assert_eq!(record.exit_code, Some(23));
+    assert!(matches!(
+        record
+            .runtime_event_context
+            .as_ref()
+            .map(|context| context.trigger),
+        Some(FailureTrigger::ProcessExit | FailureTrigger::WorkerDisconnected)
+    ));
+
+    let survivor_operation = survivor
+        .execute_cell(ExecutionOrigin::Human, "survivor-cell", "sleep:0.0")
+        .await?;
+    assert_eq!(
+        wait_operation_finished(&mut survivor_events, survivor_operation).await?,
+        OperationStatus::Succeeded
+    );
+    assert_eq!(survivor.state(), SessionState::Idle);
+
+    survivor.stop().await?;
+    wait_state(&survivor, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn independent_sessions_execute_concurrently() -> Result<()> {
+    let temp = TempWorkspace::new("parallel")?;
+    let project_a = project(&temp.0.join("execute-parallel-a"))?;
+    let project_b = project(&temp.0.join("execute-parallel-b"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let session_a = supervisor
+        .ensure_primary(&project_a, NotebookId::new())
+        .await?;
+    let session_b = supervisor
+        .ensure_primary(&project_b, NotebookId::new())
+        .await?;
+    let mut events_a = session_a.subscribe();
+    let mut events_b = session_b.subscribe();
+
+    let operation_a = session_a
+        .execute_cell(ExecutionOrigin::Human, "slow-cell", "sleep:0.8")
+        .await?;
+    wait_state(&session_a, SessionState::Executing).await?;
+    let operation_b = session_b
+        .execute_cell(ExecutionOrigin::Mcp, "fast-cell", "sleep:0.05")
+        .await?;
+
+    assert_eq!(
+        wait_operation_finished(&mut events_b, operation_b).await?,
+        OperationStatus::Succeeded
+    );
+    assert_eq!(session_b.state(), SessionState::Idle);
+    assert_eq!(session_a.state(), SessionState::Executing);
+    assert_eq!(
+        wait_operation_finished(&mut events_a, operation_a).await?,
+        OperationStatus::Succeeded
+    );
+    wait_state(&session_a, SessionState::Idle).await?;
 
     session_a.stop().await?;
     session_b.stop().await?;
