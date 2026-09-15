@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
         .execute_cell(
             ExecutionOrigin::Human,
             "seed",
-            "x = {'answer': 42}\nclass Secret: pass\nsecret = Secret()",
+            "x = {'answer': 42}\nnone_value = None\nclass Secret: pass\nsecret = Secret()",
         )
         .await?;
     let seed_status = wait_operation(&mut events, seed).await?;
@@ -86,6 +86,16 @@ async fn main() -> Result<()> {
     if !x.supported || x.type_module != "builtins" || x.type_name != "dict" {
         bail!("unexpected x summary: {x:?}");
     }
+    let none_summary = variables
+        .iter()
+        .find(|variable| variable.name == "none_value")
+        .context("list_variables did not return none_value")?;
+    if !none_summary.supported
+        || none_summary.type_module != "builtins"
+        || none_summary.type_name != "NoneType"
+    {
+        bail!("unexpected none_value summary: {none_summary:?}");
+    }
     let secret = variables
         .iter()
         .find(|variable| variable.name == "secret")
@@ -97,6 +107,15 @@ async fn main() -> Result<()> {
     let x_value = session.get_variable("x").await?;
     if !x_value.supported || x_value.value != Some(serde_json::json!({"answer": 42})) {
         bail!("unexpected x value: {x_value:?}");
+    }
+
+    // Serde maps JSON null to Option::None. The supported bit distinguishes a
+    // valid Python None from an unsupported value; Runtime validation separately
+    // requires the raw `value` field to be present so omission cannot masquerade
+    // as Python None.
+    let none_value = session.get_variable("none_value").await?;
+    if !none_value.supported || none_value.value.is_some() || none_value.reason.is_some() {
+        bail!("unexpected supported None value: {none_value:?}");
     }
 
     let secret_value = session.get_variable("secret").await?;
