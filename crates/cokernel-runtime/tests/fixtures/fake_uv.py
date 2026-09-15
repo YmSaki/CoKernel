@@ -126,18 +126,26 @@ def handle_execute(
         {"operation_id": operation_id},
     )
 
-    if source == "crash":
-        os._exit(23)
-
+    crash_after_delay = None
     delay = 0.0
-    if source.startswith("sleep:"):
+    if source == "crash":
+        crash_after_delay = 0.0
+    elif source.startswith("crash_after:"):
+        crash_after_delay = float(source.split(":", 1)[1])
+    elif source.startswith("sleep:"):
         delay = float(source.split(":", 1)[1])
+    if crash_after_delay is not None:
+        delay = crash_after_delay
+
     deadline = time.monotonic() + delay
     heartbeat_sequence = 1
     while time.monotonic() < deadline and not interrupted:
         send_heartbeat(sock, session_id, heartbeat_sequence)
         heartbeat_sequence += 1
         time.sleep(min(0.025, max(0.0, deadline - time.monotonic())))
+
+    if crash_after_delay is not None:
+        os._exit(23)
 
     execution_count += 1
     finish_execute(
