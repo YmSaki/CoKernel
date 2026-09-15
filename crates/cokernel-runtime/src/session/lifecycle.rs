@@ -63,7 +63,7 @@ async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
 }
 
 async fn record_crash(context: &SessionActorContext, child: &mut Child, error: SessionError) {
-    let detail = error.to_string();
+    let detail = truncate_failure_detail(&error.to_string());
     let runtime_event_context = cokernel_domain::RuntimeFailureContext {
         trigger: failure_trigger(&error),
         detail: Some(detail.clone()),
@@ -99,7 +99,10 @@ async fn record_crash(context: &SessionActorContext, child: &mut Child, error: S
             evidence.linux_oom_evidence.as_ref(),
         )
     };
-    let mut record = failure_record(
+    if !detail.is_empty() {
+        append_failure_detail(&mut context.stderr_tail.lock().await, &detail);
+    }
+    let record = failure_record(
         context,
         status.as_ref().and_then(ExitStatus::code),
         status.as_ref().and_then(ExitStatusExt::signal),
@@ -108,12 +111,6 @@ async fn record_crash(context: &SessionActorContext, child: &mut Child, error: S
         evidence,
     )
     .await;
-    if !detail.is_empty() {
-        if !record.last_stderr.is_empty() {
-            record.last_stderr.push('\n');
-        }
-        record.last_stderr.push_str(&detail);
-    }
     finish_current_operation(context, OperationStatus::Failed);
     set_state(context, SessionState::Crashed);
     let _ = context.events.send(SessionEvent::Failure { record });
@@ -168,6 +165,7 @@ struct FailureEvidenceSnapshot {
 
 const RECENT_SESSION_EVENT_CAPACITY: usize = 64;
 const RECENT_SESSION_EVENT_DETAIL_CHARS: usize = 160;
+const FAILURE_DETAIL_CHARS: usize = 2_048;
 
 fn session_event_tails(
 ) -> &'static StdMutex<HashMap<u32, std::collections::VecDeque<cokernel_domain::SessionEvidenceEvent>>>
@@ -236,6 +234,28 @@ fn truncate_session_evidence_detail(value: &str) -> String {
         .collect::<String>();
     truncated.push('…');
     truncated
+}
+
+fn truncate_failure_detail(value: &str) -> String {
+    if value.chars().count() <= FAILURE_DETAIL_CHARS {
+        return value.to_owned();
+    }
+    let mut truncated = value
+        .chars()
+        .take(FAILURE_DETAIL_CHARS.saturating_sub(1))
+        .collect::<String>();
+    truncated.push('…');
+    truncated
+}
+
+fn append_failure_detail(tail: &mut ByteTail, detail: &str) {
+    if detail.is_empty() {
+        return;
+    }
+    if !tail.bytes.is_empty() {
+        tail.push(b"\n");
+    }
+    tail.push(detail.as_bytes());
 }
 
 fn oom_baselines() -> &'static StdMutex<HashMap<u32, cokernel_domain::LinuxOomEvidence>> {
@@ -609,5 +629,21 @@ mod failure_evidence_tests {
                 .as_ref()
                 .is_none_or(|detail| detail.chars().count() <= RECENT_SESSION_EVENT_DETAIL_CHARS)
         }));
+    }
+
+    #[test]
+    fn failure_detail_is_unicode_safe_and_bounded() {
+        let detail = truncate_failure_detail(&"界".repeat(FAILURE_DETAIL_CHARS + 20));
+        assert_eq!(detail.chars().count(), FAILURE_DETAIL_CHARS);
+        assert!(detail.ends_with('…'));
+    }
+
+    #[test]
+    fn appended_failure_detail_stays_within_diagnostic_tail_bound() {
+        let mut tail = ByteTail::new(32);
+        tail.push(b"existing-stderr");
+        append_failure_detail(&mut tail, &"x".repeat(128));
+        assert!(tail.bytes.len() <= 32);
+        assert_eq!(tail.text_lossy(), "x".repeat(32));
     }
 }
