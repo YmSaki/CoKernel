@@ -71,7 +71,7 @@ def send_frame(sock, message):
 
 socket_path = arg_after("--socket")
 session_id = arg_after("--session-id")
-mode = os.path.basename(arg_after("--with-editable"))
+mode = os.path.basename(arg_after("--project"))
 
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 sock.connect(socket_path)
@@ -124,6 +124,21 @@ send_frame(
 
 if mode == "heartbeat-timeout":
     time.sleep(30)
+elif mode == "healthy":
+    sequence = 1
+    while True:
+        send_frame(
+            sock,
+            {
+                "protocol": 1,
+                "type": "event",
+                "session_id": session_id,
+                "event": "heartbeat",
+                "payload": {"monotonic_ns": sequence},
+            },
+        )
+        sequence += 1
+        time.sleep(0.05)
 elif mode == "protocol-violation":
     # Give the Rust caller time to subscribe after ensure_primary returns.
     time.sleep(0.35)
@@ -156,7 +171,11 @@ fn project(root: &Path) -> Result<Project> {
     fs::create_dir_all(root)?;
     Ok(Project {
         project_id: ProjectId::new(),
-        name: "fake-worker-test".into(),
+        name: root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("fake-worker-test")
+            .to_owned(),
         root_path: root.to_string_lossy().into_owned(),
         environment_generation: 1,
     })
@@ -164,11 +183,11 @@ fn project(root: &Path) -> Result<Project> {
 
 fn supervisor(
     temp: &TempWorkspace,
-    mode: &str,
     heartbeat_timeout: Duration,
 ) -> Result<SessionSupervisor> {
     let fake_uv = write_fake_uv(&temp.0)?;
-    let mut config = SessionSupervisorConfig::development(mode, temp.0.join("sockets"));
+    let mut config =
+        SessionSupervisorConfig::development("fake-worker-package", temp.0.join("sockets"));
     config.uv_executable = fake_uv;
     config.startup_timeout = Duration::from_secs(2);
     config.shutdown_timeout = Duration::from_millis(200);
@@ -198,17 +217,23 @@ async fn wait_failure(
 #[tokio::test]
 async fn heartbeat_timeout_crashes_only_the_stalled_session_with_failure_evidence() -> Result<()> {
     let temp = TempWorkspace::new("heartbeat")?;
-    let project = project(&temp.0.join("project"))?;
-    let supervisor = supervisor(&temp, "heartbeat-timeout", Duration::from_millis(350))?;
-    let session = supervisor
-        .ensure_primary(&project, NotebookId::new())
+    let healthy_project = project(&temp.0.join("healthy"))?;
+    let stalled_project = project(&temp.0.join("heartbeat-timeout"))?;
+    let supervisor = supervisor(&temp, Duration::from_millis(350))?;
+
+    let healthy = supervisor
+        .ensure_primary(&healthy_project, NotebookId::new())
         .await?;
-    let mut events = session.subscribe();
+    let stalled = supervisor
+        .ensure_primary(&stalled_project, NotebookId::new())
+        .await?;
+    let mut events = stalled.subscribe();
 
     let record = wait_failure(&mut events).await?;
 
-    assert_eq!(session.state(), SessionState::Crashed);
-    assert_eq!(record.session_id, Some(session.session_id()));
+    assert_eq!(stalled.state(), SessionState::Crashed);
+    assert_eq!(healthy.state(), SessionState::Idle);
+    assert_eq!(record.session_id, Some(stalled.session_id()));
     assert_eq!(record.operation_id, None);
     assert_eq!(
         record
@@ -225,8 +250,8 @@ async fn heartbeat_timeout_crashes_only_the_stalled_session_with_failure_evidenc
 #[tokio::test]
 async fn unexpected_idle_transaction_frame_fails_closed_as_worker_protocol_crash() -> Result<()> {
     let temp = TempWorkspace::new("protocol")?;
-    let project = project(&temp.0.join("project"))?;
-    let supervisor = supervisor(&temp, "protocol-violation", Duration::from_secs(3))?;
+    let project = project(&temp.0.join("protocol-violation"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
     let session = supervisor
         .ensure_primary(&project, NotebookId::new())
         .await?;
