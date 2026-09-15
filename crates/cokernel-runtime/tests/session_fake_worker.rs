@@ -8,10 +8,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use cokernel_domain::{FailureRecord, FailureTrigger, NotebookId, Project, ProjectId, SessionState};
 use cokernel_runtime::session::{
-    SessionError, SessionEvent, SessionSupervisor, SessionSupervisorConfig,
+    SessionError, SessionEvent, SessionHandle, SessionSupervisor, SessionSupervisorConfig,
 };
 use tokio::sync::broadcast;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 
 const FAKE_UV: &str = include_str!("fixtures/fake_uv.py");
 
@@ -93,6 +93,26 @@ async fn wait_failure(
     })
     .await
     .context("timed out waiting for Session Failure")?
+}
+
+async fn wait_state(session: &SessionHandle, expected: SessionState) -> Result<()> {
+    timeout(Duration::from_secs(3), async {
+        loop {
+            if session.state() == expected {
+                return;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .with_context(|| {
+        format!(
+            "timed out waiting for Session {} to reach {expected:?}; current state is {:?}",
+            session.session_id(),
+            session.state()
+        )
+    })?;
+    Ok(())
 }
 
 #[tokio::test]
@@ -180,5 +200,95 @@ async fn startup_rejects_ready_pid_that_disagrees_with_unix_peer_credentials() -
     };
     assert!(matches!(error, SessionError::InvalidReady(_)));
     assert!(supervisor.list().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn cooperative_stop_reaches_stopped_and_clears_queue_depth() -> Result<()> {
+    let temp = TempWorkspace::new("stop")?;
+    let project = project(&temp.0.join("lifecycle-stop"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let session = supervisor
+        .ensure_primary(&project, NotebookId::new())
+        .await?;
+    let mut events = session.subscribe();
+
+    session.stop().await?;
+    wait_state(&session, SessionState::Stopped).await?;
+
+    assert_eq!(session.snapshot().queue_depth, 0);
+    while let Ok(event) = events.try_recv() {
+        assert!(
+            !matches!(event, SessionEvent::Failure { .. }),
+            "cooperative stop emitted a failure record"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn explicit_restart_preserves_logical_session_and_adopts_environment_generation() -> Result<()> {
+    let temp = TempWorkspace::new("restart")?;
+    let project = project(&temp.0.join("lifecycle-restart"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let notebook_id = NotebookId::new();
+    let first = supervisor.ensure_primary(&project, notebook_id).await?;
+    let first_snapshot = first.snapshot();
+    let updated_project = Project {
+        project_id: project.project_id,
+        name: project.name.clone(),
+        root_path: project.root_path.clone(),
+        environment_generation: 2,
+    };
+
+    let restarted = supervisor
+        .restart_primary(&updated_project, notebook_id)
+        .await?;
+    let restarted_snapshot = restarted.snapshot();
+
+    assert_eq!(first.state(), SessionState::Stopped);
+    assert_eq!(restarted.session_id(), first.session_id());
+    assert_eq!(
+        restarted_snapshot.worker_generation,
+        first_snapshot.worker_generation + 1
+    );
+    assert_eq!(restarted_snapshot.started_at, first_snapshot.started_at);
+    assert_eq!(restarted_snapshot.environment_generation, 2);
+    assert_eq!(restarted.state(), SessionState::Idle);
+    let listed = supervisor.list().await;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].session_id, restarted.session_id());
+    assert_eq!(listed[0].worker_generation, restarted_snapshot.worker_generation);
+
+    restarted.stop().await?;
+    wait_state(&restarted, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn environment_stale_marks_only_matching_live_project_and_does_not_replace_primary() -> Result<()> {
+    let temp = TempWorkspace::new("stale")?;
+    let project_a = project(&temp.0.join("lifecycle-stale-a"))?;
+    let project_b = project(&temp.0.join("lifecycle-stale-b"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let notebook_a = NotebookId::new();
+    let notebook_b = NotebookId::new();
+    let session_a = supervisor.ensure_primary(&project_a, notebook_a).await?;
+    let session_b = supervisor.ensure_primary(&project_b, notebook_b).await?;
+
+    supervisor
+        .mark_project_environment_stale(project_a.project_id, 2)
+        .await;
+    wait_state(&session_a, SessionState::StaleEnvironment).await?;
+
+    assert_eq!(session_b.state(), SessionState::Idle);
+    let same_primary = supervisor.ensure_primary(&project_a, notebook_a).await?;
+    assert_eq!(same_primary.session_id(), session_a.session_id());
+    assert_eq!(same_primary.state(), SessionState::StaleEnvironment);
+
+    session_a.stop().await?;
+    session_b.stop().await?;
+    wait_state(&session_a, SessionState::Stopped).await?;
+    wait_state(&session_b, SessionState::Stopped).await?;
     Ok(())
 }
