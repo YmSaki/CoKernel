@@ -21,28 +21,28 @@ Purpose: this file is the executable work-management ledger for `cokernel-v1`. R
 
 ## Current progress
 
-- Total tracked work items: **201**
+- Total tracked work items: **202**
 - DONE: **43**
-- READY_VERIFY: **21**
+- READY_VERIFY: **22**
 - IN_PROGRESS: **0**
 - TODO: **0**
 - BLOCKED: **137**
-- Ledger DONE ratio (`DONE / total`, equal-weight rows, not effort or product completeness): **21.4%**
+- Ledger DONE ratio (`DONE / total`, equal-weight rows, not effort or product completeness): **21.3%**
 - Phase gates completed: **3 / 12 phases = 25.0%** (Phase 0, 1, 2; inherited closure records)
 - Active Phase: **Phase 3 / #29**
-- Phase 3: **17 / 38 implementation rows DONE, 21 READY_VERIFY; worker pytest + protocol fixtures DONE; 13 Rust/WSL/Windows verification/acceptance/gate rows BLOCKED**.
+- Phase 3: **17 / 39 implementation rows DONE, 22 READY_VERIFY; worker pytest + protocol fixtures DONE; 13 Rust/WSL/Windows verification/acceptance/gate rows BLOCKED**.
 
-The worker-side independent verification slice is now exhausted in this executor: the exact-source worker suite passed 137/137 and the real AF_UNIX source subprocess smoke passed. The remaining Phase 3 critical path requires a Rust-equipped Linux/WSL checkout and, for Windows-side checks, a Windows/WSL target. The original 24 DONE rows are inherited from #27/#28 closure records.
+The worker-side implementation slice #39 is closed. The remaining Phase 3 critical path requires Runtime/Supervisor verification on a Rust-equipped Linux/WSL checkout and, for Windows-side checks, a Windows/WSL target. Runtime-side inspection revalidation discovered during this phase is tracked separately as `P3-INSP-05` rather than hidden inside the already-complete worker inspection rows. The original 24 DONE rows are inherited from #27/#28 closure records.
 
 ## Execution order
 
-1. `P3-V-01` .. `P3-V-04` — run cargo fmt/check/clippy/test on a Rust-equipped Linux/WSL checkout.
-2. `P3-V-07` .. `P3-V-10` — run canonical `check.sh`, applicable `check.ps1`, and real Runtime Session Supervisor/inspection smokes. `check-worker.sh` now includes WBS/fixture checks and a source-tree AF_UNIX smoke before its mandatory uv path.
+1. `P3-V-01` .. `P3-V-04` — run cargo fmt/check/clippy/test on a Rust-equipped Linux/WSL checkout; this also verifies `P3-INSP-05` and the other READY_VERIFY Runtime/Supervisor rows.
+2. `P3-V-07` .. `P3-V-10` — run canonical `check.sh`, applicable `check.ps1`, and real Runtime Session Supervisor/inspection smokes. `check-worker.sh` includes WBS/fixture checks and a source-tree AF_UNIX smoke before its mandatory uv path.
 3. `P3-A-01` .. `P3-A-04` — persistent-state, A/B concurrency, crash containment and hostile-inspection acceptance.
 4. A failed test reopens its owning implementation row; fix it and rerun the affected tests in the same batch. No speculative re-audit loop and no gate bypass.
-5. `P3-GATE` — close #29 only after all acceptance evidence passes; then proceed to Phase 4 in numeric WBS order.
+5. `P3-GATE` — close #29 and #40 only after all acceptance evidence passes; then proceed to Phase 4 in numeric WBS order.
 
-Evidence: [E-WORKER-FULL](evidence/phase3-worker-full-e7b208f.md), [E-BATCH](evidence/phase3-worker-components-946d479.md), [E-FIX](evidence/phase3-protocol-fixtures-9a22667.md).
+Evidence: [E-WORKER-FULL](evidence/phase3-worker-full-e7b208f.md), [E-BATCH](evidence/phase3-worker-components-946d479.md), [E-FIX](evidence/phase3-protocol-fixtures-9a22667.md), [E-RUNTIME-INSP](evidence/phase3-runtime-inspection-51e50e5.md).
 
 ## Phase summary
 
@@ -50,7 +50,7 @@ Evidence: [E-WORKER-FULL](evidence/phase3-worker-full-e7b208f.md), [E-BATCH](evi
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | 0 | #27 | 8 | 8 | 0 | 0 | 0 | 0 | DONE |
 | 1-2 | #28 | 16 | 16 | 0 | 0 | 0 | 0 | DONE |
-| 3 | #29 | 53 | 19 | 21 | 0 | 0 | 13 | ACTIVE / ENV-BLOCKED |
+| 3 | #29 | 54 | 19 | 22 | 0 | 0 | 13 | ACTIVE / ENV-BLOCKED |
 | 4 | #30 | 14 | 0 | 0 | 0 | 0 | 14 | BLOCKED |
 | 5 | #31 | 13 | 0 | 0 | 0 | 0 | 13 | BLOCKED |
 | 6 | #32 | 11 | 0 | 0 | 0 | 0 | 11 | BLOCKED |
@@ -117,6 +117,7 @@ Umbrella #26 remains open until Phase 11 release acceptance closes.
 | P3-INSP-02 | Inspection | Implement get_variable | DONE | P3-INSP-01 | Returns bounded exact built-in safe values | E-BATCH: exact built-in, integer, identifier and rejection tests PASS |
 | P3-INSP-03 | Inspection | Reject hostile/custom object behavior | DONE | P3-INSP-01..02 | No repr/str/iter/getattr/operator hooks invoked | E-BATCH: identity-only dispatch; hostile/metaclass regressions PASS |
 | P3-INSP-04 | Inspection | Bound inspection depth/items/string/response size | DONE | P3-INSP-02 | Inspection cannot generate unbounded response | E-BATCH: complete get/list result budget and exact boundaries PASS |
+| P3-INSP-05 | Inspection / Runtime boundary | Revalidate worker inspection results fail-closed before exposing callers | READY_VERIFY | P3-INSP-01..04 | Runtime rejects malformed, duplicate, oversized or internally inconsistent list/get results and preserves explicit Python None semantics | 210559b + 616ccaad + 5bd0245; 8 Rust tests + WSL smoke assertions added; cargo Gate pending |
 | P3-SUP-01 | Supervisor | Own one worker process per Session | READY_VERIFY | P3-WRK-01 | Each Session has independent worker/process ownership | implemented baseline; Rust/WSL Gate pending |
 | P3-SUP-02 | Supervisor | Private listener/socket + ready handshake | READY_VERIFY | P3-SUP-01 | Runtime establishes and validates worker readiness | implemented baseline; Rust/WSL Gate pending |
 | P3-SUP-03 | Supervisor | Per-Session FIFO single-flight queue shared by callers | READY_VERIFY | P3-SUP-02 | Human/AI operations serialize in accepted order | implemented baseline; Rust/WSL Gate pending |
@@ -145,9 +146,9 @@ Umbrella #26 remains open until Phase 11 release acceptance closes.
 | P3-V-05 | Verification | worker pytest | DONE | P3-WRK-01..P3-LC-10 | all worker tests pass | E-WORKER-FULL: exact-source worker/tests 137/137 PASS; failures/errors/skips 0 |
 | P3-V-06 | Verification | protocol fixture validation | DONE | P3-WRK-01..P3-LC-10 | all fixtures pass | E-FIX: 5/5 PASS |
 | P3-V-07 | Verification | scripts/v1/check.sh | BLOCKED | P3-V-01..06 | canonical Linux/WSL local gate exits 0 | worker source preflight integrated; uv dependency sync + Rust Gate unavailable here |
-| P3-V-08 | Verification | scripts/v1/check.ps1 applicable checks | BLOCKED | P3-V-01..06 | canonical Windows-side checks exit 0 | No Windows/PowerShell/WSL execution target |
+| P3-V-08 | Verification | scripts/v1/check.ps1 applicable checks | BLOCKED | P3-V-01..06 | canonical Windows-side checks exit 0 | Windows gate now mirrors WBS/script/fixture/source diagnostics and requires mandatory WSL check.sh; no Windows target here |
 | P3-V-09 | Verification | Supervisor real-process/socket smoke | BLOCKED | P3-V-07 | start/handshake/queue/interrupt/restart/stop/crash paths pass | Rust/WSL Gate pending |
-| P3-V-10 | Verification | Inspection hostile-object smoke | BLOCKED | P3-V-07 | safe inspection passes against real worker | Runtime/WSL Gate pending; worker-only hostile corpus PASS |
+| P3-V-10 | Verification | Inspection hostile-object smoke | BLOCKED | P3-V-07 | safe inspection passes against real worker | Runtime validator + Python None assertion added; Rust/WSL Gate pending |
 | P3-A-01 | Acceptance | Persistent state proof: x=123 then x+1 == 124 | BLOCKED | P3-V-09 | returns 124 in same Session | Runtime Supervisor proof pending; worker proof is not substitute |
 | P3-A-02 | Acceptance | Parallel A/B Session proof | BLOCKED | P3-V-09 | actual overlap + isolated namespace/PID | Runtime Supervisor proof pending |
 | P3-A-03 | Acceptance | Crash containment proof | BLOCKED | P3-V-09 | kill A; B survives; A has FailureRecord | Runtime Supervisor proof pending |
