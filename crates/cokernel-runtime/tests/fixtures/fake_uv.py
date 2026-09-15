@@ -4,10 +4,14 @@
 import json
 import os
 import select
+import signal
 import socket
 import struct
 import sys
 import time
+
+
+interrupted = False
 
 
 def arg_after(flag: str) -> str:
@@ -35,27 +39,147 @@ def send_frame(sock: socket.socket, message: dict) -> None:
     sock.sendall(struct.pack(">I", len(payload)) + payload)
 
 
+def send_heartbeat(sock: socket.socket, session_id: str, sequence: int) -> None:
+    send_frame(
+        sock,
+        {
+            "protocol": 1,
+            "type": "event",
+            "session_id": session_id,
+            "event": "heartbeat",
+            "payload": {"monotonic_ns": sequence},
+        },
+    )
+
+
+def send_execute_event(
+    sock: socket.socket,
+    session_id: str,
+    event: str,
+    payload: dict,
+) -> None:
+    send_frame(
+        sock,
+        {
+            "protocol": 1,
+            "type": "event",
+            "session_id": session_id,
+            "event": event,
+            "payload": payload,
+        },
+    )
+
+
+def finish_execute(
+    sock: socket.socket,
+    session_id: str,
+    request_id: str,
+    operation_id: str,
+    status: str,
+    execution_count: int,
+) -> None:
+    terminal = {
+        "operation_id": operation_id,
+        "status": status,
+        "execution_count": execution_count,
+        "output_truncated": False,
+        "output_omitted_bytes": 0,
+        "output_truncation_reasons": [],
+    }
+    send_execute_event(
+        sock,
+        session_id,
+        "execution_finished",
+        {**terminal, "output_count": 0},
+    )
+    send_frame(
+        sock,
+        {
+            "protocol": 1,
+            "type": "response",
+            "id": request_id,
+            "session_id": session_id,
+            "ok": True,
+            "result": terminal,
+        },
+    )
+
+
+def handle_execute(
+    sock: socket.socket,
+    session_id: str,
+    request: dict,
+    execution_count: int,
+) -> int:
+    global interrupted
+    interrupted = False
+    request_id = request["id"]
+    payload = request["payload"]
+    operation_id = payload["operation_id"]
+    source = payload["source"]
+    assert request_id == operation_id
+
+    send_execute_event(
+        sock,
+        session_id,
+        "execution_started",
+        {"operation_id": operation_id},
+    )
+
+    if source == "crash":
+        os._exit(23)
+
+    delay = 0.0
+    if source.startswith("sleep:"):
+        delay = float(source.split(":", 1)[1])
+    deadline = time.monotonic() + delay
+    heartbeat_sequence = 1
+    while time.monotonic() < deadline and not interrupted:
+        send_heartbeat(sock, session_id, heartbeat_sequence)
+        heartbeat_sequence += 1
+        time.sleep(min(0.025, max(0.0, deadline - time.monotonic())))
+
+    execution_count += 1
+    finish_execute(
+        sock,
+        session_id,
+        request_id,
+        operation_id,
+        "FAILED" if interrupted else "SUCCEEDED",
+        execution_count,
+    )
+    return execution_count
+
+
+def handle_sigint(_signum: int, _frame: object) -> None:
+    global interrupted
+    interrupted = True
+
+
 def serve_cooperative(sock: socket.socket, session_id: str) -> None:
-    sequence = 1
+    execution_count = 0
+    heartbeat_sequence = 1
     while True:
         readable, _, _ = select.select([sock], [], [], 0.05)
         if readable:
             request = recv_frame(sock)
-            if request.get("method") == "shutdown":
+            method = request.get("method")
+            if method == "shutdown":
                 raise SystemExit(0)
-            raise RuntimeError(f"unsupported cooperative request: {request.get('method')!r}")
-        send_frame(
-            sock,
-            {
-                "protocol": 1,
-                "type": "event",
-                "session_id": session_id,
-                "event": "heartbeat",
-                "payload": {"monotonic_ns": sequence},
-            },
-        )
-        sequence += 1
+            if method == "execute":
+                execution_count = handle_execute(
+                    sock,
+                    session_id,
+                    request,
+                    execution_count,
+                )
+                continue
+            raise RuntimeError(f"unsupported cooperative request: {method!r}")
+        send_heartbeat(sock, session_id, heartbeat_sequence)
+        heartbeat_sequence += 1
 
+
+signal.signal(signal.SIGINT, handle_sigint)
 
 socket_path = arg_after("--socket")
 session_id = arg_after("--session-id")
@@ -121,7 +245,7 @@ send_frame(
 
 if mode in {"bad-handshake", "heartbeat-timeout"}:
     time.sleep(30)
-elif mode == "healthy" or mode.startswith("lifecycle"):
+elif mode == "healthy" or mode.startswith("lifecycle") or mode.startswith("execute"):
     serve_cooperative(sock, session_id)
 elif mode == "protocol-violation":
     # Give the Rust caller time to subscribe after ensure_primary returns.
