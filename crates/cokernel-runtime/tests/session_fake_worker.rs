@@ -7,7 +7,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use cokernel_domain::{FailureRecord, FailureTrigger, NotebookId, Project, ProjectId, SessionState};
-use cokernel_runtime::session::{SessionEvent, SessionSupervisor, SessionSupervisorConfig};
+use cokernel_runtime::session::{
+    SessionError, SessionEvent, SessionSupervisor, SessionSupervisorConfig,
+};
 use tokio::sync::broadcast;
 use tokio::time::timeout;
 
@@ -72,6 +74,7 @@ def send_frame(sock, message):
 socket_path = arg_after("--socket")
 session_id = arg_after("--session-id")
 mode = os.path.basename(arg_after("--project"))
+reported_pid = os.getpid() + 1 if mode == "bad-ready-pid" else os.getpid()
 
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 sock.connect(socket_path)
@@ -86,14 +89,28 @@ send_frame(
             "worker_version": "fake-1",
             "python_version": "fake-3",
             "ipython_version": "fake-9",
-            "pid": os.getpid(),
+            "pid": reported_pid,
             "heartbeat_interval_ms": 50,
         },
     },
 )
 
+if mode == "bad-ready-pid":
+    time.sleep(30)
+    raise SystemExit(0)
+
 handshake = recv_frame(sock)
 assert handshake["method"] == "handshake"
+capabilities = [
+    "execute",
+    "inspect_variables",
+    "get_variable",
+    "reset",
+    "shutdown",
+]
+if mode == "bad-handshake":
+    capabilities.remove("get_variable")
+
 send_frame(
     sock,
     {
@@ -105,13 +122,7 @@ send_frame(
         "result": {
             "protocol": 1,
             "worker_version": "fake-1",
-            "capabilities": [
-                "execute",
-                "inspect_variables",
-                "get_variable",
-                "reset",
-                "shutdown",
-            ],
+            "capabilities": capabilities,
             "heartbeat_interval_ms": 50,
             "output_limits": {
                 "max_event_bytes": 1024,
@@ -122,7 +133,7 @@ send_frame(
     },
 )
 
-if mode == "heartbeat-timeout":
+if mode in {"bad-handshake", "heartbeat-timeout"}:
     time.sleep(30)
 elif mode == "healthy":
     sequence = 1
@@ -269,5 +280,35 @@ async fn unexpected_idle_transaction_frame_fails_closed_as_worker_protocol_crash
             .map(|context| context.trigger),
         Some(FailureTrigger::WorkerProtocol)
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn startup_rejects_worker_missing_required_handshake_capability() -> Result<()> {
+    let temp = TempWorkspace::new("bad-handshake")?;
+    let project = project(&temp.0.join("bad-handshake"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+
+    let error = supervisor
+        .ensure_primary(&project, NotebookId::new())
+        .await
+        .expect_err("worker missing get_variable capability must not start");
+    assert!(matches!(error, SessionError::WorkerTransport(_)));
+    assert!(supervisor.list().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn startup_rejects_ready_pid_that_disagrees_with_unix_peer_credentials() -> Result<()> {
+    let temp = TempWorkspace::new("bad-ready-pid")?;
+    let project = project(&temp.0.join("bad-ready-pid"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+
+    let error = supervisor
+        .ensure_primary(&project, NotebookId::new())
+        .await
+        .expect_err("ready pid mismatch must not start a Session");
+    assert!(matches!(error, SessionError::InvalidReady(_)));
+    assert!(supervisor.list().await.is_empty());
     Ok(())
 }
