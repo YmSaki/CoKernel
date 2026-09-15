@@ -16,6 +16,7 @@ import IPython
 from .execution import ExecutionEngine
 from .inspection import InspectionError, get_variable, list_variables
 from .output_limits import OperationOutputBudget, OutputLimits, encode_json
+from .streaming import OutputInterruptGuard
 
 PROTOCOL_V1 = 1
 DEFAULT_MAX_FRAME_BYTES = 8 * 1024 * 1024
@@ -234,82 +235,60 @@ class WorkerLoop:
             raise WorkerProtocolError("execute.cell_id must be a string when present")
 
         self._send_event(sock, "execution_started", {"operation_id": operation_id})
-        outcome = self.engine.execute(source, cell_id=cell_id)
         sequence = 0
         budget = OperationOutputBudget(self.output_limits)
-
-        def output(
-            event: str,
-            data: dict[str, Any],
-            *,
-            source_omitted_bytes: int = 0,
-            source_reason: str | None = None,
-        ) -> None:
-            nonlocal sequence
-            next_sequence = sequence + 1
-            message = budget.prepare_event(
-                event,
-                {
-                    "operation_id": operation_id,
-                    "sequence": next_sequence,
-                    **data,
-                },
-                build_message=self._event_message,
-                source_omitted_bytes=source_omitted_bytes,
-                source_reason=source_reason,
-            )
-            if message is not None:
-                self._send_message(sock, message)
-                sequence = next_sequence
-
         output_error: str | None = None
-        try:
-            if outcome.stdout or outcome.stdout_truncated_bytes:
-                output(
-                    "stdout",
-                    {"text": outcome.stdout},
-                    source_omitted_bytes=outcome.stdout_truncated_bytes,
-                    source_reason="stream_capture_limit",
-                )
-            if outcome.stderr or outcome.stderr_truncated_bytes:
-                output(
-                    "stderr",
-                    {"text": outcome.stderr},
-                    source_omitted_bytes=outcome.stderr_truncated_bytes,
-                    source_reason="stream_capture_limit",
-                )
-            for display in outcome.displays:
-                output("display_data", asdict(display))
-            if outcome.final_result is not None:
-                output(
-                    "execute_result",
-                    {
-                        "execution_count": outcome.execution_count,
-                        **asdict(outcome.final_result),
-                    },
-                )
-            if outcome.error is not None:
-                output(
-                    "error",
-                    {
-                        "ename": outcome.error.name,
-                        "evalue": outcome.error.value,
-                        "traceback": outcome.error.traceback,
-                    },
-                )
-        except (TypeError, ValueError, OverflowError) as error:
-            output_error = _bounded_text(str(error), MAX_ERROR_SUMMARY_CHARS)
+        interrupts = OutputInterruptGuard()
+        truncated_streams: set[str] = set()
+
+        def output(event: str, data: dict[str, Any]) -> None:
+            nonlocal sequence, output_error
+            if output_error is not None:
+                return
+            with interrupts.atomic():
+                if event in truncated_streams:
+                    budget.omitted_bytes += len(data["text"].encode("utf-8"))
+                    return
+                try:
+                    message = budget.prepare_event(
+                        event,
+                        {"operation_id": operation_id, "sequence": sequence + 1, **data},
+                        build_message=self._event_message,
+                    )
+                    if message is not None:
+                        self._send_message(sock, message)
+                        sequence += 1
+                    if event in {"stdout", "stderr"} and (
+                        message is None or "truncation" in message["payload"]
+                    ):
+                        truncated_streams.add(event)
+                except (TypeError, ValueError, OverflowError):
+                    # Never render arbitrary user values while reporting their
+                    # serialization failure; remember one bounded diagnostic.
+                    output_error = "output is not representable by the worker JSON contract"
+
+        with interrupts:
+            outcome = self.engine.execute(source, cell_id=cell_id, output_sink=output)
+
+        # Streams/displays/results were already published in production order.
+        # Only source-side dropped bytes and the terminal exception remain.
+        omitted = outcome.stdout_truncated_bytes + outcome.stderr_truncated_bytes
+        if omitted:
+            budget.omitted_bytes += omitted
+            budget.reasons.add("stream_capture_limit")
+        if outcome.error is not None:
+            output(
+                "error",
+                {"ename": outcome.error.name, "evalue": outcome.error.value,
+                 "traceback": outcome.error.traceback},
+            )
+        if output_error is not None:
             sequence += 1
             self._send_event(
-                sock,
-                "error",
-                {
-                    "operation_id": operation_id,
-                    "sequence": sequence,
-                    "ename": "CoKernelOutputTransportError",
-                    "evalue": output_error,
-                    "traceback": [],
-                },
+                sock, "error",
+                {"operation_id": operation_id, "sequence": sequence,
+                 "ename": "CoKernelOutputTransportError", "evalue": output_error,
+                 "traceback": []},
             )
 
         status = (

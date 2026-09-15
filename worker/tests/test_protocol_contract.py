@@ -144,16 +144,20 @@ def test_stdout_stderr_events_are_bounded_and_lifecycle_count_matches() -> None:
         )
         frames = receive_response(client, "streams")
         outputs = [f for f in frames if f.get("event") in {"stdout", "stderr"}]
-        assert [f["event"] for f in outputs] == ["stdout", "stderr"]
-        assert [f["payload"]["sequence"] for f in outputs] == [1, 2]
+        assert outputs
+        assert {f["event"] for f in outputs} == {"stdout", "stderr"}
+        assert [f["payload"]["sequence"] for f in outputs] == list(range(1, len(outputs) + 1))
+        # Live streams are bounded chunks, not one buffered event per stream.
         for frame in outputs:
             assert len(json.dumps(frame, ensure_ascii=False, separators=(",", ":")).encode()) < 8 * 1024 * 1024
-            assert frame["payload"]["truncation"]["truncated"] is True
-            assert "stream_capture_limit" in frame["payload"]["truncation"]["reasons"]
+        for name, char in (("stdout", "o"), ("stderr", "e")):
+            text = "".join(f["payload"]["text"] for f in outputs if f["event"] == name)
+            assert text == char * (4 * 1024 * 1024)
         finished = next(f for f in frames if f.get("event") == "execution_finished")
-        assert finished["payload"]["output_count"] == 2
+        assert finished["payload"]["output_count"] == len(outputs)
         assert finished["payload"]["output_truncated"] is True
-        assert finished["payload"]["output_omitted_bytes"] > 0
+        assert finished["payload"]["output_omitted_bytes"] == 2 * (7000001 - 4 * 1024 * 1024)
+        assert "stream_capture_limit" in finished["payload"]["output_truncation_reasons"]
         response = frames[-1]
         assert response["result"]["output_truncation_reasons"] == finished["payload"]["output_truncation_reasons"]
     finally:

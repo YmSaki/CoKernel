@@ -10,6 +10,8 @@ from typing import Any
 from IPython.core.interactiveshell import ExecutionResult, InteractiveShell
 from IPython.utils.capture import RichOutput, capture_output
 
+from .streaming import OutputSink, StreamingCapture
+
 DEFAULT_STREAM_CAPTURE_BYTES = 4 * 1024 * 1024
 MAX_EXCEPTION_NAME_CHARS = 256
 
@@ -198,11 +200,22 @@ class ExecutionEngine:
             raise ValueError("max_stream_capture_bytes must be a non-negative integer")
         self.max_stream_capture_bytes = max_stream_capture_bytes
 
-    def execute(self, source: str, *, cell_id: str | None = None) -> ExecutionOutcome:
+    def execute(
+        self, source: str, *, cell_id: str | None = None,
+        output_sink: OutputSink | None = None,
+    ) -> ExecutionOutcome:
         """Execute one cell using IPython semantics and capture notebook output."""
 
-        stdout = _BoundedTextCapture(self.max_stream_capture_bytes)
-        stderr = _BoundedTextCapture(self.max_stream_capture_bytes)
+        live = (
+            StreamingCapture(
+                self.shell, output_sink,
+                max_stream_bytes=self.max_stream_capture_bytes,
+                normalize=_normalize_mime_data,
+            )
+            if output_sink is not None else None
+        )
+        stdout = live.stdout if live else _BoundedTextCapture(self.max_stream_capture_bytes)
+        stderr = live.stderr if live else _BoundedTextCapture(self.max_stream_capture_bytes)
         final_result: MimeBundle | None = None
         displayhook = self.shell.displayhook
         original_write_output_prompt = displayhook.write_output_prompt
@@ -215,6 +228,12 @@ class ExecutionEngine:
             format_dict: dict[str, Any], metadata: dict[str, Any] | None = None
         ) -> None:
             nonlocal final_result
+            if live is not None:
+                live.bundle(
+                    "execute_result", format_dict, metadata,
+                    execution_count=displayhook.prompt_count,
+                )
+                return
             # Keep formatter output raw until _outcome(). MIME normalization can
             # legitimately reject malformed custom formatter data (for example,
             # non-UTF-8 SVG bytes). Deferring normalization lets that failure be
@@ -245,7 +264,10 @@ class ExecutionEngine:
         self.shell.showsyntaxerror = lambda *args, **kwargs: None
 
         try:
-            with capture_output(stdout=False, stderr=False, display=True) as captured:
+            capture = live if live is not None else capture_output(
+                stdout=False, stderr=False, display=True
+            )
+            with capture as captured:
                 previous_stdout = sys.stdout
                 previous_stderr = sys.stderr
                 sys.stdout = stdout
@@ -267,7 +289,7 @@ class ExecutionEngine:
             self.shell.showtraceback = original_showtraceback
             self.shell.showsyntaxerror = original_showsyntaxerror
 
-        return self._outcome(
+        outcome = self._outcome(
             result,
             stdout.getvalue(),
             stderr.getvalue(),
@@ -276,6 +298,15 @@ class ExecutionEngine:
             stdout_truncated_bytes=stdout.truncated_bytes,
             stderr_truncated_bytes=stderr.truncated_bytes,
         )
+        if live is not None and live.normalization_error is not None:
+            error = live.normalization_error
+            name = "CoKernelOutputNormalizationError"
+            value = _safe_exception_value(error)
+            outcome.success = False
+            outcome.error = ExecutionError(
+                name, value, _safe_exception_traceback(error, name=name, value=value)
+            )
+        return outcome
 
     def reset(self) -> None:
         """Discard user namespace/history while keeping the worker process alive."""

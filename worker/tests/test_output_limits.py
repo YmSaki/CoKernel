@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import socket
 import threading
@@ -31,8 +31,28 @@ class FakeEngine:
     outcome: ExecutionOutcome
     shell: FakeShell = FakeShell()
 
-    def execute(self, source: str, *, cell_id: str | None = None) -> ExecutionOutcome:
-        return self.outcome
+    def execute(
+        self, source: str, *, cell_id: str | None = None, output_sink=None,
+    ) -> ExecutionOutcome:
+        if output_sink is None:
+            return self.outcome
+        for event in ("stdout", "stderr"):
+            text = getattr(self.outcome, event)
+            if text:
+                output_sink(event, {"text": text})
+        for display in self.outcome.displays:
+            output_sink("display_data", {
+                "data": display.data, "metadata": display.metadata,
+                "transient": display.transient,
+            })
+        if self.outcome.final_result is not None:
+            result = self.outcome.final_result
+            output_sink("execute_result", {
+                "execution_count": self.outcome.execution_count,
+                "data": result.data, "metadata": result.metadata,
+                "transient": result.transient,
+            })
+        return replace(self.outcome, stdout="", stderr="", displays=[], final_result=None)
 
     def reset(self) -> None:
         pass
@@ -136,7 +156,7 @@ def test_invalid_rich_output_fails_operation_with_complete_lifecycle():
     error = next(frame for frame in frames if frame.get("event") == "error")
     assert error["payload"]["ename"] == "CoKernelOutputTransportError"
     assert error["payload"]["evalue"] == (
-        "JSON integer is outside the Rust serde_json range"
+        "output is not representable by the worker JSON contract"
     )
 
     finished = next(
@@ -170,7 +190,7 @@ def test_non_string_rich_output_key_fails_without_wire_coercion():
 
     error = next(frame for frame in frames if frame.get("event") == "error")
     assert error["payload"]["ename"] == "CoKernelOutputTransportError"
-    assert error["payload"]["evalue"] == "JSON object keys must be exact strings"
+    assert error["payload"]["evalue"] == "output is not representable by the worker JSON contract"
 
     finished = next(
         frame for frame in frames if frame.get("event") == "execution_finished"
@@ -239,10 +259,11 @@ def test_engine_stream_capture_omission_is_exposed_when_no_text_remains():
         outcome(stdout="", stdout_truncated_bytes=1234),
         limits,
     )
-    stdout = next(frame for frame in frames if frame.get("event") == "stdout")
-    assert stdout["payload"]["text"] == ""
-    assert stdout["payload"]["truncation"]["omitted_bytes"] == 1234
-    assert stdout["payload"]["truncation"]["reasons"] == ["stream_capture_limit"]
+    assert not any(frame.get("event") == "stdout" for frame in frames)
+    finished = next(frame for frame in frames if frame.get("event") == "execution_finished")
+    assert finished["payload"]["output_truncated"] is True
+    assert finished["payload"]["output_omitted_bytes"] == 1234
+    assert finished["payload"]["output_truncation_reasons"] == ["stream_capture_limit"]
 
 
 def test_oversized_blob_mime_is_omitted_with_explicit_reason():
