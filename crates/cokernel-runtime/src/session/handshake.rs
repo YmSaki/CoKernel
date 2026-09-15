@@ -5,6 +5,11 @@ const REQUIRED_WORKER_CAPABILITIES: &[&str] = &[
     worker::method::RESET,
     worker::method::SHUTDOWN,
 ];
+const MAX_WORKER_VERSION_CHARS: usize = 256;
+const MAX_WORKER_CAPABILITIES: usize = 64;
+const MAX_WORKER_CAPABILITY_CHARS: usize = 128;
+const MAX_HANDSHAKE_ERROR_CODE_CHARS: usize = 128;
+const MAX_HANDSHAKE_ERROR_SUMMARY_CHARS: usize = 512;
 
 async fn perform_worker_handshake(
     stream: &mut tokio::net::UnixStream,
@@ -56,12 +61,35 @@ where
             WorkerFrame::Event { event, .. } if event == worker::event::HEARTBEAT => continue,
             other => {
                 return Err(WorkerTransportError::Protocol(format!(
-                    "unexpected worker frame during handshake: {other:?}"
+                    "unexpected worker frame during handshake: {}",
+                    worker_frame_descriptor(other)
                 ))
                 .into())
             }
         }
     }
+}
+
+fn worker_frame_descriptor(frame: &WorkerFrame) -> String {
+    match frame {
+        WorkerFrame::Request { id, method, .. } => {
+            format!("request id={id:?} method={method:?}")
+        }
+        WorkerFrame::Response { id, ok, .. } => format!("response id={id:?} ok={ok}"),
+        WorkerFrame::Event { event, .. } => format!("event {event:?}"),
+    }
+}
+
+fn bounded_handshake_text(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_owned();
+    }
+    let mut bounded = value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    bounded.push('…');
+    bounded
 }
 
 fn validate_worker_handshake(
@@ -91,7 +119,13 @@ fn validate_worker_handshake(
     if !*ok {
         let detail = error
             .as_ref()
-            .map(|error| format!("{}: {}", error.code, error.summary))
+            .map(|error| {
+                format!(
+                    "{}: {}",
+                    bounded_handshake_text(&error.code, MAX_HANDSHAKE_ERROR_CODE_CHARS),
+                    bounded_handshake_text(&error.summary, MAX_HANDSHAKE_ERROR_SUMMARY_CHARS)
+                )
+            })
             .unwrap_or_else(|| "without structured error".into());
         return Err(WorkerTransportError::Protocol(format!(
             "worker handshake failed {detail}"
@@ -118,13 +152,18 @@ fn validate_worker_handshake(
         )));
     }
 
-    result
+    let worker_version = result
         .get("worker_version")
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             WorkerTransportError::Protocol("worker handshake omitted worker version".into())
         })?;
+    if worker_version.chars().count() > MAX_WORKER_VERSION_CHARS {
+        return Err(WorkerTransportError::Protocol(
+            "worker handshake worker version exceeds maximum length".into(),
+        ));
+    }
 
     let heartbeat_interval_ms = result
         .get("heartbeat_interval_ms")
@@ -148,10 +187,36 @@ fn validate_worker_handshake(
         .ok_or_else(|| {
             WorkerTransportError::Protocol("worker handshake omitted capabilities".into())
         })?;
+    if capabilities.len() > MAX_WORKER_CAPABILITIES {
+        return Err(WorkerTransportError::Protocol(
+            "worker handshake capability list exceeds maximum item count".into(),
+        ));
+    }
+    let mut seen_capabilities = std::collections::HashSet::with_capacity(capabilities.len());
+    for capability in capabilities {
+        let capability = capability
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                WorkerTransportError::Protocol(
+                    "worker handshake capabilities must be non-empty strings".into(),
+                )
+            })?;
+        if capability.chars().count() > MAX_WORKER_CAPABILITY_CHARS {
+            return Err(WorkerTransportError::Protocol(
+                "worker handshake capability exceeds maximum length".into(),
+            ));
+        }
+        if !seen_capabilities.insert(capability) {
+            return Err(WorkerTransportError::Protocol(format!(
+                "worker handshake capability {capability:?} is duplicated"
+            )));
+        }
+    }
     for required in REQUIRED_WORKER_CAPABILITIES {
-        if !capabilities
+        if !seen_capabilities
             .iter()
-            .any(|capability| capability.as_str() == Some(*required))
+            .any(|capability| capability == required)
         {
             return Err(WorkerTransportError::Protocol(format!(
                 "worker handshake omitted required capability {required}"
@@ -180,11 +245,29 @@ fn validate_worker_handshake(
         .get("max_event_bytes")
         .and_then(Value::as_u64)
         .expect("validated output event limit");
+    let max_operation_bytes = output_limits
+        .get("max_operation_bytes")
+        .and_then(Value::as_u64)
+        .expect("validated output operation limit");
+    let max_blob_bytes = output_limits
+        .get("max_blob_bytes")
+        .and_then(Value::as_u64)
+        .expect("validated output blob limit");
     if max_event_bytes >= cokernel_protocol::DEFAULT_MAX_FRAME_BYTES as u64 {
         return Err(WorkerTransportError::Protocol(format!(
             "worker handshake max_event_bytes {max_event_bytes} must be smaller than frame limit {}",
             cokernel_protocol::DEFAULT_MAX_FRAME_BYTES
         )));
+    }
+    if max_operation_bytes < max_event_bytes {
+        return Err(WorkerTransportError::Protocol(
+            "worker handshake max_operation_bytes must be at least max_event_bytes".into(),
+        ));
+    }
+    if max_blob_bytes > max_event_bytes {
+        return Err(WorkerTransportError::Protocol(
+            "worker handshake max_blob_bytes must not exceed max_event_bytes".into(),
+        ));
     }
 
     Ok(())
@@ -267,6 +350,68 @@ mod handshake_tests {
         .is_err());
     }
 
+    #[test]
+    fn handshake_rejects_duplicate_capabilities_and_incoherent_output_limits() {
+        let session_id = SessionId::new();
+        let request_id = "handshake-test";
+
+        let mut duplicate = valid_handshake(session_id, request_id, 2_000);
+        let WorkerFrame::Response { result, .. } = &mut duplicate else {
+            unreachable!();
+        };
+        result.as_mut().unwrap()["capabilities"] = json!([
+            worker::method::EXECUTE,
+            worker::method::EXECUTE,
+            worker::method::INSPECT_VARIABLES,
+            worker::method::GET_VARIABLE,
+            worker::method::RESET,
+            worker::method::SHUTDOWN,
+        ]);
+        assert!(validate_worker_handshake(
+            &duplicate,
+            session_id,
+            request_id,
+            Duration::from_secs(2),
+        )
+        .is_err());
+
+        let mut incoherent = valid_handshake(session_id, request_id, 2_000);
+        let WorkerFrame::Response { result, .. } = &mut incoherent else {
+            unreachable!();
+        };
+        result.as_mut().unwrap()["output_limits"] = json!({
+            "max_event_bytes": 1024,
+            "max_operation_bytes": 512,
+            "max_blob_bytes": 2048,
+        });
+        assert!(validate_worker_handshake(
+            &incoherent,
+            session_id,
+            request_id,
+            Duration::from_secs(2),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn handshake_rejects_oversized_worker_metadata() {
+        let session_id = SessionId::new();
+        let request_id = "handshake-test";
+        let mut oversized = valid_handshake(session_id, request_id, 2_000);
+        let WorkerFrame::Response { result, .. } = &mut oversized else {
+            unreachable!();
+        };
+        result.as_mut().unwrap()["worker_version"] =
+            json!("v".repeat(MAX_WORKER_VERSION_CHARS + 1));
+        assert!(validate_worker_handshake(
+            &oversized,
+            session_id,
+            request_id,
+            Duration::from_secs(2),
+        )
+        .is_err());
+    }
+
     #[tokio::test]
     async fn handshake_reader_ignores_heartbeat_before_response() {
         let session_id = SessionId::new();
@@ -289,5 +434,31 @@ mod handshake_tests {
             .unwrap();
         task.await.unwrap();
         assert!(matches!(actual, WorkerFrame::Response { .. }));
+    }
+
+    #[tokio::test]
+    async fn handshake_reader_does_not_echo_unexpected_response_payload() {
+        let session_id = SessionId::new();
+        let request_id = "handshake-test";
+        let (mut writer, mut reader) = duplex(4096);
+        let unexpected = WorkerFrame::Response {
+            protocol: WORKER_PROTOCOL_V1,
+            id: "stale-response".into(),
+            session_id: session_id.to_string(),
+            ok: true,
+            result: Some(json!({"secret": "must-not-enter-diagnostics"})),
+            error: None,
+        };
+        let task = tokio::spawn(async move {
+            write_worker_frame(&mut writer, &unexpected).await.unwrap();
+        });
+
+        let error = read_worker_handshake_response(&mut reader, session_id, request_id)
+            .await
+            .unwrap_err();
+        task.await.unwrap();
+        let detail = error.to_string();
+        assert!(detail.contains("stale-response"));
+        assert!(!detail.contains("must-not-enter-diagnostics"));
     }
 }
