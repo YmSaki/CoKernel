@@ -3,6 +3,7 @@
 
 import json
 import os
+import select
 import socket
 import struct
 import sys
@@ -32,6 +33,28 @@ def recv_frame(sock: socket.socket) -> dict:
 def send_frame(sock: socket.socket, message: dict) -> None:
     payload = json.dumps(message, separators=(",", ":")).encode("utf-8")
     sock.sendall(struct.pack(">I", len(payload)) + payload)
+
+
+def serve_cooperative(sock: socket.socket, session_id: str) -> None:
+    sequence = 1
+    while True:
+        readable, _, _ = select.select([sock], [], [], 0.05)
+        if readable:
+            request = recv_frame(sock)
+            if request.get("method") == "shutdown":
+                raise SystemExit(0)
+            raise RuntimeError(f"unsupported cooperative request: {request.get('method')!r}")
+        send_frame(
+            sock,
+            {
+                "protocol": 1,
+                "type": "event",
+                "session_id": session_id,
+                "event": "heartbeat",
+                "payload": {"monotonic_ns": sequence},
+            },
+        )
+        sequence += 1
 
 
 socket_path = arg_after("--socket")
@@ -98,21 +121,8 @@ send_frame(
 
 if mode in {"bad-handshake", "heartbeat-timeout"}:
     time.sleep(30)
-elif mode == "healthy":
-    sequence = 1
-    while True:
-        send_frame(
-            sock,
-            {
-                "protocol": 1,
-                "type": "event",
-                "session_id": session_id,
-                "event": "heartbeat",
-                "payload": {"monotonic_ns": sequence},
-            },
-        )
-        sequence += 1
-        time.sleep(0.05)
+elif mode == "healthy" or mode.startswith("lifecycle"):
+    serve_cooperative(sock, session_id)
 elif mode == "protocol-violation":
     # Give the Rust caller time to subscribe after ensure_primary returns.
     time.sleep(0.35)
