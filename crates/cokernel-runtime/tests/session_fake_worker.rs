@@ -476,3 +476,222 @@ async fn independent_sessions_execute_concurrently() -> Result<()> {
     wait_state(&session_b, SessionState::Stopped).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn stop_during_execution_cancels_active_and_queued_operations() -> Result<()> {
+    let temp = TempWorkspace::new("stop-active")?;
+    let project = project(&temp.0.join("execute-stop-active"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let session = supervisor
+        .ensure_primary(&project, NotebookId::new())
+        .await?;
+    let mut active_events = session.subscribe();
+    let mut queued_events = session.subscribe();
+    let mut all_events = session.subscribe();
+
+    let active = session
+        .execute_cell(ExecutionOrigin::Human, "active-cell", "sleep:2.0")
+        .await?;
+    wait_state(&session, SessionState::Executing).await?;
+    let queued = session
+        .execute_cell(ExecutionOrigin::Mcp, "queued-cell", "sleep:0.0")
+        .await?;
+    assert_eq!(session.snapshot().queue_depth, 1);
+
+    session.stop().await?;
+    assert_eq!(
+        wait_operation_finished(&mut active_events, active).await?,
+        OperationStatus::Cancelled
+    );
+    assert_eq!(
+        wait_operation_finished(&mut queued_events, queued).await?,
+        OperationStatus::Cancelled
+    );
+    wait_state(&session, SessionState::Stopped).await?;
+    assert_eq!(session.snapshot().queue_depth, 0);
+    while let Ok(event) = all_events.try_recv() {
+        assert!(
+            !matches!(event, SessionEvent::Failure { .. }),
+            "explicit stop during execution emitted FailureRecord"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn crash_during_execution_fails_active_and_cancels_queued_operation() -> Result<()> {
+    let temp = TempWorkspace::new("crash-queued")?;
+    let project = project(&temp.0.join("execute-crash-queued"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let session = supervisor
+        .ensure_primary(&project, NotebookId::new())
+        .await?;
+    let mut active_events = session.subscribe();
+    let mut queued_events = session.subscribe();
+    let mut failure_events = session.subscribe();
+
+    let active = session
+        .execute_cell(
+            ExecutionOrigin::Human,
+            "crashing-cell",
+            "crash_after:0.35",
+        )
+        .await?;
+    wait_state(&session, SessionState::Executing).await?;
+    let queued = session
+        .execute_cell(ExecutionOrigin::Mcp, "queued-cell", "sleep:0.0")
+        .await?;
+    assert_eq!(session.snapshot().queue_depth, 1);
+
+    let record = wait_failure(&mut failure_events).await?;
+    assert_eq!(record.operation_id, Some(active));
+    assert_eq!(record.exit_code, Some(23));
+    assert_eq!(
+        wait_operation_finished(&mut active_events, active).await?,
+        OperationStatus::Failed
+    );
+    assert_eq!(
+        wait_operation_finished(&mut queued_events, queued).await?,
+        OperationStatus::Cancelled
+    );
+    assert_eq!(session.state(), SessionState::Crashed);
+    assert_eq!(session.snapshot().queue_depth, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn restart_during_execution_cancels_old_work_and_replaces_worker_generation() -> Result<()> {
+    let temp = TempWorkspace::new("restart-active")?;
+    let project = project(&temp.0.join("execute-restart-active"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let notebook_id = NotebookId::new();
+    let first = supervisor.ensure_primary(&project, notebook_id).await?;
+    let first_snapshot = first.snapshot();
+    let mut active_events = first.subscribe();
+    let mut queued_events = first.subscribe();
+
+    let active = first
+        .execute_cell(ExecutionOrigin::Human, "active-cell", "sleep:2.0")
+        .await?;
+    wait_state(&first, SessionState::Executing).await?;
+    let queued = first
+        .execute_cell(ExecutionOrigin::Mcp, "queued-cell", "sleep:0.0")
+        .await?;
+    let updated_project = Project {
+        project_id: project.project_id,
+        name: project.name.clone(),
+        root_path: project.root_path.clone(),
+        environment_generation: 2,
+    };
+
+    let restarted = supervisor
+        .restart_primary(&updated_project, notebook_id)
+        .await?;
+    assert_eq!(
+        wait_operation_finished(&mut active_events, active).await?,
+        OperationStatus::Cancelled
+    );
+    assert_eq!(
+        wait_operation_finished(&mut queued_events, queued).await?,
+        OperationStatus::Cancelled
+    );
+    assert_eq!(first.state(), SessionState::Stopped);
+    assert_eq!(restarted.session_id(), first.session_id());
+    assert_eq!(restarted.snapshot().started_at, first_snapshot.started_at);
+    assert_eq!(
+        restarted.snapshot().worker_generation,
+        first_snapshot.worker_generation + 1
+    );
+    assert_eq!(restarted.snapshot().environment_generation, 2);
+    assert_eq!(restarted.state(), SessionState::Idle);
+
+    let mut restarted_events = restarted.subscribe();
+    let survivor = restarted
+        .execute_cell(ExecutionOrigin::Human, "replacement-cell", "sleep:0.0")
+        .await?;
+    assert_eq!(
+        wait_operation_finished(&mut restarted_events, survivor).await?,
+        OperationStatus::Succeeded
+    );
+    restarted.stop().await?;
+    wait_state(&restarted, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn crashed_primary_restarts_explicitly_with_same_logical_session() -> Result<()> {
+    let temp = TempWorkspace::new("restart-crashed")?;
+    let project = project(&temp.0.join("execute-restart-crashed"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let notebook_id = NotebookId::new();
+    let first = supervisor.ensure_primary(&project, notebook_id).await?;
+    let first_snapshot = first.snapshot();
+    let mut failure_events = first.subscribe();
+
+    let crashing = first
+        .execute_cell(ExecutionOrigin::Human, "crash-cell", "crash")
+        .await?;
+    let record = wait_failure(&mut failure_events).await?;
+    assert_eq!(record.operation_id, Some(crashing));
+    assert_eq!(first.state(), SessionState::Crashed);
+
+    let restarted = supervisor.restart_primary(&project, notebook_id).await?;
+    assert_eq!(restarted.session_id(), first.session_id());
+    assert_eq!(restarted.snapshot().started_at, first_snapshot.started_at);
+    assert_eq!(
+        restarted.snapshot().worker_generation,
+        first_snapshot.worker_generation + 1
+    );
+    assert_eq!(restarted.state(), SessionState::Idle);
+
+    let mut events = restarted.subscribe();
+    let survivor = restarted
+        .execute_cell(ExecutionOrigin::Human, "survivor-cell", "sleep:0.0")
+        .await?;
+    assert_eq!(
+        wait_operation_finished(&mut events, survivor).await?,
+        OperationStatus::Succeeded
+    );
+    restarted.stop().await?;
+    wait_state(&restarted, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn environment_change_during_execution_becomes_stale_after_completion_and_remains_usable() -> Result<()> {
+    let temp = TempWorkspace::new("stale-active")?;
+    let project = project(&temp.0.join("execute-stale-active"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let session = supervisor
+        .ensure_primary(&project, NotebookId::new())
+        .await?;
+    let mut first_events = session.subscribe();
+
+    let first = session
+        .execute_cell(ExecutionOrigin::Human, "active-cell", "sleep:0.35")
+        .await?;
+    wait_state(&session, SessionState::Executing).await?;
+    supervisor
+        .mark_project_environment_stale(project.project_id, 2)
+        .await;
+    assert_eq!(
+        wait_operation_finished(&mut first_events, first).await?,
+        OperationStatus::Succeeded
+    );
+    wait_state(&session, SessionState::StaleEnvironment).await?;
+    assert_eq!(session.snapshot().environment_generation, 1);
+
+    let mut second_events = session.subscribe();
+    let second = session
+        .execute_cell(ExecutionOrigin::Mcp, "stale-cell", "sleep:0.0")
+        .await?;
+    assert_eq!(
+        wait_operation_finished(&mut second_events, second).await?,
+        OperationStatus::Succeeded
+    );
+    wait_state(&session, SessionState::StaleEnvironment).await?;
+
+    session.stop().await?;
+    wait_state(&session, SessionState::Stopped).await?;
+    Ok(())
+}
