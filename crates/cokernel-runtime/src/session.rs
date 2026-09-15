@@ -213,6 +213,7 @@ fn validate_variable_value_result(
         }
     }
 
+    let raw_value_is_null = object.get("value").is_some_and(Value::is_null);
     let value: SessionVariableValue = serde_json::from_value(result)
         .map_err(|error| invalid_inspection_response(error.to_string()))?;
     if value.name != requested_name {
@@ -236,7 +237,7 @@ fn validate_variable_value_result(
             ));
         }
     } else {
-        if object.get("value").is_some_and(|value| !value.is_null()) {
+        if !raw_value_is_null {
             return Err(invalid_inspection_response(
                 "unsupported get_variable result must carry null value",
             ));
