@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
@@ -31,6 +31,9 @@ const EVENT_QUEUE_CAPACITY: usize = 512;
 const WORKER_FRAME_QUEUE_CAPACITY: usize = 512;
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const RESTART_STOP_GRACE: Duration = Duration::from_millis(500);
+const MAX_INSPECTION_LIST_ITEMS: usize = 512;
+const MAX_INSPECTION_RESPONSE_BYTES: usize = 1_048_576;
+const MAX_INSPECTION_METADATA_CHARS: usize = 65_536;
 
 #[derive(Debug, Clone)]
 pub struct SessionSupervisorConfig {
@@ -114,6 +117,143 @@ pub struct SessionVariableValue {
 #[derive(Debug, Deserialize)]
 struct SessionVariableListResult {
     variables: Vec<SessionVariableSummary>,
+}
+
+fn invalid_inspection_response(message: impl Into<String>) -> SessionInspectionError {
+    SessionInspectionError::InvalidResponse(message.into())
+}
+
+fn validate_inspection_response_size(
+    label: &str,
+    result: &Value,
+) -> Result<(), SessionInspectionError> {
+    let bytes = serde_json::to_vec(result)
+        .map_err(|error| invalid_inspection_response(format!("{label} is not JSON encodable: {error}")))?;
+    if bytes.len() > MAX_INSPECTION_RESPONSE_BYTES {
+        return Err(invalid_inspection_response(format!(
+            "{label} exceeds maximum serialized response size"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_inspection_metadata(
+    label: &str,
+    field: &str,
+    value: &str,
+) -> Result<(), SessionInspectionError> {
+    if value.is_empty() {
+        return Err(invalid_inspection_response(format!(
+            "{label} field {field:?} must be non-empty"
+        )));
+    }
+    if value.chars().count() > MAX_INSPECTION_METADATA_CHARS {
+        return Err(invalid_inspection_response(format!(
+            "{label} field {field:?} exceeds maximum length"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_variable_list_result(
+    result: Value,
+) -> Result<Vec<SessionVariableSummary>, SessionInspectionError> {
+    validate_inspection_response_size("list_variables result", &result)?;
+    let response: SessionVariableListResult = serde_json::from_value(result)
+        .map_err(|error| invalid_inspection_response(error.to_string()))?;
+    if response.variables.len() > MAX_INSPECTION_LIST_ITEMS {
+        return Err(invalid_inspection_response(
+            "list_variables result exceeds maximum item count",
+        ));
+    }
+
+    let mut names = HashSet::with_capacity(response.variables.len());
+    for variable in &response.variables {
+        validate_inspection_metadata("list_variables result", "name", &variable.name)?;
+        validate_inspection_metadata(
+            "list_variables result",
+            "type_module",
+            &variable.type_module,
+        )?;
+        validate_inspection_metadata(
+            "list_variables result",
+            "type_name",
+            &variable.type_name,
+        )?;
+        if !names.insert(variable.name.clone()) {
+            return Err(invalid_inspection_response(format!(
+                "list_variables returned duplicate variable {:?}",
+                variable.name
+            )));
+        }
+    }
+    Ok(response.variables)
+}
+
+fn validate_variable_value_result(
+    result: Value,
+    requested_name: &str,
+) -> Result<SessionVariableValue, SessionInspectionError> {
+    validate_inspection_response_size("get_variable result", &result)?;
+    let object = result
+        .as_object()
+        .ok_or_else(|| invalid_inspection_response("get_variable result must be an object"))?;
+    for field in [
+        "name",
+        "type_module",
+        "type_name",
+        "supported",
+        "value",
+        "reason",
+    ] {
+        if !object.contains_key(field) {
+            return Err(invalid_inspection_response(format!(
+                "get_variable result omitted field {field:?}"
+            )));
+        }
+    }
+
+    let value: SessionVariableValue = serde_json::from_value(result)
+        .map_err(|error| invalid_inspection_response(error.to_string()))?;
+    if value.name != requested_name {
+        return Err(invalid_inspection_response(format!(
+            "worker returned variable {:?} for requested {:?}",
+            value.name, requested_name
+        )));
+    }
+    validate_inspection_metadata("get_variable result", "name", &value.name)?;
+    validate_inspection_metadata(
+        "get_variable result",
+        "type_module",
+        &value.type_module,
+    )?;
+    validate_inspection_metadata("get_variable result", "type_name", &value.type_name)?;
+
+    if value.supported {
+        if value.reason.is_some() {
+            return Err(invalid_inspection_response(
+                "supported get_variable result must not include a reason",
+            ));
+        }
+    } else {
+        if object.get("value").is_some_and(|value| !value.is_null()) {
+            return Err(invalid_inspection_response(
+                "unsupported get_variable result must carry null value",
+            ));
+        }
+        let reason = value.reason.as_deref().filter(|reason| !reason.is_empty()).ok_or_else(|| {
+            invalid_inspection_response(
+                "unsupported get_variable result requires a non-empty reason",
+            )
+        })?;
+        if reason.chars().count() > MAX_INSPECTION_METADATA_CHARS {
+            return Err(invalid_inspection_response(
+                "get_variable result reason exceeds maximum length",
+            ));
+        }
+    }
+
+    Ok(value)
 }
 
 struct InspectionRequest {
@@ -227,9 +367,7 @@ impl SessionHandle {
         let result = self
             .inspect_worker(worker::method::INSPECT_VARIABLES, json!({}))
             .await?;
-        let response: SessionVariableListResult = serde_json::from_value(result)
-            .map_err(|error| SessionInspectionError::InvalidResponse(error.to_string()))?;
-        Ok(response.variables)
+        validate_variable_list_result(result)
     }
 
     pub async fn get_variable(
@@ -243,15 +381,7 @@ impl SessionHandle {
                 json!({ "name": name.clone() }),
             )
             .await?;
-        let value: SessionVariableValue = serde_json::from_value(result)
-            .map_err(|error| SessionInspectionError::InvalidResponse(error.to_string()))?;
-        if value.name != name {
-            return Err(SessionInspectionError::InvalidResponse(format!(
-                "worker returned variable {:?} for requested {:?}",
-                value.name, name
-            )));
-        }
-        Ok(value)
+        validate_variable_value_result(result, &name)
     }
 
     async fn inspect_worker(
@@ -364,3 +494,6 @@ include!("session/lifecycle.rs");
 
 #[cfg(test)]
 include!("session/tests.rs");
+
+#[cfg(test)]
+include!("session/inspection_contract_tests.rs");
