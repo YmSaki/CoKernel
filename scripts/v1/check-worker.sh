@@ -36,7 +36,7 @@ echo '[v1-check-worker] Worker version'
 uv run --project worker cokernel-worker --version
 
 echo '[v1-check-worker] Worker tests'
-uv run --project worker pytest
+uv run --project worker pytest worker/tests
 
 echo '[v1-check-worker] Worker protocol subprocess smoke (uv environment)'
 python3 scripts/v1/smoke_worker_protocol.py

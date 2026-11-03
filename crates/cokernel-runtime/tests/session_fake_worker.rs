@@ -1,9 +1,11 @@
 #![cfg(unix)]
 
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use cokernel_domain::{
@@ -18,20 +20,696 @@ use tokio::time::{sleep, timeout};
 
 const FAKE_UV: &str = include_str!("fixtures/fake_uv.py");
 
+async fn document_runtime(
+    temp: &TempWorkspace,
+    project: &Project,
+) -> Result<(
+    cokernel_runtime::notebook::NotebookRuntime,
+    NotebookId,
+    SessionHandle,
+)> {
+    use cokernel_runtime::notebook::{Edit, NotebookRuntime, NotebookService};
+    let mut documents = NotebookService::default();
+    let id = documents
+        .create(project, "runtime.ipynb")?
+        .document
+        .notebook_id;
+    let cell = |id: &str, source: &str| serde_json::json!({"id":id,"cell_type":"code","source":source,"metadata":{},"execution_count":null,"outputs":[]});
+    documents.apply_edits(
+        project,
+        id,
+        1,
+        &[
+            Edit::InsertCell {
+                index: 0,
+                cell: cell("a", "sleep:0.2"),
+            },
+            Edit::InsertCell {
+                index: 1,
+                cell: cell("b", "1"),
+            },
+        ],
+    )?;
+    documents.save(project, id, 2)?;
+    let runtime = NotebookRuntime::new(documents, supervisor(temp, Duration::from_secs(3))?);
+    let session = runtime
+        .ensure_primary(project, id)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.summary))?;
+    Ok((runtime, id, session))
+}
+
+async fn document_result(
+    runtime: &cokernel_runtime::notebook::NotebookRuntime,
+    project: &Project,
+    operation: OperationId,
+) -> Result<cokernel_runtime::notebook::DocumentExecutionState> {
+    use cokernel_runtime::notebook::DocumentExecutionState;
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let result = runtime
+                .operation(project.project_id, operation)
+                .await
+                .map_err(|e| anyhow::anyhow!(e.summary))?
+                .result;
+            if !matches!(result, DocumentExecutionState::Pending) {
+                return Ok(result);
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await?
+}
+
+#[tokio::test]
+async fn runtime_shutdown_stops_workers_settles_captures_and_flushes_dirty_documents() -> Result<()>
+{
+    use cokernel_runtime::notebook::{DocumentState, Edit};
+    let temp = TempWorkspace::new("runtime-shutdown")?;
+    let project = project(&temp.0.join("execute-runtime-shutdown"))?;
+    let (runtime, notebook, session) = document_runtime(&temp, &project).await?;
+    runtime.documents.lock().await.apply_edits(
+        &project,
+        notebook,
+        2,
+        &[
+            Edit::SetCellSource {
+                cell_id: "a".into(),
+                source: "sleep:10.0".into(),
+            },
+            Edit::SetNotebookMetadata {
+                metadata: serde_json::json!({"shutdown_flush":true})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            },
+        ],
+    )?;
+    let operation = runtime
+        .execute_cell(
+            &project,
+            session.session_id(),
+            notebook,
+            "a",
+            3,
+            ExecutionOrigin::Human,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e.summary))?;
+    wait_state(&session, SessionState::Executing).await?;
+    runtime
+        .shutdown()
+        .await
+        .map_err(|e| anyhow::anyhow!(e.summary))?;
+    assert_eq!(session.state(), SessionState::Stopped);
+    assert!(!matches!(
+        document_result(&runtime, &project, operation.operation_id).await?,
+        cokernel_runtime::notebook::DocumentExecutionState::Pending
+    ));
+    let saved = runtime.documents.lock().await.get(&project, notebook)?;
+    assert_eq!(saved.state, DocumentState::Clean);
+    let bytes = std::fs::read(std::path::Path::new(&project.root_path).join("runtime.ipynb"))?;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&bytes)?["metadata"]["shutdown_flush"],
+        true
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn runtime_shutdown_reports_document_conflict_after_stopping_session() -> Result<()> {
+    let temp = TempWorkspace::new("shutdown-conflict")?;
+    let project = project(&temp.0.join("execute-shutdown-conflict"))?;
+    let (runtime, _notebook, session) = document_runtime(&temp, &project).await?;
+    let path = std::path::Path::new(&project.root_path).join("runtime.ipynb");
+    std::fs::write(&path, b"external edit")?;
+    let error = runtime.shutdown().await.unwrap_err();
+    assert_eq!(error.code, "CK-RUN-SHUTDOWN");
+    assert_eq!(session.state(), SessionState::Stopped);
+    assert_eq!(std::fs::read(&path)?, b"external edit");
+    Ok(())
+}
+
+#[tokio::test]
+async fn document_runtime_queues_shared_revision_and_keeps_persistence_after_caller_drop()
+-> Result<()> {
+    use cokernel_runtime::notebook::DocumentExecutionState;
+    let temp = TempWorkspace::new("doc-queue")?;
+    let project = project(&temp.0.join("execute-doc-queue"))?;
+    let (runtime, notebook, session) = document_runtime(&temp, &project).await?;
+    let caller = runtime.clone();
+    let first = caller
+        .execute_cell(
+            &project,
+            session.session_id(),
+            notebook,
+            "a",
+            2,
+            ExecutionOrigin::Human,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e.summary))?;
+    let second = caller
+        .execute_cell(
+            &project,
+            session.session_id(),
+            notebook,
+            "b",
+            2,
+            ExecutionOrigin::Mcp,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e.summary))?;
+    drop(caller);
+    assert!(matches!(
+        document_result(&runtime, &project, first.operation_id).await?,
+        DocumentExecutionState::Persisted { .. }
+    ));
+    assert!(matches!(
+        document_result(&runtime, &project, second.operation_id).await?,
+        DocumentExecutionState::Persisted { .. }
+    ));
+    let mut documents = runtime.documents.lock().await;
+    let saved = documents.get(&project, notebook)?;
+    assert_eq!(saved.document.revision, 4);
+    assert_eq!(saved.notebook.value()["cells"][0]["execution_count"], 1);
+    assert_eq!(saved.notebook.value()["cells"][1]["execution_count"], 2);
+    documents.close(&project, notebook, 4)?;
+    assert_eq!(
+        documents
+            .open(&project, "runtime.ipynb")?
+            .document
+            .notebook_id,
+        notebook
+    );
+    drop(documents);
+    assert_eq!(
+        runtime
+            .ensure_primary(&project, notebook)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.summary))?
+            .session_id(),
+        session.session_id()
+    );
+    session.stop().await?;
+    wait_state(&session, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn unrelated_edit_does_not_conflict_but_source_aba_does() -> Result<()> {
+    use cokernel_runtime::notebook::{DocumentExecutionState, Edit};
+    let temp = TempWorkspace::new("doc-source")?;
+    let project = project(&temp.0.join("execute-doc-source"))?;
+    let (runtime, notebook, session) = document_runtime(&temp, &project).await?;
+    let first = runtime
+        .execute_cell(
+            &project,
+            session.session_id(),
+            notebook,
+            "a",
+            2,
+            ExecutionOrigin::Human,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e.summary))?;
+    runtime.documents.lock().await.apply_edits(
+        &project,
+        notebook,
+        2,
+        &[Edit::SetCellSource {
+            cell_id: "b".into(),
+            source: "other edit".into(),
+        }],
+    )?;
+    assert!(matches!(
+        document_result(&runtime, &project, first.operation_id).await?,
+        DocumentExecutionState::Persisted { .. }
+    ));
+    let revision = runtime
+        .documents
+        .lock()
+        .await
+        .get(&project, notebook)?
+        .document
+        .revision;
+    let second = runtime
+        .execute_cell(
+            &project,
+            session.session_id(),
+            notebook,
+            "a",
+            revision,
+            ExecutionOrigin::Mcp,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e.summary))?;
+    runtime.documents.lock().await.apply_edits(
+        &project,
+        notebook,
+        revision,
+        &[
+            Edit::SetCellSource {
+                cell_id: "a".into(),
+                source: "changed".into(),
+            },
+            Edit::SetCellSource {
+                cell_id: "a".into(),
+                source: "sleep:0.2".into(),
+            },
+        ],
+    )?;
+    assert!(
+        matches!(document_result(&runtime,&project,second.operation_id).await?,DocumentExecutionState::NotPersisted { error,.. } if error.code=="CK-NB-STALE-EXECUTION")
+    );
+    assert_eq!(
+        runtime
+            .documents
+            .lock()
+            .await
+            .get(&project, notebook)?
+            .notebook
+            .value()["cells"][0]["execution_count"],
+        1
+    );
+    session.stop().await?;
+    wait_state(&session, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn replacement_reload_and_external_changes_reject_old_results() -> Result<()> {
+    use cokernel_runtime::notebook::{DocumentExecutionState, Edit};
+    for scenario in ["replace", "reload", "external"] {
+        let temp = TempWorkspace::new("doc-conflict")?;
+        let project = project(&temp.0.join("execute-doc-conflict"))?;
+        let (runtime, notebook, session) = document_runtime(&temp, &project).await?;
+        let operation = runtime
+            .execute_cell(
+                &project,
+                session.session_id(),
+                notebook,
+                "a",
+                2,
+                ExecutionOrigin::Human,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!(e.summary))?;
+        match scenario {
+            "replace" => {
+                runtime.documents.lock().await.apply_edits(&project,notebook,2,&[
+                Edit::DeleteCell {cell_id:"a".into()},
+                Edit::InsertCell {index:0,cell:serde_json::json!({"id":"a","cell_type":"code","source":"sleep:0.2","metadata":{},"execution_count":null,"outputs":[]})},
+            ])?;
+            }
+            "reload" => {
+                runtime
+                    .documents
+                    .lock()
+                    .await
+                    .reload(&project, notebook, 2)?;
+            }
+            _ => {
+                fs::write(
+                    Path::new(&project.root_path).join("runtime.ipynb"),
+                    b"external bytes",
+                )?;
+            }
+        }
+        assert!(
+            matches!(
+                document_result(&runtime, &project, operation.operation_id).await?,
+                DocumentExecutionState::NotPersisted { .. }
+            ),
+            "{scenario}"
+        );
+        if scenario == "external" {
+            assert_eq!(
+                fs::read(Path::new(&project.root_path).join("runtime.ipynb"))?,
+                b"external bytes"
+            );
+        }
+        session.stop().await?;
+        wait_state(&session, SessionState::Stopped).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn document_admission_rejects_wrong_identity_revision_and_cell_without_execution()
+-> Result<()> {
+    let temp = TempWorkspace::new("doc-admission")?;
+    let project = project(&temp.0.join("execute-doc-admission"))?;
+    let (runtime, notebook, session) = document_runtime(&temp, &project).await?;
+    assert!(
+        runtime
+            .execute_cell(
+                &project,
+                session.session_id(),
+                notebook,
+                "a",
+                1,
+                ExecutionOrigin::Human
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        runtime
+            .execute_cell(
+                &project,
+                session.session_id(),
+                NotebookId::new(),
+                "a",
+                2,
+                ExecutionOrigin::Human
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        runtime
+            .execute_cell(
+                &project,
+                session.session_id(),
+                notebook,
+                "missing",
+                2,
+                ExecutionOrigin::Human
+            )
+            .await
+            .is_err()
+    );
+    let mut wrong = project.clone();
+    wrong.project_id = ProjectId::new();
+    assert!(
+        runtime
+            .execute_cell(
+                &wrong,
+                session.session_id(),
+                notebook,
+                "a",
+                2,
+                ExecutionOrigin::Mcp
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(session.snapshot().queue_depth, 0);
+    assert!(session.snapshot().current_operation_id.is_none());
+    session.stop().await?;
+    wait_state(&session, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn wrong_project_cannot_reuse_or_restart_an_existing_primary_session() -> Result<()> {
+    let temp = TempWorkspace::new("ownership")?;
+    let a = project(&temp.0.join("execute-owner"))?;
+    let b = project(&temp.0.join("execute-other"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let notebook = NotebookId::new();
+    let session = supervisor.ensure_primary(&a, notebook).await?;
+    assert!(matches!(
+        supervisor.ensure_primary(&b, notebook).await,
+        Err(SessionError::OwnershipMismatch)
+    ));
+    assert!(matches!(
+        supervisor.restart_primary(&b, notebook).await,
+        Err(SessionError::OwnershipMismatch)
+    ));
+    let receipt = session
+        .execute_cell_captured(ExecutionOrigin::Human, "cell", "1")
+        .await?;
+    assert_eq!(
+        timeout(Duration::from_secs(5), receipt.completed())
+            .await??
+            .status,
+        OperationStatus::Succeeded
+    );
+    session.stop().await?;
+    wait_state(&session, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn captured_outputs_survive_broadcast_lag_and_document_save() -> Result<()> {
+    use cokernel_runtime::notebook::{Edit, NotebookOutputs, NotebookService};
+    let temp = TempWorkspace::new("capture")?;
+    let project = project(&temp.0.join("execute-capture"))?;
+    let mut documents = NotebookService::default();
+    let notebook = documents
+        .create(&project, "capture.ipynb")?
+        .document
+        .notebook_id;
+    let edited = documents.apply_edits(&project,notebook,1,&[Edit::InsertCell { index:0, cell:serde_json::json!({
+        "id":"cell","cell_type":"code","metadata":{},"source":"many_outputs","execution_count":null,"outputs":[]
+    }) }])?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let session = supervisor.ensure_primary(&project, notebook).await?;
+    let mut deliberately_slow_listener = session.subscribe();
+    let receipt = session
+        .execute_cell_captured(
+            ExecutionOrigin::Human,
+            "cell",
+            edited.notebook.cell_source("cell")?.1,
+        )
+        .await?;
+    let operation = receipt.operation_id;
+    let capture = timeout(Duration::from_secs(5), receipt.completed()).await??;
+    assert_eq!(capture.operation_id, operation);
+    assert_eq!(capture.status, OperationStatus::Succeeded);
+    assert!(matches!(
+        deliberately_slow_listener.try_recv(),
+        Err(broadcast::error::TryRecvError::Lagged(_))
+    ));
+    let outputs =
+        NotebookOutputs::from_frames(operation, &capture.frames.map_err(anyhow::Error::msg)?)?;
+    assert_eq!(outputs.outputs().len(), 2048);
+    assert_eq!(outputs.outputs()[2047]["text"], "2048\n");
+    let changed = documents.apply_outputs(&project, notebook, 2, "cell", &outputs)?;
+    documents.save(&project, notebook, changed.document.revision)?;
+    let saved = cokernel_runtime::notebook::Notebook::parse(&fs::read(
+        Path::new(&project.root_path).join("capture.ipynb"),
+    )?)?;
+    assert_eq!(
+        saved.value()["cells"][0]["outputs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2048
+    );
+    session.stop().await?;
+    wait_state(&session, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn captured_worker_crash_resolves_receipt_as_failure() -> Result<()> {
+    let temp = TempWorkspace::new("capture-crash")?;
+    let project = project(&temp.0.join("execute-capture-crash"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let session = supervisor
+        .ensure_primary(&project, NotebookId::new())
+        .await?;
+    let receipt = session
+        .execute_cell_captured(ExecutionOrigin::Mcp, "cell", "crash")
+        .await?;
+    assert!(
+        timeout(Duration::from_secs(5), receipt.completed())
+            .await?
+            .is_err()
+    );
+    wait_state(&session, SessionState::Crashed).await?;
+    assert!(session.last_failure().is_some());
+    Ok(())
+}
+
+struct TestDescendant(u32);
+
+impl TestDescendant {
+    fn read(project: &Project) -> Result<Self> {
+        let pid = fs::read_to_string(Path::new(&project.root_path).join("child.pid"))?;
+        Ok(Self(pid.parse()?))
+    }
+
+    fn running(&self) -> bool {
+        fs::read_to_string(format!("/proc/{}/stat", self.0))
+            .ok()
+            .and_then(|stat| {
+                stat.rsplit_once(") ")
+                    .map(|(_, tail)| tail.starts_with('Z'))
+            })
+            .is_some_and(|zombie| !zombie)
+    }
+
+    async fn expect_exited(&self) -> Result<()> {
+        timeout(Duration::from_secs(3), async {
+            while self.running() {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .context("Session descendant survived cleanup")
+    }
+}
+
+impl Drop for TestDescendant {
+    fn drop(&mut self) {
+        if self.running() {
+            // Only the PID recorded by this test's own child is targeted.
+            unsafe {
+                libc::kill(self.0 as i32, libc::SIGKILL);
+            }
+        }
+    }
+}
+
+fn project_with_child(root: &Path) -> Result<Project> {
+    let project = project(root)?;
+    fs::write(root.join("spawn-child"), "")?;
+    Ok(project)
+}
+
+#[tokio::test]
+async fn crash_evidence_survives_without_subscribers_and_after_restart() -> Result<()> {
+    let temp = TempWorkspace::new("durable-failure")?;
+    let project = project(&temp.0.join("execute-crash"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let notebook = NotebookId::new();
+    let session = supervisor.ensure_primary(&project, notebook).await?;
+    let operation = session
+        .execute_cell(ExecutionOrigin::Human, "durable-cell", "crash")
+        .await?;
+    wait_state(&session, SessionState::Crashed).await?;
+    let failure = session
+        .last_failure()
+        .context("failure missing without subscriber")?;
+    assert!(failure.persistence_error.is_none());
+    assert_eq!(failure.record.operation_id, Some(operation));
+    let saved = supervisor.failures(session.session_id()).await?;
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].failure_id, failure.record.failure_id);
+    let reopened =
+        cokernel_runtime::failure_store::FailureStore::new(temp.0.join("sockets/failures"));
+    assert_eq!(
+        reopened.get(failure.record.failure_id)?.unwrap().exit_code,
+        Some(23)
+    );
+    let restarted = supervisor.restart_primary(&project, notebook).await?;
+    assert_eq!(supervisor.failures(restarted.session_id()).await?.len(), 1);
+    restarted.stop().await?;
+    wait_state(&restarted, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn failure_store_error_is_observable_and_does_not_prevent_cleanup() -> Result<()> {
+    let temp = TempWorkspace::new("failure-write-error")?;
+    let project = project_with_child(&temp.0.join("execute-crash"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let session = supervisor
+        .ensure_primary(&project, NotebookId::new())
+        .await?;
+    let child = TestDescendant::read(&project)?;
+    fs::write(temp.0.join("sockets/failures"), "storage unavailable")?;
+    let mut events = session.subscribe();
+    session
+        .execute_cell(ExecutionOrigin::Human, "crash", "crash")
+        .await?;
+    wait_state(&session, SessionState::Crashed).await?;
+    child.expect_exited().await?;
+    assert!(session.last_failure().unwrap().persistence_error.is_some());
+    assert!(supervisor.failures(session.session_id()).await.is_err());
+    let mut saw_storage_error = false;
+    while let Ok(event) = events.try_recv() {
+        if matches!(event, SessionEvent::FailurePersistenceFailed { .. }) {
+            saw_storage_error = true;
+        }
+    }
+    assert!(saw_storage_error);
+    Ok(())
+}
+
+#[tokio::test]
+async fn stop_and_restart_terminate_descendants_without_harming_other_session() -> Result<()> {
+    let temp = TempWorkspace::new("descendants")?;
+    let owned_project = project_with_child(&temp.0.join("lifecycle-children"))?;
+    let other_project = project(&temp.0.join("healthy"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let notebook = NotebookId::new();
+    let owned = supervisor.ensure_primary(&owned_project, notebook).await?;
+    let first_child = TestDescendant::read(&owned_project)?;
+    assert!(first_child.running());
+    let other = supervisor
+        .ensure_primary(&other_project, NotebookId::new())
+        .await?;
+    let restarted = supervisor.restart_primary(&owned_project, notebook).await?;
+    assert_eq!(owned.session_id(), restarted.session_id());
+    first_child.expect_exited().await?;
+    let second_child = TestDescendant::read(&owned_project)?;
+    assert_ne!(first_child.0, second_child.0);
+    assert!(second_child.running());
+    restarted.stop().await?;
+    wait_state(&restarted, SessionState::Stopped).await?;
+    second_child.expect_exited().await?;
+    let mut other_events = other.subscribe();
+    let operation = other
+        .execute_cell(ExecutionOrigin::Human, "survives", "sleep:0.0")
+        .await?;
+    assert_eq!(
+        wait_operation_finished(&mut other_events, operation).await?,
+        OperationStatus::Succeeded
+    );
+    other.stop().await?;
+    wait_state(&other, SessionState::Stopped).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn crash_after_group_leader_exits_still_terminates_descendants() -> Result<()> {
+    let temp = TempWorkspace::new("crash-child")?;
+    let project = project_with_child(&temp.0.join("execute-crash"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    let session = supervisor
+        .ensure_primary(&project, NotebookId::new())
+        .await?;
+    let child = TestDescendant::read(&project)?;
+    let mut events = session.subscribe();
+    session
+        .execute_cell(ExecutionOrigin::Human, "crash", "crash")
+        .await?;
+    let record = wait_failure(&mut events).await?;
+    assert_eq!(record.exit_code, Some(23));
+    child.expect_exited().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn rejected_startup_terminates_descendants() -> Result<()> {
+    let temp = TempWorkspace::new("startup-child")?;
+    let project = project_with_child(&temp.0.join("bad-handshake"))?;
+    let supervisor = supervisor(&temp, Duration::from_secs(3))?;
+    assert!(
+        supervisor
+            .ensure_primary(&project, NotebookId::new())
+            .await
+            .is_err()
+    );
+    let child = TestDescendant::read(&project)?;
+    child.expect_exited().await?;
+    Ok(())
+}
+
 struct TempWorkspace(PathBuf);
 
 impl TempWorkspace {
-    fn new(label: &str) -> Result<Self> {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .context("system clock is before UNIX_EPOCH")?
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "cokernel-session-fake-{label}-{}-{unique}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&path)
-            .with_context(|| format!("failed to create {}", path.display()))?;
+    fn new(_label: &str) -> Result<Self> {
+        // Concurrent tests must never reuse or overwrite another test's launcher.
+        // Clock resolution is not an exclusive directory reservation.
+        let path =
+            std::env::temp_dir().join(format!("cks-{}-{}", std::process::id(), ProjectId::new()));
+        fs::create_dir(&path).with_context(|| format!("failed to create {}", path.display()))?;
         Ok(Self(path))
     }
 }
@@ -42,13 +720,28 @@ impl Drop for TempWorkspace {
     }
 }
 
-fn write_fake_uv(root: &Path) -> Result<PathBuf> {
-    let path = root.join("fake-uv.py");
-    fs::write(&path, FAKE_UV).with_context(|| format!("failed to write {}", path.display()))?;
-    let mut permissions = fs::metadata(&path)?.permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&path, permissions)?;
-    Ok(path)
+fn fake_uv() -> Result<PathBuf> {
+    static LAUNCHER: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+    // Finish creating the executable before any test in this process can spawn
+    // it. Per-test executable writes can overlap other tests' fork/exec windows.
+    // Keep this immutable fixture beside the test binary as a build artifact;
+    // each invocation has its own filename and never rewrites a running script.
+    LAUNCHER
+        .get_or_init(|| {
+            (|| -> Result<PathBuf> {
+                let executable = std::env::current_exe()?;
+                let directory = executable.parent().context("test binary has no parent")?;
+                let path = directory.join(format!("fake-uv-{}.py", ProjectId::new()));
+                let mut file = fs::File::create_new(&path)?;
+                file.write_all(FAKE_UV.as_bytes())?;
+                file.set_permissions(fs::Permissions::from_mode(0o500))?;
+                drop(file);
+                Ok(path)
+            })()
+            .map_err(|error| format!("failed to initialize immutable fake uv: {error:#}"))
+        })
+        .clone()
+        .map_err(anyhow::Error::msg)
 }
 
 fn project(root: &Path) -> Result<Project> {
@@ -65,11 +758,8 @@ fn project(root: &Path) -> Result<Project> {
     })
 }
 
-fn supervisor(
-    temp: &TempWorkspace,
-    heartbeat_timeout: Duration,
-) -> Result<SessionSupervisor> {
-    let fake_uv = write_fake_uv(&temp.0)?;
+fn supervisor(temp: &TempWorkspace, heartbeat_timeout: Duration) -> Result<SessionSupervisor> {
+    let fake_uv = fake_uv()?;
     let mut config =
         SessionSupervisorConfig::development("fake-worker-package", temp.0.join("sockets"));
     config.uv_executable = fake_uv;
@@ -79,13 +769,11 @@ fn supervisor(
     Ok(SessionSupervisor::new(config))
 }
 
-async fn wait_failure(
-    events: &mut broadcast::Receiver<SessionEvent>,
-) -> Result<FailureRecord> {
+async fn wait_failure(events: &mut broadcast::Receiver<SessionEvent>) -> Result<FailureRecord> {
     timeout(Duration::from_secs(5), async {
         loop {
             match events.recv().await {
-                Ok(SessionEvent::Failure { record }) => return Ok(record),
+                Ok(SessionEvent::Failure { record }) => return Ok(*record),
                 Ok(_) => {}
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => {
@@ -254,7 +942,8 @@ async fn cooperative_stop_reaches_stopped_and_clears_queue_depth() -> Result<()>
 }
 
 #[tokio::test]
-async fn explicit_restart_preserves_logical_session_and_adopts_environment_generation() -> Result<()> {
+async fn explicit_restart_preserves_logical_session_and_adopts_environment_generation() -> Result<()>
+{
     let temp = TempWorkspace::new("restart")?;
     let project = project(&temp.0.join("lifecycle-restart"))?;
     let supervisor = supervisor(&temp, Duration::from_secs(3))?;
@@ -285,7 +974,10 @@ async fn explicit_restart_preserves_logical_session_and_adopts_environment_gener
     let listed = supervisor.list().await;
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].session_id, restarted.session_id());
-    assert_eq!(listed[0].worker_generation, restarted_snapshot.worker_generation);
+    assert_eq!(
+        listed[0].worker_generation,
+        restarted_snapshot.worker_generation
+    );
 
     restarted.stop().await?;
     wait_state(&restarted, SessionState::Stopped).await?;
@@ -293,7 +985,8 @@ async fn explicit_restart_preserves_logical_session_and_adopts_environment_gener
 }
 
 #[tokio::test]
-async fn environment_stale_marks_only_matching_live_project_and_does_not_replace_primary() -> Result<()> {
+async fn environment_stale_marks_only_matching_live_project_and_does_not_replace_primary()
+-> Result<()> {
     let temp = TempWorkspace::new("stale")?;
     let project_a = project(&temp.0.join("lifecycle-stale-a"))?;
     let project_b = project(&temp.0.join("lifecycle-stale-b"))?;
@@ -356,6 +1049,15 @@ async fn human_and_mcp_execution_requests_complete_in_fifo_order() -> Result<()>
 
 #[tokio::test]
 async fn interrupt_finishes_active_operation_and_same_worker_survives() -> Result<()> {
+    interrupt_survival("sleep:2.0").await
+}
+
+#[tokio::test]
+async fn interrupt_before_worker_start_waits_for_execution_acknowledgement() -> Result<()> {
+    interrupt_survival("delayed-start").await
+}
+
+async fn interrupt_survival(source: &str) -> Result<()> {
     let temp = TempWorkspace::new("interrupt")?;
     let project = project(&temp.0.join("execute-interrupt"))?;
     let supervisor = supervisor(&temp, Duration::from_secs(3))?;
@@ -365,9 +1067,17 @@ async fn interrupt_finishes_active_operation_and_same_worker_survives() -> Resul
     let mut events = session.subscribe();
 
     let interrupted = session
-        .execute_cell(ExecutionOrigin::Human, "blocking-cell", "sleep:2.0")
+        .execute_cell(ExecutionOrigin::Human, "blocking-cell", source)
         .await?;
     wait_state(&session, SessionState::Executing).await?;
+    if source == "delayed-start" {
+        timeout(Duration::from_secs(2), async {
+            while !Path::new(&project.root_path).join("before-start").exists() {
+                sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+    }
     session.interrupt().await?;
     assert_eq!(
         wait_operation_finished(&mut events, interrupted).await?,
@@ -531,11 +1241,7 @@ async fn crash_during_execution_fails_active_and_cancels_queued_operation() -> R
     let mut failure_events = session.subscribe();
 
     let active = session
-        .execute_cell(
-            ExecutionOrigin::Human,
-            "crashing-cell",
-            "crash_after:0.35",
-        )
+        .execute_cell(ExecutionOrigin::Human, "crashing-cell", "crash_after:0.35")
         .await?;
     wait_state(&session, SessionState::Executing).await?;
     let queued = session
@@ -658,7 +1364,8 @@ async fn crashed_primary_restarts_explicitly_with_same_logical_session() -> Resu
 }
 
 #[tokio::test]
-async fn environment_change_during_execution_becomes_stale_after_completion_and_remains_usable() -> Result<()> {
+async fn environment_change_during_execution_becomes_stale_after_completion_and_remains_usable()
+-> Result<()> {
     let temp = TempWorkspace::new("stale-active")?;
     let project = project(&temp.0.join("execute-stale-active"))?;
     let supervisor = supervisor(&temp, Duration::from_secs(3))?;

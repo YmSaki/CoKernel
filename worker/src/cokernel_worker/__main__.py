@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+from pathlib import Path
 
 from . import __version__
 from .protocol import connect_and_run
@@ -22,6 +24,11 @@ def main() -> int:
     if not args.socket or not args.session_id:
         raise SystemExit("--socket and --session-id are required")
 
+    # IPython otherwise falls back to a temporary profile when the configured
+    # parent is absent. Create it as the workload identity, never as Runtime.
+    profile = os.environ.get("IPYTHONDIR")
+    if profile:
+        Path(profile).mkdir(parents=True, exist_ok=True)
     connect_and_run(args.socket, args.session_id)
     return 0
 

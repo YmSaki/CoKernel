@@ -1,0 +1,6 @@
+{
+  "identifier": "main-local",
+  "description": "Only the local main window can use the bounded Host adapter.",
+  "windows": ["main"],
+  "permissions": ["allow-host-call", "allow-host-observation"]
+}

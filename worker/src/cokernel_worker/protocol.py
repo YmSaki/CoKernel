@@ -5,6 +5,7 @@ import json
 import math
 import os
 import platform
+import signal
 import socket
 import struct
 import threading
@@ -13,7 +14,7 @@ from typing import Any
 
 import IPython
 
-from .execution import ExecutionEngine
+from .execution import ExecutionEngine, ExecutionError, ExecutionOutcome
 from .inspection import InspectionError, get_variable, list_variables
 from .output_limits import OperationOutputBudget, OutputLimits, encode_json
 from .streaming import OutputInterruptGuard
@@ -115,6 +116,20 @@ class WorkerLoop:
         return max(1, round(self.heartbeat_interval_seconds * 1000))
 
     def run(self, sock: socket.socket) -> None:
+        # Runtime may race a terminal cell response with its SIGINT delivery.
+        # Signals outside an execution must not tear a protocol frame or kill
+        # the persistent namespace. The execution guard enables KeyboardInterrupt.
+        main_thread = threading.current_thread() is threading.main_thread()
+        previous = signal.getsignal(signal.SIGINT) if main_thread else None
+        if main_thread:
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            self._run(sock)
+        finally:
+            if main_thread:
+                signal.signal(signal.SIGINT, previous)
+
+    def _run(self, sock: socket.socket) -> None:
         self._send_event(
             sock,
             "ready",
@@ -234,11 +249,11 @@ class WorkerLoop:
         if cell_id is not None and type(cell_id) is not str:
             raise WorkerProtocolError("execute.cell_id must be a string when present")
 
-        self._send_event(sock, "execution_started", {"operation_id": operation_id})
         sequence = 0
         budget = OperationOutputBudget(self.output_limits)
         output_error: str | None = None
-        interrupts = OutputInterruptGuard()
+        interrupts = OutputInterruptGuard(interrupt_handler=signal.default_int_handler)
+        execution_count = self.engine.shell.execution_count
         truncated_streams: set[str] = set()
 
         def output(event: str, data: dict[str, Any]) -> None:
@@ -267,8 +282,34 @@ class WorkerLoop:
                     # serialization failure; remember one bounded diagnostic.
                     output_error = "output is not representable by the worker JSON contract"
 
-        with interrupts:
-            outcome = self.engine.execute(source, cell_id=cell_id, output_sink=output)
+        try:
+            with interrupts:
+                # Commit the start frame under the same signal discipline as
+                # output frames. An immediate interrupt has a terminal response.
+                with interrupts.atomic():
+                    self._send_event(sock, "execution_started", {"operation_id": operation_id})
+                outcome = self.engine.execute(source, cell_id=cell_id, output_sink=output)
+        except KeyboardInterrupt:
+            # Also cover a signal while the guard itself is exiting. Repeat its
+            # idempotent restoration before generating terminal protocol frames.
+            interrupts.__exit__()
+            self.engine.shell.execution_count = max(self.engine.shell.execution_count, execution_count + 1)
+            outcome = ExecutionOutcome(
+                success=False, execution_count=execution_count,
+                stdout="", stderr="", displays=[], final_result=None,
+                error=ExecutionError("KeyboardInterrupt", "", []),
+            )
+
+        if outcome.execution_count is None:
+            # IPython can catch a runner interruption before assigning its
+            # result counter; empty cells also return without one. The worker
+            # wire still owes an accepted operation a numeric counter, matching
+            # the existing outer-interrupt path. Reserve the captured number
+            # without reusing it for the next cell or resetting live variables.
+            outcome.execution_count = execution_count
+            self.engine.shell.execution_count = max(
+                self.engine.shell.execution_count, execution_count + 1
+            )
 
         # Streams/displays/results were already published in production order.
         # Only source-side dropped bytes and the terminal exception remain.

@@ -8,9 +8,11 @@ use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 #[cfg(unix)]
-use cokernel_domain::{ExecutionOrigin, NotebookId, OperationId, OperationStatus, Project, ProjectId};
+use cokernel_domain::{
+    ExecutionOrigin, NotebookId, OperationId, OperationStatus, Project, ProjectId,
+};
 #[cfg(unix)]
 use cokernel_runtime::session::{
     SessionEvent, SessionInspectionError, SessionSupervisor, SessionSupervisorConfig,
@@ -30,10 +32,7 @@ impl TempWorkspace {
             .duration_since(UNIX_EPOCH)
             .context("system clock is before UNIX_EPOCH")?
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "cokernel-session-inspection-smoke-{}-{unique}",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("ckinsp-{}-{unique:x}", std::process::id()));
         fs::create_dir_all(&path)
             .with_context(|| format!("failed to create {}", path.display()))?;
         Ok(Self(path))
@@ -204,5 +203,7 @@ async fn wait_operation(
 
 #[cfg(not(unix))]
 fn main() {
-    println!("[session-inspection-smoke] SKIP: Unix-domain Session runtime is exercised in WSL/Linux");
+    println!(
+        "[session-inspection-smoke] SKIP: Unix-domain Session runtime is exercised in WSL/Linux"
+    );
 }

@@ -52,6 +52,7 @@ def check_lifecycle(frames):
     assert [f["payload"]["sequence"] for f in out] == list(range(1, len(out) + 1))
     finish = frames[-2]["payload"]
     result = frames[-1]["result"]
+    assert type(result["execution_count"]) is int and result["execution_count"] > 0
     assert finish["output_count"] == len(out)
     for field in ("status", "execution_count", "output_truncated", "output_omitted_bytes",
                   "output_truncation_reasons"):
@@ -65,6 +66,36 @@ def check_lifecycle(frames):
         assert finish["output_truncation_reasons"] == []
     else:
         assert finish["output_truncation_reasons"]
+
+
+def test_ipython_caught_runner_interrupt_keeps_numeric_wire_count_and_namespace(monkeypatch):
+    import IPython.core.interactiveshell as ipython
+    worker=WorkerLoop('runner-interrupt')
+    worker.engine.execute('marker=41')
+    before=worker.engine.shell.execution_count
+    def interrupted_runner(coro):
+        coro.close()
+        raise KeyboardInterrupt()
+    frames=[]
+    worker._send_message=lambda sock,frame: frames.append(json.loads(encode_json(frame)))
+    with monkeypatch.context() as patch:
+        patch.setattr(ipython,'_pseudo_sync_runner',interrupted_runner)
+        worker._execute(None,'op',{'operation_id':'op','source':'marker=0'})
+    check_lifecycle(frames)
+    assert frames[-1]['result']['execution_count']==before
+    assert outputs(frames)[-1]['payload']['ename']=='KeyboardInterrupt'
+    assert worker.engine.shell.execution_count==before+1
+    assert worker.engine.execute('marker+1').final_result.data['text/plain']=='42'
+
+
+@pytest.mark.parametrize('source',['',' \n\t'])
+def test_empty_cells_have_numeric_wire_count_and_preserve_next_execution(source):
+    worker,frames=record(source)
+    assert frames[-1]['result']['status']=='SUCCEEDED'
+    before=frames[-1]['result']['execution_count']
+    result=worker.engine.execute('40+2')
+    assert result.execution_count==before+1
+    assert result.final_result.data['text/plain']=='42'
 
 
 def test_production_preserves_mixed_output_order_and_execution_count():
@@ -225,6 +256,73 @@ def test_sigint_between_frame_write_and_sequence_commit_is_deferred():
     assert worker.engine.execute('marker+1').final_result.data['text/plain'] == '42'
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='SIGINT is a Linux/WSL worker contract')
+def test_sigint_at_execution_started_is_terminal_output_not_worker_exit():
+    worker = WorkerLoop('early-interrupt')
+    assert worker.engine.execute('marker=41').success
+    frames = []
+    previous = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    def send(sock, frame):
+        frames.append(json.loads(encode_json(frame)))
+        if frame.get('event') == 'execution_started':
+            signal.raise_signal(signal.SIGINT)
+    worker._send_message = send
+    try:
+        try:
+            worker._execute(None, 'op', {'operation_id':'op', 'source':'marker=0'})
+        except KeyboardInterrupt:
+            pytest.fail('SIGINT escaped the execution-start boundary and would terminate the worker')
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    check_lifecycle(frames)
+    assert frames[-1]['result']['status'] == 'FAILED'
+    assert outputs(frames)[-1]['payload']['ename'] == 'KeyboardInterrupt'
+    assert worker.engine.execute('marker+1').final_result.data['text/plain'] == '42'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='SIGINT is a Linux/WSL worker contract')
+def test_interrupt_during_capture_entry_restores_publisher_and_streams(monkeypatch):
+    from cokernel_worker.streaming import StreamingCapture
+    worker=WorkerLoop('capture-interrupt')
+    publisher=worker.engine.shell.display_pub
+    stdout,stderr=sys.stdout,sys.stderr
+    enter=StreamingCapture.__enter__
+    def interrupted_enter(capture):
+        enter(capture)
+        signal.raise_signal(signal.SIGINT)
+    frames=[]
+    worker._send_message=lambda sock,frame: frames.append(json.loads(encode_json(frame)))
+    with monkeypatch.context() as patch:
+        patch.setattr(StreamingCapture,'__enter__',interrupted_enter)
+        worker._execute(None,'op',{'operation_id':'op','source':'1+1'})
+    check_lifecycle(frames)
+    assert frames[-1]['result']['status']=='FAILED'
+    assert worker.engine.shell.display_pub is publisher
+    assert sys.stdout is stdout and sys.stderr is stderr
+    assert worker.engine.execute('40+2').final_result.data['text/plain']=='42'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='SIGINT is a Linux/WSL worker contract')
+def test_interrupt_while_execution_guard_exits_still_finishes_protocol(monkeypatch):
+    from cokernel_worker.streaming import OutputInterruptGuard
+    original=OutputInterruptGuard.__exit__
+    fired=False
+    def interrupted_exit(guard,*args):
+        nonlocal fired
+        if not fired:
+            fired=True
+            signal.raise_signal(signal.SIGINT)
+        original(guard,*args)
+    previous=signal.getsignal(signal.SIGINT)
+    with monkeypatch.context() as patch:
+        patch.setattr(OutputInterruptGuard,'__exit__',interrupted_exit)
+        worker,frames=record('marker=41')
+    assert signal.getsignal(signal.SIGINT)==previous
+    assert frames[-1]['result']['status']=='FAILED'
+    assert worker.engine.execute('marker+1').final_result.data['text/plain']=='42'
+
+
 @contextmanager
 def real_worker():
     if not hasattr(socket, 'AF_UNIX'):
@@ -326,6 +424,30 @@ def test_real_worker_interrupts_after_streaming_and_reuses_same_namespace():
         check_lifecycle(survivor)
         assert outputs(survivor)[0]['payload']['data']['text/plain']=='42'
         assert process.poll() is None
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='SIGINT is a Linux/WSL worker contract')
+def test_real_worker_ignores_idle_interrupt_and_handles_immediate_start_interrupt():
+    with real_worker() as (conn, process, root):
+        # A late interrupt must not destroy the next request's framing.
+        process.send_signal(signal.SIGINT)
+        request(conn, 'init', 'execute', {'operation_id':'init','source':'marker=41'})
+        assert read_until_response(conn)[-1]['result']['status'] == 'SUCCEEDED'
+        request(conn, 'op', 'execute', {'operation_id':'op','source':'import time\ntime.sleep(30)'})
+        frames=[]
+        while True:
+            frame=receive_frame(conn);frames.append(frame)
+            if frame.get('event') == 'execution_started':
+                break
+        process.send_signal(signal.SIGINT)
+        frames += read_until_response(conn)
+        check_lifecycle(frames)
+        assert frames[-1]['result']['status'] == 'FAILED'
+        process.send_signal(signal.SIGINT)
+        request(conn, 'next', 'execute', {'operation_id':'next','source':'marker+1'})
+        survivor=read_until_response(conn)
+        check_lifecycle(survivor)
+        assert outputs(survivor)[0]['payload']['data']['text/plain'] == '42'
 
 
 def test_wire_truncation_does_not_resume_stream_after_omitted_bytes():

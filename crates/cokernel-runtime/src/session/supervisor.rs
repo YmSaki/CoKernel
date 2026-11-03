@@ -23,16 +23,60 @@ pub struct SessionSupervisor {
     config: SessionSupervisorConfig,
     sessions: Arc<Mutex<HashMap<SessionId, SessionHandle>>>,
     primary_by_notebook: Arc<Mutex<HashMap<NotebookId, SessionId>>>,
-    start_lock: Arc<Mutex<()>>,
+    start_gate: Arc<tokio::sync::RwLock<()>>,
+    start_locks: Arc<Mutex<HashMap<NotebookId, std::sync::Weak<Mutex<()>>>>>,
+    failures: FailureStore,
+    events: crate::events::EventHub,
 }
 
 impl SessionSupervisor {
+    pub async fn diagnostics(&self) -> crate::diagnostics::SessionDiagnostics {
+        use crate::diagnostics::{SessionDiagnostic, SessionDiagnostics, SESSION_LIMIT};
+        let sessions = self.sessions.lock().await;
+        let total = sessions.len();
+        let items: Vec<_> = sessions.values().take(SESSION_LIMIT).map(|handle| SessionDiagnostic {
+            session_id: handle.session_id, state: handle.state(),
+            worker_generation: handle.worker_generation, environment_generation: handle.environment_generation,
+            last_failure: handle.last_failure.borrow().as_ref().map(Into::into),
+        }).collect();
+        SessionDiagnostics { managed_identity_configured:self.config.workload_identity.is_managed(),
+            total, omitted:total.saturating_sub(items.len()), items }
+    }
+    pub fn events(&self) -> crate::events::EventHub {self.events.clone()}
+    /// Runtime shutdown closes public admission first, then stops all Sessions.
+    pub async fn stop_all(&self) -> Vec<String> {
+        let _guard = self.start_gate.write().await;
+        let handles: Vec<_> = self.sessions.lock().await.values().cloned().collect();
+        let mut tasks = tokio::task::JoinSet::new();
+        let deadline = self.config.shutdown_timeout.saturating_add(RESTART_STOP_GRACE);
+        for handle in handles {
+            tasks.spawn(async move {
+                if !is_terminal_state(handle.state()) {
+                    tokio::time::timeout(deadline, async {
+                        handle.stop().await?;
+                        wait_until_terminal(&handle, deadline).await
+                    }).await.map_err(|_| "Session shutdown timed out".to_string())?
+                    .map_err(|e|e.to_string())?;
+                }
+                Ok::<(),String>(())
+            });
+        }
+        let mut errors=Vec::new();
+        while let Some(result)=tasks.join_next().await {
+            match result {Ok(Ok(()))=>{},Ok(Err(error))=>errors.push(error),Err(error)=>errors.push(error.to_string())}
+        }
+        errors
+    }
+
     pub fn new(config: SessionSupervisorConfig) -> Self {
         Self {
+            failures: FailureStore::new(config.failure_dir.clone()),
+            events: crate::events::EventHub::default(),
             config,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             primary_by_notebook: Arc::new(Mutex::new(HashMap::new())),
-            start_lock: Arc::new(Mutex::new(())),
+            start_gate: Arc::new(tokio::sync::RwLock::new(())),
+            start_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -41,8 +85,11 @@ impl SessionSupervisor {
         project: &Project,
         notebook_id: NotebookId,
     ) -> Result<SessionHandle, SessionError> {
-        let _guard = self.start_lock.lock().await;
+        let _gate = self.start_gate.read().await;
+        let lock = self.notebook_start_lock(notebook_id).await;
+        let _guard = lock.lock().await;
         if let Some(existing) = self.primary_handle(notebook_id).await {
+            if existing.project_id != project.project_id { return Err(SessionError::OwnershipMismatch); }
             match existing.state() {
                 SessionState::Stopped => {}
                 // Crash recovery is explicit. Returning the crashed/error handle preserves
@@ -85,13 +132,22 @@ impl SessionSupervisor {
             .collect()
     }
 
+    pub async fn failures(&self, session_id: SessionId) -> Result<Vec<FailureRecord>, std::io::Error> {
+        let store = self.failures.clone();
+        tokio::task::spawn_blocking(move || store.for_session(session_id))
+            .await.map_err(std::io::Error::other)?
+    }
+
     pub async fn restart_primary(
         &self,
         project: &Project,
         notebook_id: NotebookId,
     ) -> Result<SessionHandle, SessionError> {
-        let _guard = self.start_lock.lock().await;
+        let _gate = self.start_gate.read().await;
+        let lock = self.notebook_start_lock(notebook_id).await;
+        let _guard = lock.lock().await;
         let existing = self.primary_handle(notebook_id).await;
+        if existing.as_ref().is_some_and(|handle| handle.project_id != project.project_id) { return Err(SessionError::OwnershipMismatch); }
 
         let (session_id, worker_generation, started_at) = if let Some(existing) = existing {
             if !is_terminal_state(existing.state()) {
@@ -152,7 +208,14 @@ impl SessionSupervisor {
         }
     }
 
-    async fn primary_handle(&self, notebook_id: NotebookId) -> Option<SessionHandle> {
+    pub async fn mark_project_environment_uncertain(&self, project_id: ProjectId) {
+        let handles = self.sessions.lock().await.values()
+            .filter(|handle| handle.project_id == project_id && is_live_state(handle.state()))
+            .cloned().collect::<Vec<_>>();
+        for handle in handles { let _ = handle.mark_environment_stale().await; }
+    }
+
+    pub(crate) async fn primary_handle(&self, notebook_id: NotebookId) -> Option<SessionHandle> {
         let session_id = self
             .primary_by_notebook
             .lock()
@@ -160,6 +223,15 @@ impl SessionSupervisor {
             .get(&notebook_id)
             .copied()?;
         self.get(session_id).await
+    }
+
+    async fn notebook_start_lock(&self, notebook: NotebookId) -> Arc<Mutex<()>> {
+        let mut locks = self.start_locks.lock().await;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&notebook).and_then(std::sync::Weak::upgrade) { return lock; }
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(notebook, Arc::downgrade(&lock));
+        lock
     }
 
     async fn start_worker(
@@ -170,7 +242,7 @@ impl SessionSupervisor {
         worker_generation: u64,
         started_at: DateTime<Utc>,
     ) -> Result<SessionHandle, SessionError> {
-        prepare_socket_dir(&self.config.socket_dir)?;
+        self.config.workload_identity.prepare_socket_dir(&self.config.socket_dir)?;
         let socket_path = self
             .config
             .socket_dir
@@ -178,7 +250,7 @@ impl SessionSupervisor {
         let _ = fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path)?;
         let _socket_path_cleanup = SocketPathCleanup::new(socket_path.clone());
-        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(&socket_path, fs::Permissions::from_mode(self.config.workload_identity.socket_mode()))?;
 
         let mut command = uv_worker_command(
             &self.config.uv_executable,
@@ -187,6 +259,7 @@ impl SessionSupervisor {
             &socket_path,
             session_id,
         );
+        self.config.workload_identity.configure(command.as_std_mut(), Path::new(&project.root_path))?;
         let mut child = command.spawn()?;
         let launcher_pid = match child.id() {
             Some(pid) => pid,
@@ -197,6 +270,7 @@ impl SessionSupervisor {
                 ));
             }
         };
+        let process_group = WorkerProcessGroup::new(launcher_pid);
         let stderr_tail = Arc::new(Mutex::new(ByteTail::new(
             self.config.diagnostic_tail_bytes,
         )));
@@ -238,7 +312,7 @@ impl SessionSupervisor {
         };
 
         let mut stream = stream;
-        let peer_pid = match worker_peer_pid(&stream) {
+        let peer_pid = match worker_peer_pid(&stream, self.config.workload_identity.peer_uid()) {
             Ok(pid) => pid,
             Err(error) => {
                 terminate_child(&mut child).await;
@@ -303,10 +377,11 @@ impl SessionSupervisor {
         tokio::spawn(read_worker_frames(reader, worker_frames_tx));
 
         let (state_tx, state_rx) = watch::channel(SessionState::Idle);
+        let (failure_tx, failure_rx) = watch::channel(None);
         let (execute_tx, execute_rx) = mpsc::channel(EXECUTE_QUEUE_CAPACITY);
         let (inspection_tx, inspection_rx) = mpsc::channel(INSPECTION_QUEUE_CAPACITY);
-        let (control_tx, control_rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
-        let (events, _) = broadcast::channel(EVENT_QUEUE_CAPACITY);
+        let (control_tx, control_rx) = control::channel();
+        let events = SessionEventBus {local:broadcast::channel(EVENT_QUEUE_CAPACITY).0,global:self.events.clone(),project_id:project.project_id,notebook_id};
         let current_operation = Arc::new(StdMutex::new(None));
         let current_cell_id = Arc::new(StdMutex::new(None));
         let worker_started_at = Utc::now();
@@ -324,6 +399,7 @@ impl SessionSupervisor {
             control_tx,
             events: events.clone(),
             current_operation: current_operation.clone(),
+            last_failure: failure_rx,
         };
 
         let _ = events.send(SessionEvent::StateChanged {
@@ -335,6 +411,9 @@ impl SessionSupervisor {
             SessionActorContext {
                 session_id,
                 worker_pid: ready.pid,
+                process_group,
+                failure_store: self.failures.clone(),
+                last_failure: failure_tx,
                 worker_generation,
                 worker_started_at,
                 environment_generation: project.environment_generation,
@@ -392,14 +471,11 @@ async fn wait_until_terminal(
     Ok(())
 }
 
-fn prepare_socket_dir(path: &Path) -> Result<(), std::io::Error> {
-    fs::create_dir_all(path)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    Ok(())
-}
-
-fn worker_peer_pid(stream: &tokio::net::UnixStream) -> Result<u32, SessionError> {
+fn worker_peer_pid(stream: &tokio::net::UnixStream, expected_uid: u32) -> Result<u32, SessionError> {
     let credentials = stream.peer_cred()?;
+    if credentials.uid() != expected_uid {
+        return Err(SessionError::InvalidReady("worker peer UID does not match launch identity".into()));
+    }
     let pid = credentials.pid().ok_or_else(|| {
         SessionError::InvalidReady("worker Unix socket peer credentials omitted pid".into())
     })?;

@@ -1,6 +1,12 @@
 //! Windows/WSL bootstrap and installer support for CoKernel v1.
 //!
-//! Real implementation is tracked by #34. Keep destructive legacy-reset logic
-//! behind explicit authorization and tests; do not place it in ad-hoc scripts.
+//! Dedicated validation image/import primitives precede #34 installer UX.
+//! Destructive legacy reset remains behind explicit authorization and tests.
 
 pub const PRODUCT_DISTRO_NAME: &str = "CoKernelV1";
+
+pub mod image;
+#[cfg(target_os = "linux")]
+pub mod provision;
+#[cfg(windows)]
+pub mod windows;

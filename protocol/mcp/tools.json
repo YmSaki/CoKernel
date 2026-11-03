@@ -1,0 +1,495 @@
+[
+  {
+    "name": "list_projects",
+    "description": "List uv Projects registered with this Runtime.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "list_projects",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_notebooks",
+    "description": "List notebook paths and identities of currently open documents. Closed paths have no live document ID; open them in Desktop first.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "default": 32,
+          "maximum": 128,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "maximum": 100000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "list_notebooks",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "read_notebook",
+    "description": "Read a bounded cell page from an open notebook. Use the returned revision for subsequent pages/execution. Truncation is explicit; outputs are opt-in.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "include_outputs": {
+          "default": false,
+          "type": "boolean"
+        },
+        "limit": {
+          "default": 16,
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "notebook_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "offset": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "notebook_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "read_notebook",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_sessions",
+    "description": "List Sessions in one Project, including primary notebook identities and state.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "list_sessions",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "get_session",
+    "description": "Read Session state without starting it.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "get_session",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "ensure_session",
+    "description": "Return the notebook's shared primary Session, starting it only if needed. Human and AI use the same namespace.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "notebook_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "notebook_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "ensure_session",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "execute_cell",
+    "description": "Execute authoritative stored cell source in the shared FIFO. Code can have arbitrary effects. Returns an operation ID; use get_operation for completion. Never blindly retry an uncertain result.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cell_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "notebook_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "notebook_id",
+        "session_id",
+        "cell_id",
+        "expected_revision"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "execute_cell",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "interrupt_session",
+    "description": "Interrupt the current operation, including one started by the human. Previously executed effects remain.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "interrupt_session",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "restart_session",
+    "description": "Explicitly restart the notebook primary Session, losing its volatile variables; saved notebook files are retained.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "notebook_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "notebook_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "restart_session",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "stop_session",
+    "description": "Stop this Session and lose volatile memory. Notebook files are retained.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "stop_session",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_variables",
+    "description": "Read bounded variable metadata without evaluating repr or user expressions.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "session_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "list_variables",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "get_variable",
+    "description": "Read one identifier using exact-type bounded serialization in the existing Session. Custom objects are not evaluated.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "One Python identifier, not a keyword or expression. Worker validates again.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "session_id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "get_variable",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "get_runtime_status",
+    "description": "Read Runtime protocol/version/capabilities without starting a Session.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "get_runtime_status",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "get_resources",
+    "description": "Read cached Linux/WSL resources. Unavailable/stale values are explicit; these are not Windows host totals.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "get_resources",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "get_operation",
+    "description": "Read execution completion and persistence status by operation ID, scoped to its Project.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "operation_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "get_operation",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  }
+]

@@ -151,11 +151,12 @@ class OutputInterruptGuard:
     immediately after that short critical section, while still inside run_cell.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, interrupt_handler: Any = None) -> None:
         self.installed = False
         self.depth = 0
         self.pending: tuple[int, Any] | None = None
         self.previous: Any = None
+        self.interrupt_handler = interrupt_handler
 
     def __enter__(self) -> OutputInterruptGuard:
         if threading.current_thread() is threading.main_thread():
@@ -171,9 +172,10 @@ class OutputInterruptGuard:
             self.installed = False
 
     def _deliver(self, number: int, frame: Any) -> None:
-        if callable(self.previous):
-            self.previous(number, frame)
-        elif self.previous != signal.SIG_IGN:
+        handler = self.previous if self.interrupt_handler is None else self.interrupt_handler
+        if callable(handler):
+            handler(number, frame)
+        elif handler != signal.SIG_IGN:
             signal.default_int_handler(number, frame)
 
     def _handle(self, number: int, frame: Any) -> None:

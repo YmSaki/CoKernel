@@ -12,21 +12,23 @@ use cokernel_domain::{
     ExecutionOrigin, ExecutionSession, FailureClassification, FailureId, FailureRecord, NotebookId,
     OperationId, OperationStatus, Project, ProjectId, SessionId, SessionState,
 };
-use cokernel_protocol::worker::{self, WorkerFrame, WORKER_PROTOCOL_V1};
+use cokernel_protocol::worker::{self, WORKER_PROTOCOL_V1, WorkerFrame};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::net::{unix::OwnedReadHalf, unix::OwnedWriteHalf, UnixListener};
-use tokio::process::{Child, Command};
-use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
+use tokio::net::{UnixListener, unix::OwnedReadHalf, unix::OwnedWriteHalf};
+use tokio::process::Child;
+use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
 use tokio::time::{sleep, timeout};
 
-use crate::worker::{read_worker_frame, uv_worker_command, write_worker_frame, WorkerTransportError};
+use crate::failure_store::FailureStore;
+use crate::worker::{
+    WorkerTransportError, read_worker_frame, uv_worker_command, write_worker_frame,
+};
 
 const EXECUTE_QUEUE_CAPACITY: usize = 128;
 const INSPECTION_QUEUE_CAPACITY: usize = 32;
-const CONTROL_QUEUE_CAPACITY: usize = 16;
 const EVENT_QUEUE_CAPACITY: usize = 512;
 const WORKER_FRAME_QUEUE_CAPACITY: usize = 512;
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -37,9 +39,11 @@ const MAX_INSPECTION_METADATA_CHARS: usize = 65_536;
 
 #[derive(Debug, Clone)]
 pub struct SessionSupervisorConfig {
+    pub workload_identity: crate::workload_identity::WorkloadIdentity,
     pub uv_executable: PathBuf,
     pub worker_package: PathBuf,
     pub socket_dir: PathBuf,
+    pub failure_dir: PathBuf,
     pub startup_timeout: Duration,
     pub shutdown_timeout: Duration,
     pub heartbeat_timeout: Duration,
@@ -48,10 +52,13 @@ pub struct SessionSupervisorConfig {
 
 impl SessionSupervisorConfig {
     pub fn development(worker_package: impl Into<PathBuf>, socket_dir: impl Into<PathBuf>) -> Self {
+        let socket_dir = socket_dir.into();
         Self {
+            workload_identity: Default::default(),
             uv_executable: PathBuf::from("uv"),
             worker_package: worker_package.into(),
-            socket_dir: socket_dir.into(),
+            failure_dir: socket_dir.join("failures"),
+            socket_dir,
             startup_timeout: Duration::from_secs(15),
             shutdown_timeout: Duration::from_secs(3),
             heartbeat_timeout: Duration::from_secs(10),
@@ -82,6 +89,8 @@ pub enum SessionError {
     CommandChannelClosed,
     #[error("session {0} did not stop before restart timeout")]
     StopTimeout(SessionId),
+    #[error("Session does not belong to the requested Project")]
+    OwnershipMismatch,
 }
 
 #[derive(Debug, Error)]
@@ -129,8 +138,9 @@ fn validate_inspection_response_size(
     label: &str,
     result: &Value,
 ) -> Result<(), SessionInspectionError> {
-    let bytes = serde_json::to_vec(result)
-        .map_err(|error| invalid_inspection_response(format!("{label} is not JSON encodable: {error}")))?;
+    let bytes = serde_json::to_vec(result).map_err(|error| {
+        invalid_inspection_response(format!("{label} is not JSON encodable: {error}"))
+    })?;
     if bytes.len() > MAX_INSPECTION_RESPONSE_BYTES {
         return Err(invalid_inspection_response(format!(
             "{label} exceeds maximum serialized response size"
@@ -177,11 +187,7 @@ fn validate_variable_list_result(
             "type_module",
             &variable.type_module,
         )?;
-        validate_inspection_metadata(
-            "list_variables result",
-            "type_name",
-            &variable.type_name,
-        )?;
+        validate_inspection_metadata("list_variables result", "type_name", &variable.type_name)?;
         if !names.insert(variable.name.clone()) {
             return Err(invalid_inspection_response(format!(
                 "list_variables returned duplicate variable {:?}",
@@ -225,11 +231,7 @@ fn validate_variable_value_result(
         )));
     }
     validate_inspection_metadata("get_variable result", "name", &value.name)?;
-    validate_inspection_metadata(
-        "get_variable result",
-        "type_module",
-        &value.type_module,
-    )?;
+    validate_inspection_metadata("get_variable result", "type_module", &value.type_module)?;
     validate_inspection_metadata("get_variable result", "type_name", &value.type_name)?;
 
     if value.supported {
@@ -244,11 +246,15 @@ fn validate_variable_value_result(
                 "unsupported get_variable result must carry null value",
             ));
         }
-        let reason = value.reason.as_deref().filter(|reason| !reason.is_empty()).ok_or_else(|| {
-            invalid_inspection_response(
-                "unsupported get_variable result requires a non-empty reason",
-            )
-        })?;
+        let reason = value
+            .reason
+            .as_deref()
+            .filter(|reason| !reason.is_empty())
+            .ok_or_else(|| {
+                invalid_inspection_response(
+                    "unsupported get_variable result requires a non-empty reason",
+                )
+            })?;
         if reason.chars().count() > MAX_INSPECTION_METADATA_CHARS {
             return Err(invalid_inspection_response(
                 "get_variable result reason exceeds maximum length",
@@ -303,8 +309,117 @@ pub enum SessionEvent {
         status: OperationStatus,
     },
     Failure {
-        record: FailureRecord,
+        record: Box<FailureRecord>,
     },
+    FailurePersistenceFailed {
+        session_id: SessionId,
+        failure_id: FailureId,
+        error: String,
+    },
+}
+
+#[derive(Clone)]
+struct SessionEventBus {
+    local: broadcast::Sender<SessionEvent>,
+    global: crate::events::EventHub,
+    project_id: ProjectId,
+    notebook_id: NotebookId,
+}
+impl SessionEventBus {
+    fn subscribe(&self) -> broadcast::Receiver<SessionEvent> {
+        self.local.subscribe()
+    }
+    fn send(&self, event: SessionEvent) -> Option<usize> {
+        let observation = match &event {
+            SessionEvent::StateChanged { session_id, state } => Some((
+                "session.state_changed",
+                json!({"session_id":session_id,"state":state}),
+            )),
+            SessionEvent::OperationQueued {
+                session_id,
+                operation_id,
+                origin,
+            } => Some((
+                "session.execution_queued",
+                json!({"session_id":session_id,"operation_id":operation_id,"origin":origin}),
+            )),
+            SessionEvent::OperationFinished {
+                session_id,
+                operation_id,
+                status,
+            } => Some((
+                "session.execution_finished",
+                json!({"session_id":session_id,"operation_id":operation_id,"status":status}),
+            )),
+            SessionEvent::Failure { record } => Some((
+                "session.failure",
+                json!({"session_id":record.session_id,"failure_id":record.failure_id,"classification":record.classification}),
+            )),
+            SessionEvent::FailurePersistenceFailed {
+                session_id,
+                failure_id,
+                ..
+            } => Some((
+                "session.failure_persistence_failed",
+                json!({"session_id":session_id,"failure_id":failure_id}),
+            )),
+            SessionEvent::WorkerFrame {
+                session_id,
+                frame: WorkerFrame::Event { event, payload, .. },
+            } => match event.as_str() {
+                worker::event::EXECUTION_STARTED => Some((
+                    "session.execution_started",
+                    json!({"session_id":session_id,"data":payload}),
+                )),
+                worker::event::STDOUT
+                | worker::event::STDERR
+                | worker::event::EXECUTE_RESULT
+                | worker::event::DISPLAY_DATA
+                | worker::event::ERROR
+                | worker::event::WORKER_WARNING => Some((
+                    "session.output",
+                    json!({"session_id":session_id,"kind":event,"data":payload}),
+                )),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((name, mut payload)) = observation {
+            payload["project_id"] = json!(self.project_id);
+            payload["notebook_id"] = json!(self.notebook_id);
+            self.global.publish(name, payload);
+        }
+        self.local.send(event).ok()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionFailure {
+    pub record: FailureRecord,
+    /// None means the durable write completed; Some means only live evidence is available.
+    pub persistence_error: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ExecutionCapture {
+    pub operation_id: OperationId,
+    pub status: OperationStatus,
+    /// Validated ordered frames. Overflow is explicit; a partial capture is
+    /// never handed to notebook persistence as if it were complete.
+    pub frames: Result<Vec<WorkerFrame>, String>,
+}
+
+pub struct ExecutionReceipt {
+    pub operation_id: OperationId,
+    completion: oneshot::Receiver<ExecutionCapture>,
+}
+
+impl ExecutionReceipt {
+    pub async fn completed(self) -> Result<ExecutionCapture, SessionError> {
+        self.completion
+            .await
+            .map_err(|_| SessionError::CommandChannelClosed)
+    }
 }
 
 #[derive(Clone)]
@@ -318,9 +433,10 @@ pub struct SessionHandle {
     state_rx: watch::Receiver<SessionState>,
     execute_tx: mpsc::Sender<ExecuteRequest>,
     inspection_tx: mpsc::Sender<InspectionRequest>,
-    control_tx: mpsc::Sender<ControlRequest>,
-    events: broadcast::Sender<SessionEvent>,
+    control_tx: control::ControlSender,
+    events: SessionEventBus,
     current_operation: Arc<StdMutex<Option<OperationId>>>,
+    last_failure: watch::Receiver<Option<SessionFailure>>,
 }
 
 impl SessionHandle {
@@ -353,18 +469,50 @@ impl SessionHandle {
         self.events.subscribe()
     }
 
+    pub fn last_failure(&self) -> Option<SessionFailure> {
+        self.last_failure.borrow().clone()
+    }
+
     pub async fn execute_cell(
         &self,
         origin: ExecutionOrigin,
         cell_id: impl Into<String>,
         source: impl Into<String>,
     ) -> Result<OperationId, SessionError> {
+        self.queue_execution(origin, cell_id.into(), source.into(), None)
+            .await
+    }
+
+    pub async fn execute_cell_captured(
+        &self,
+        origin: ExecutionOrigin,
+        cell_id: impl Into<String>,
+        source: impl Into<String>,
+    ) -> Result<ExecutionReceipt, SessionError> {
+        let (completion, receiver) = oneshot::channel();
+        let operation_id = self
+            .queue_execution(origin, cell_id.into(), source.into(), Some(completion))
+            .await?;
+        Ok(ExecutionReceipt {
+            operation_id,
+            completion: receiver,
+        })
+    }
+
+    async fn queue_execution(
+        &self,
+        origin: ExecutionOrigin,
+        cell_id: String,
+        source: String,
+        completion: Option<oneshot::Sender<ExecutionCapture>>,
+    ) -> Result<OperationId, SessionError> {
         let operation_id = OperationId::new();
         let request = ExecuteRequest {
             operation_id,
             origin,
-            cell_id: Some(cell_id.into()),
-            source: source.into(),
+            cell_id: Some(cell_id),
+            source,
+            completion,
         };
         validate_execute_request_frame(self.session_id, &request)?;
         let permit = self
@@ -425,24 +573,15 @@ impl SessionHandle {
     }
 
     pub async fn interrupt(&self) -> Result<(), SessionError> {
-        self.control_tx
-            .send(ControlRequest::Interrupt)
-            .await
-            .map_err(|_| SessionError::CommandChannelClosed)
+        self.control_tx.send(ControlRequest::Interrupt)
     }
 
     pub async fn stop(&self) -> Result<(), SessionError> {
-        self.control_tx
-            .send(ControlRequest::Stop)
-            .await
-            .map_err(|_| SessionError::CommandChannelClosed)
+        self.control_tx.send(ControlRequest::Stop)
     }
 
     pub async fn mark_environment_stale(&self) -> Result<(), SessionError> {
-        self.control_tx
-            .send(ControlRequest::MarkEnvironmentStale)
-            .await
-            .map_err(|_| SessionError::CommandChannelClosed)
+        self.control_tx.send(ControlRequest::MarkEnvironmentStale)
     }
 }
 
@@ -487,6 +626,7 @@ mod request_frame_tests {
             origin: ExecutionOrigin::Human,
             cell_id: Some("cell-1".into()),
             source: "x = 1\nx + 1".into(),
+            completion: None,
         };
         assert!(validate_execute_request_frame(SessionId::new(), &request).is_ok());
     }
@@ -498,6 +638,7 @@ mod request_frame_tests {
             origin: ExecutionOrigin::Human,
             cell_id: Some("cell-oversized".into()),
             source: "x".repeat(cokernel_protocol::DEFAULT_MAX_FRAME_BYTES),
+            completion: None,
         };
         let error = validate_execute_request_frame(SessionId::new(), &request).unwrap_err();
         assert!(matches!(
@@ -510,12 +651,14 @@ mod request_frame_tests {
 
     #[test]
     fn inspection_request_preflight_accepts_small_frame() {
-        assert!(validate_inspection_request_frame(
-            SessionId::new(),
-            worker::method::GET_VARIABLE,
-            &json!({"name": "x"}),
-        )
-        .is_ok());
+        assert!(
+            validate_inspection_request_frame(
+                SessionId::new(),
+                worker::method::GET_VARIABLE,
+                &json!({"name": "x"}),
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -530,7 +673,9 @@ mod request_frame_tests {
     }
 }
 
+mod control;
 include!("session/supervisor.rs");
+include!("session/process_group.rs");
 include!("session/actor.rs");
 include!("session/lifecycle.rs");
 
@@ -539,3 +684,59 @@ include!("session/tests.rs");
 
 #[cfg(test)]
 include!("session/inspection_contract_tests.rs");
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+    #[test]
+    fn global_stream_carries_domain_identity_but_not_private_worker_responses_or_heartbeats() {
+        let global = crate::events::EventHub::default();
+        let (mut observations, _) = global.subscribe();
+        let bus = SessionEventBus {
+            local: broadcast::channel(8).0,
+            global,
+            project_id: ProjectId::new(),
+            notebook_id: NotebookId::new(),
+        };
+        let session_id = SessionId::new();
+        let mut local = bus.subscribe();
+        let _ = bus.send(SessionEvent::WorkerFrame {
+            session_id,
+            frame: WorkerFrame::Response {
+                protocol: 1,
+                id: "inspection".into(),
+                session_id: session_id.to_string(),
+                ok: true,
+                result: Some(json!({"private_variable":"sent-only-to-requester"})),
+                error: None,
+            },
+        });
+        assert!(local.try_recv().is_ok());
+        assert!(matches!(
+            observations.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        let _ = bus.send(SessionEvent::WorkerFrame {
+            session_id,
+            frame: WorkerFrame::Event {
+                protocol: 1,
+                session_id: session_id.to_string(),
+                event: worker::event::HEARTBEAT.into(),
+                payload: json!({}),
+            },
+        });
+        assert!(matches!(
+            observations.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        let _ = bus.send(SessionEvent::StateChanged {
+            session_id,
+            state: SessionState::Executing,
+        });
+        let event = observations.try_recv().unwrap();
+        assert_eq!(event.event, "session.state_changed");
+        assert_eq!(event.payload["project_id"], json!(bus.project_id));
+        assert_eq!(event.payload["notebook_id"], json!(bus.notebook_id));
+        assert_eq!(event.payload["session_id"], json!(session_id));
+    }
+}

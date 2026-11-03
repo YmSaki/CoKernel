@@ -15,7 +15,7 @@ async fn graceful_stop(
     match timeout(context.shutdown_timeout, child.wait()).await {
         Ok(Ok(_)) => {}
         _ => {
-            let _ = send_signal(context.worker_pid, "TERM").await;
+            let _ = send_signal(context.worker_pid, libc::SIGTERM).await;
             match timeout(Duration::from_millis(250), child.wait()).await {
                 Ok(Ok(_)) => {}
                 _ => {
@@ -23,6 +23,10 @@ async fn graceful_stop(
                 }
             }
         }
+    }
+    if let Err(error) = context.process_group.terminate() {
+        record_crash(context, child, SessionError::Io(error)).await;
+        return;
     }
     forget_oom_baseline(context.worker_pid);
     clear_current_operation(context);
@@ -43,6 +47,9 @@ async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
         recent_session_events: take_session_event_tail(context.worker_pid),
     };
     let evidence = collect_failure_evidence(context.worker_pid, Some(runtime_event_context));
+    if let Err(error) = context.process_group.terminate() {
+        append_failure_detail(&mut *context.stderr_tail.lock().await, &format!("process group cleanup failed: {error}"));
+    }
     let (classification, confidence) = apply_oom_classification(
         classify_exit_ref(&status),
         0.8,
@@ -58,8 +65,7 @@ async fn record_exit(context: &SessionActorContext, status: ExitStatus) {
     )
     .await;
     finish_current_operation(context, OperationStatus::Failed);
-    set_state(context, SessionState::Crashed);
-    let _ = context.events.send(SessionEvent::Failure { record });
+    persist_and_publish_failure(context, record).await;
 }
 
 async fn record_crash(context: &SessionActorContext, child: &mut Child, error: SessionError) {
@@ -77,7 +83,7 @@ async fn record_crash(context: &SessionActorContext, child: &mut Child, error: S
     let observed_status = child.try_wait().ok().flatten();
     let supervisor_terminated = observed_status.is_none();
     if supervisor_terminated {
-        let _ = send_signal(context.worker_pid, "TERM").await;
+        let _ = send_signal(context.worker_pid, libc::SIGTERM).await;
     }
     let status = match observed_status {
         Some(status) => Some(status),
@@ -86,6 +92,9 @@ async fn record_crash(context: &SessionActorContext, child: &mut Child, error: S
             _ => terminate_child(child).await,
         },
     };
+    if let Err(error) = context.process_group.terminate() {
+        append_failure_detail(&mut *context.stderr_tail.lock().await, &format!("process group cleanup failed: {error}"));
+    }
     let (base_classification, base_confidence) =
         crash_classification(status.as_ref(), supervisor_terminated);
     let (classification, confidence) = if supervisor_terminated {
@@ -100,7 +109,7 @@ async fn record_crash(context: &SessionActorContext, child: &mut Child, error: S
         )
     };
     if !detail.is_empty() {
-        append_failure_detail(&mut context.stderr_tail.lock().await, &detail);
+        append_failure_detail(&mut *context.stderr_tail.lock().await, &detail);
     }
     let record = failure_record(
         context,
@@ -112,8 +121,27 @@ async fn record_crash(context: &SessionActorContext, child: &mut Child, error: S
     )
     .await;
     finish_current_operation(context, OperationStatus::Failed);
+    persist_and_publish_failure(context, record).await;
+}
+
+async fn persist_and_publish_failure(context: &SessionActorContext, record: FailureRecord) {
+    let store = context.failure_store.clone();
+    let saved = record.clone();
+    let persistence_error = match tokio::task::spawn_blocking(move || store.persist(&saved)).await {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(truncate_failure_detail(&error.to_string())),
+        Err(error) => Some(truncate_failure_detail(&error.to_string())),
+    };
+    context.last_failure.send_replace(Some(SessionFailure {
+        record: record.clone(), persistence_error: persistence_error.clone(),
+    }));
     set_state(context, SessionState::Crashed);
-    let _ = context.events.send(SessionEvent::Failure { record });
+    if let Some(error) = persistence_error {
+        let _ = context.events.send(SessionEvent::FailurePersistenceFailed {
+            session_id: context.session_id, failure_id: record.failure_id, error,
+        });
+    }
+    let _ = context.events.send(SessionEvent::Failure { record: Box::new(record) });
 }
 
 async fn failure_record(
@@ -315,7 +343,7 @@ fn failure_trigger(error: &SessionError) -> cokernel_domain::FailureTrigger {
         SessionError::WorkerHeartbeatTimeout(_) => cokernel_domain::FailureTrigger::HeartbeatTimeout,
         SessionError::WorkerTransport(_) => cokernel_domain::FailureTrigger::WorkerProtocol,
         SessionError::Io(_) => cokernel_domain::FailureTrigger::RuntimeIo,
-        SessionError::CommandChannelClosed | SessionError::StopTimeout(_) => {
+        SessionError::CommandChannelClosed | SessionError::StopTimeout(_) | SessionError::OwnershipMismatch => {
             cokernel_domain::FailureTrigger::RuntimeControl
         }
         SessionError::StartupTimeout | SessionError::InvalidReady(_) => {

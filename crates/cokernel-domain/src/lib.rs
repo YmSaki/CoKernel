@@ -41,6 +41,7 @@ macro_rules! domain_id {
 
 domain_id!(ProjectId);
 domain_id!(NotebookId);
+domain_id!(ImportId);
 domain_id!(SessionId);
 domain_id!(OperationId);
 domain_id!(FailureId);
@@ -303,3 +304,4 @@ mod tests {
         assert_eq!(initial_worker_generation(), 1);
     }
 }
+pub mod resources;

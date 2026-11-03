@@ -10,3 +10,11 @@ anyhow.workspace = true
 cokernel-domain = { path = "../cokernel-domain" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+tar = "0.4"
+flate2 = "1"
+tokio.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

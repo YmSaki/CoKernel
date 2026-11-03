@@ -28,11 +28,13 @@ def run_runtime(args: list[str], env: dict[str, str]) -> object:
         command,
         cwd=ROOT,
         env=env,
-        check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
+    if completed.returncode:
+        raise RuntimeError(f"runtime command failed ({completed.returncode}): {completed.stderr}")
     try:
         return json.loads(completed.stdout)
     except json.JSONDecodeError as exc:

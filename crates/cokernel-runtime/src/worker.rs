@@ -4,7 +4,7 @@ use std::process::Stdio;
 use cokernel_domain::SessionId;
 use cokernel_protocol::worker::{self, WorkerFrame};
 use cokernel_protocol::{
-    decode_json_payload, encode_json_frame, FrameError, DEFAULT_MAX_FRAME_BYTES,
+    DEFAULT_MAX_FRAME_BYTES, FrameError, decode_json_payload, encode_json_frame,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -83,9 +83,8 @@ fn validate_worker_inbound_frame(frame: &WorkerFrame) -> Result<(), WorkerTransp
                         "successful worker response omitted result".into(),
                     ));
                 }
-                if let Some(operation_id) = result
-                    .as_ref()
-                    .and_then(|value| value.get("operation_id"))
+                if let Some(operation_id) =
+                    result.as_ref().and_then(|value| value.get("operation_id"))
                 {
                     let operation_id = operation_id.as_str().ok_or_else(|| {
                         WorkerTransportError::Protocol(
@@ -238,16 +237,22 @@ fn validate_worker_event_payload(event: &str, payload: &Value) -> Result<(), Wor
             require_operation_id(event, payload)?;
             require_sequence(event, payload)?;
             required_string(event, payload, "ename")?;
-            payload.get("evalue").and_then(Value::as_str).ok_or_else(|| {
-                WorkerTransportError::Protocol(
-                    "worker error event requires string field \"evalue\"".into(),
-                )
-            })?;
-            let traceback = payload.get("traceback").and_then(Value::as_array).ok_or_else(|| {
-                WorkerTransportError::Protocol(
-                    "worker error event requires array field \"traceback\"".into(),
-                )
-            })?;
+            payload
+                .get("evalue")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker error event requires string field \"evalue\"".into(),
+                    )
+                })?;
+            let traceback = payload
+                .get("traceback")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    WorkerTransportError::Protocol(
+                        "worker error event requires array field \"traceback\"".into(),
+                    )
+                })?;
             if traceback.iter().any(|line| !line.is_string()) {
                 return Err(WorkerTransportError::Protocol(
                     "worker error traceback entries must be strings".into(),
@@ -266,7 +271,11 @@ fn validate_worker_event_payload(event: &str, payload: &Value) -> Result<(), Wor
                 }
             }
             required_u64(event, payload, "output_count")?;
-            if payload.get("output_truncated").and_then(Value::as_bool).is_none() {
+            if payload
+                .get("output_truncated")
+                .and_then(Value::as_bool)
+                .is_none()
+            {
                 return Err(WorkerTransportError::Protocol(
                     "worker execution_finished requires boolean field \"output_truncated\"".into(),
                 ));
@@ -319,6 +328,9 @@ pub fn uv_worker_command(
     session_id: SessionId,
 ) -> Command {
     let mut command = Command::new(uv_executable);
+    crate::workload::configure(command.as_std_mut(), project_root);
+    #[cfg(unix)]
+    command.process_group(0);
     command
         .arg("run")
         .arg("--project")
@@ -331,7 +343,6 @@ pub fn uv_worker_command(
         .arg(socket_path)
         .arg("--session-id")
         .arg(session_id.to_string())
-        .env("UV_NO_PROGRESS", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -342,7 +353,7 @@ pub fn uv_worker_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cokernel_protocol::worker::{WorkerError, WORKER_PROTOCOL_V1};
+    use cokernel_protocol::worker::{WORKER_PROTOCOL_V1, WorkerError};
     use serde_json::json;
     use tokio::io::duplex;
 

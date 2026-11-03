@@ -8,7 +8,7 @@ use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 #[cfg(unix)]
 use cokernel_domain::{
     ExecutionOrigin, NotebookId, OperationId, OperationStatus, Project, ProjectId, SessionId,
@@ -42,10 +42,7 @@ impl TempWorkspace {
             .duration_since(UNIX_EPOCH)
             .context("system clock is before UNIX_EPOCH")?
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "cokernel-session-supervisor-smoke-{}-{unique}",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("cksup-{}-{unique:x}", std::process::id()));
         fs::create_dir_all(&path)
             .with_context(|| format!("failed to create {}", path.display()))?;
         Ok(Self(path))
@@ -101,7 +98,11 @@ async fn main() -> Result<()> {
     // Human and MCP executions must share one FIFO. Hold the first operation in-flight,
     // enqueue two callers from different origins, then prove acceptance order through state.
     let init_fifo = session_a
-        .execute_cell(ExecutionOrigin::Human, "cell-a-fifo-init", "fifo_order = []")
+        .execute_cell(
+            ExecutionOrigin::Human,
+            "cell-a-fifo-init",
+            "fifo_order = []",
+        )
         .await?;
     expect_success(wait_operation(&mut events_a, init_fifo).await?, None)?;
 
@@ -174,9 +175,12 @@ async fn main() -> Result<()> {
         .execute_cell(ExecutionOrigin::Human, "cell-b2", "21 * 2")
         .await?;
     expect_success(
-        timeout(Duration::from_secs(2), wait_operation(&mut events_b, fast_b))
-            .await
-            .context("Session B did not finish while Session A was busy")??,
+        timeout(
+            Duration::from_secs(2),
+            wait_operation(&mut events_b, fast_b),
+        )
+        .await
+        .context("Session B did not finish while Session A was busy")??,
         Some("42"),
     )?;
     if session_a.state() != SessionState::Executing {
@@ -185,7 +189,10 @@ async fn main() -> Result<()> {
             session_a.state()
         );
     }
-    expect_success(wait_operation(&mut events_a, slow_a).await?, Some("'A-done'"))?;
+    expect_success(
+        wait_operation(&mut events_a, slow_a).await?,
+        Some("'A-done'"),
+    )?;
 
     // Interrupt must preserve the worker and namespace rather than restart it.
     let remember_b = session_b
@@ -207,9 +214,14 @@ async fn main() -> Result<()> {
     session_b.interrupt().await?;
     let interrupted_result = wait_operation(&mut events_b, interrupted).await?;
     if interrupted_result.status != OperationStatus::Interrupted {
+        let failure = timeout(
+            Duration::from_secs(5),
+            wait_failure(&mut events_b, session_b.session_id()),
+        )
+        .await;
         bail!(
-            "interrupt returned {:?}, expected INTERRUPTED",
-            interrupted_result.status
+            "interrupt returned {:?}, expected INTERRUPTED; failure={failure:?}",
+            interrupted_result.status,
         );
     }
     wait_for_state(&session_b, SessionState::Idle, Duration::from_secs(5)).await?;
@@ -335,13 +347,54 @@ async fn main() -> Result<()> {
         Some("42"),
     )?;
 
+    let receipt = restarted_b.execute_cell_captured(
+        ExecutionOrigin::Human, "capture-cell",
+        "from IPython.display import display, HTML\nprint('captured-stream')\ndisplay(HTML('<b>captured-html</b>'))\n124",
+    ).await?;
+    let operation = receipt.operation_id;
+    let capture = timeout(Duration::from_secs(10), receipt.completed()).await??;
+    let outputs = cokernel_runtime::notebook::NotebookOutputs::from_frames(
+        operation,
+        &capture.frames.map_err(anyhow::Error::msg)?,
+    )?;
+    if !outputs.outputs().iter().any(|o| {
+        o["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("captured-stream"))
+    }) || !outputs
+        .outputs()
+        .iter()
+        .any(|o| o["data"]["text/html"] == "<b>captured-html</b>")
+        || !outputs
+            .outputs()
+            .iter()
+            .any(|o| o["data"]["text/plain"] == "124")
+    {
+        bail!("real-worker capture lost stream/rich/expression output");
+    }
+    let receipt = restarted_b
+        .execute_cell_captured(
+            ExecutionOrigin::Mcp,
+            "capture-error",
+            "raise ValueError('capture test')",
+        )
+        .await?;
+    let operation = receipt.operation_id;
+    let capture = timeout(Duration::from_secs(10), receipt.completed()).await??;
+    if capture.status != OperationStatus::Failed {
+        bail!("expected captured Python exception");
+    }
+    let outputs = cokernel_runtime::notebook::NotebookOutputs::from_frames(
+        operation,
+        &capture.frames.map_err(anyhow::Error::msg)?,
+    )?;
+    if !outputs.outputs().iter().any(|o| o["ename"] == "ValueError") {
+        bail!("real-worker capture lost exception output");
+    }
+    println!("[captured-output-smoke] PASS");
+
     restarted_b.stop().await?;
-    wait_for_state(
-        &restarted_b,
-        SessionState::Stopped,
-        Duration::from_secs(5),
-    )
-    .await?;
+    wait_for_state(&restarted_b, SessionState::Stopped, Duration::from_secs(5)).await?;
 
     println!("[session-supervisor-smoke] PASS");
     Ok(())
@@ -385,12 +438,11 @@ async fn wait_operation(
         loop {
             match events.recv().await {
                 Ok(SessionEvent::WorkerFrame {
-                    frame:
-                        WorkerFrame::Event {
-                            event, payload, ..
-                        },
+                    frame: WorkerFrame::Event { event, payload, .. },
                     ..
-                }) if payload.get("operation_id").and_then(serde_json::Value::as_str)
+                }) if payload
+                    .get("operation_id")
+                    .and_then(serde_json::Value::as_str)
                     == Some(operation_key.as_str())
                     && event == worker::event::EXECUTE_RESULT =>
                 {
@@ -444,7 +496,7 @@ async fn wait_failure(
         loop {
             match events.recv().await {
                 Ok(SessionEvent::Failure { record }) if record.session_id == Some(session_id) => {
-                    return Ok(record);
+                    return Ok(*record);
                 }
                 Ok(_) => {}
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -485,5 +537,7 @@ async fn wait_for_state(
 
 #[cfg(not(unix))]
 fn main() {
-    println!("[session-supervisor-smoke] SKIP: Unix-domain Session runtime is exercised in WSL/Linux");
+    println!(
+        "[session-supervisor-smoke] SKIP: Unix-domain Session runtime is exercised in WSL/Linux"
+    );
 }

@@ -1,0 +1,38 @@
+:root { font-family: 'Segoe UI', 'Yu Gothic UI', sans-serif; color: #202a3a; background: #f5f7fa; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, select { font: inherit; }
+button { cursor: pointer; border: 0; border-radius: 7px; background: #255fbe; color: white; padding: 10px 16px; }
+button:hover { filter: brightness(.94); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #79a5ef; outline-offset: 3px; }
+button:disabled { cursor: wait; opacity: .5; }
+#app { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: 100vh; }
+aside { background: #15263d; color: #f7fafc; padding: 30px 20px; display: flex; flex-direction: column; gap: 12px; }
+.brand { font-size: 25px; font-weight: 650; letter-spacing: -.8px; }
+aside .muted, .sidebar-note { color: #b5c4d7; font-size: 13px; }
+.sidebar-note { margin-top: auto; line-height: 1.7; }
+.nav { text-align: left; background: #294363; }
+main { padding: 28px 36px 50px; max-width: 1240px; width: 100%; }
+header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+h1 { margin: 0 auto 0 0; font-size: 24px; overflow-wrap: anywhere; }
+h2 { font-size: 16px; margin: 0 0 18px; }
+p { line-height: 1.6; }
+.badge { font-size: 12px; color: #23663f; background: #e4f1e8; padding: 6px 10px; border-radius: 20px; white-space: nowrap; }
+.badge.offline { color: #854b13; background: #fff0d9; }
+.secondary { color: #304766; background: #e8edf4; }
+.notice { color: #874915; white-space: pre-wrap; line-height: 1.6; margin-bottom: 18px; }
+.notice:empty { display: none; }
+.summary { display: flex; gap: 18px; margin-bottom: 28px; flex-wrap: wrap; }
+.stat { background: white; border: 1px solid #e0e5ec; border-radius: 10px; padding: 20px 24px; min-width: 200px; display: flex; flex-direction: column; gap: 8px; }
+.stat strong { font-size: 21px; }
+.muted, small { color: #637187; font-size: 13px; }
+.project-list { display: grid; gap: 10px; margin-bottom: 28px; }
+.project { background: white; color: inherit; border: 1px solid #e0e5ec; display: flex; flex-direction: column; align-items: start; gap: 8px; text-align: left; padding: 18px 22px; }
+.project:hover { border-color: #8baee7; background: #f8faff; filter: none; }
+.path { overflow-wrap: anywhere; font-size: 12px; color: #637187; }
+.panel { padding: 24px; margin-bottom: 18px; border: 1px solid #e0e5ec; border-radius: 10px; background: white; }
+form { display: flex; gap: 12px; flex-wrap: wrap; }
+input, select { border: 1px solid #c8d2df; border-radius: 6px; padding: 10px; min-width: 0; }
+input { flex: 1; min-width: 160px; }
+.error { color: #ac332d; white-space: pre-wrap; }
+@media(max-width: 850px) { #app { grid-template-columns: 160px minmax(0, 1fr); } main { padding: 24px; } header { flex-wrap: wrap; } .badge { white-space: normal; } }

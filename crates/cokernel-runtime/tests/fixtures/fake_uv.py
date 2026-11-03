@@ -7,6 +7,7 @@ import select
 import signal
 import socket
 import struct
+import subprocess
 import sys
 import time
 
@@ -77,6 +78,7 @@ def finish_execute(
     operation_id: str,
     status: str,
     execution_count: int,
+    output_count: int = 0,
 ) -> None:
     terminal = {
         "operation_id": operation_id,
@@ -90,7 +92,7 @@ def finish_execute(
         sock,
         session_id,
         "execution_finished",
-        {**terminal, "output_count": 0},
+        {**terminal, "output_count": output_count},
     )
     send_frame(
         sock,
@@ -117,6 +119,12 @@ def handle_execute(
     payload = request["payload"]
     operation_id = payload["operation_id"]
     source = payload["source"]
+    if source == "delayed-start":
+        with open(os.path.join(arg_after("--project"), "before-start"), "w") as marker:
+            marker.write("ready")
+        time.sleep(0.3)
+        if interrupted:
+            os._exit(47)  # SIGINT before execution guard would kill a real parser.
     assert request_id == operation_id
 
     send_execute_event(
@@ -134,6 +142,8 @@ def handle_execute(
         crash_after_delay = float(source.split(":", 1)[1])
     elif source.startswith("sleep:"):
         delay = float(source.split(":", 1)[1])
+    elif source == "delayed-start":
+        delay = 10.0
     if crash_after_delay is not None:
         delay = crash_after_delay
 
@@ -148,6 +158,11 @@ def handle_execute(
         os._exit(23)
 
     execution_count += 1
+    output_count = 2048 if source == "many_outputs" else 0
+    for sequence in range(1, output_count + 1):
+        send_execute_event(sock, session_id, "stdout", {
+            "operation_id": operation_id, "sequence": sequence, "text": f"{sequence}\n",
+        })
     finish_execute(
         sock,
         session_id,
@@ -155,6 +170,7 @@ def handle_execute(
         operation_id,
         "FAILED" if interrupted else "SUCCEEDED",
         execution_count,
+        output_count,
     )
     return execution_count
 
@@ -192,6 +208,23 @@ signal.signal(signal.SIGINT, handle_sigint)
 socket_path = arg_after("--socket")
 session_id = arg_after("--session-id")
 mode = os.path.basename(arg_after("--project"))
+project_root = arg_after("--project")
+if os.path.exists(os.path.join(project_root, "spawn-child")):
+    child_pid_path = os.path.join(project_root, "child.pid")
+    if os.path.exists(child_pid_path):
+        os.unlink(child_pid_path)
+    subprocess.Popen([
+        sys.executable, "-c",
+        "import os,signal,sys,time; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "open(sys.argv[1], 'w').write(str(os.getpid())); time.sleep(120)",
+        child_pid_path,
+    ])
+    deadline = time.monotonic() + 2
+    while not os.path.exists(os.path.join(project_root, "child.pid")):
+        if time.monotonic() > deadline:
+            raise RuntimeError("test child did not start")
+        time.sleep(0.005)
 reported_pid = os.getpid() + 1 if mode == "bad-ready-pid" else os.getpid()
 
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -244,7 +277,7 @@ send_frame(
             "heartbeat_interval_ms": 50,
             "output_limits": {
                 "max_event_bytes": 1024,
-                "max_operation_bytes": 4096,
+                "max_operation_bytes": 4 * 1024 * 1024,
                 "max_blob_bytes": 512,
             },
         },
@@ -253,7 +286,9 @@ send_frame(
 
 if mode in {"bad-handshake", "heartbeat-timeout"}:
     time.sleep(30)
-elif mode == "healthy" or mode.startswith("lifecycle") or mode.startswith("execute"):
+elif mode in {"healthy", "blocked"} or mode.startswith("lifecycle") or mode.startswith("execute"):
+    # `blocked` startup is controlled by the deferred-request fixture launcher;
+    # after release, its worker must remain cooperative like the healthy one.
     serve_cooperative(sock, session_id)
 elif mode == "protocol-violation":
     # Give the Rust caller time to subscribe after ensure_primary returns.

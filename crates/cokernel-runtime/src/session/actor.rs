@@ -6,6 +6,7 @@ struct ExecuteRequest {
     origin: ExecutionOrigin,
     cell_id: Option<String>,
     source: String,
+    completion: Option<oneshot::Sender<ExecutionCapture>>,
 }
 
 #[derive(Debug)]
@@ -18,11 +19,14 @@ enum ControlRequest {
 struct SessionActorContext {
     session_id: SessionId,
     worker_pid: u32,
+    process_group: WorkerProcessGroup,
+    failure_store: FailureStore,
+    last_failure: watch::Sender<Option<SessionFailure>>,
     worker_generation: u64,
     worker_started_at: DateTime<Utc>,
     environment_generation: u64,
     state_tx: watch::Sender<SessionState>,
-    events: broadcast::Sender<SessionEvent>,
+    events: SessionEventBus,
     current_operation: Arc<StdMutex<Option<OperationId>>>,
     current_cell_id: Arc<StdMutex<Option<String>>>,
     stderr_tail: Arc<Mutex<ByteTail>>,
@@ -53,7 +57,7 @@ async fn run_session_actor(
     mut child: Child,
     mut execute_rx: mpsc::Receiver<ExecuteRequest>,
     mut inspection_rx: mpsc::Receiver<InspectionRequest>,
-    mut control_rx: mpsc::Receiver<ControlRequest>,
+    mut control_rx: control::ControlReceiver,
     mut worker_frames: mpsc::Receiver<Result<WorkerFrame, SessionError>>,
 ) {
     remember_session_event_tail(context.worker_pid);
@@ -92,13 +96,15 @@ async fn run_session_actor(
                 };
                 match execute_one(
                     &context,
-                    &mut writer,
-                    &mut child,
-                    &mut control_rx,
-                    &mut worker_frames,
+                    WorkerTransaction {
+                        writer: &mut writer,
+                        child: &mut child,
+                        control_rx: &mut control_rx,
+                        worker_frames: &mut worker_frames,
+                        stale_environment: &mut stale_environment,
+                        last_worker_activity: &mut last_worker_activity,
+                    },
                     request,
-                    &mut stale_environment,
-                    &mut last_worker_activity,
                 ).await {
                     Ok(ExecuteDisposition::Completed) => {}
                     Ok(ExecuteDisposition::Stopped) => {
@@ -119,14 +125,16 @@ async fn run_session_actor(
                 };
                 match inspect_one(
                     &context,
-                    &mut writer,
-                    &mut child,
-                    &mut control_rx,
-                    &mut worker_frames,
+                    WorkerTransaction {
+                        writer: &mut writer,
+                        child: &mut child,
+                        control_rx: &mut control_rx,
+                        worker_frames: &mut worker_frames,
+                        stale_environment: &mut stale_environment,
+                        last_worker_activity: &mut last_worker_activity,
+                    },
                     method,
                     payload,
-                    &mut stale_environment,
-                    &mut last_worker_activity,
                 ).await {
                     Ok(InspectionDisposition::Completed(result)) => {
                         let _ = response.send(result);
@@ -235,16 +243,21 @@ impl ExecuteLifecycle {
     }
 }
 
+struct WorkerTransaction<'a> {
+    writer: &'a mut OwnedWriteHalf,
+    child: &'a mut Child,
+    control_rx: &'a mut control::ControlReceiver,
+    worker_frames: &'a mut mpsc::Receiver<Result<WorkerFrame, SessionError>>,
+    stale_environment: &'a mut bool,
+    last_worker_activity: &'a mut Instant,
+}
+
 async fn execute_one(
     context: &SessionActorContext,
-    writer: &mut OwnedWriteHalf,
-    child: &mut Child,
-    control_rx: &mut mpsc::Receiver<ControlRequest>,
-    worker_frames: &mut mpsc::Receiver<Result<WorkerFrame, SessionError>>,
-    request: ExecuteRequest,
-    stale_environment: &mut bool,
-    last_worker_activity: &mut Instant,
+    transaction: WorkerTransaction<'_>,
+    mut request: ExecuteRequest,
 ) -> Result<ExecuteDisposition, SessionError> {
+    let WorkerTransaction { writer, child, control_rx, worker_frames, stale_environment, last_worker_activity } = transaction;
     *context
         .current_operation
         .lock()
@@ -271,7 +284,9 @@ async fn execute_one(
     write_worker_frame(writer, &frame).await?;
 
     let mut interrupted = false;
+    let mut signal_sent = false;
     let mut lifecycle = ExecuteLifecycle::new(request_id.clone());
+    let mut capture = request.completion.as_ref().map(|_| BoundedExecutionCapture::default());
     loop {
         tokio::select! {
             control = control_rx.recv() => {
@@ -280,7 +295,10 @@ async fn execute_one(
                         if !interrupted {
                             interrupted = true;
                             set_state(context, SessionState::Interrupting);
-                            send_sigint(context.worker_pid).await?;
+                            if lifecycle.started && lifecycle.finished.is_none() {
+                                send_sigint(context.worker_pid).await?;
+                                signal_sent = true;
+                            }
                         }
                     }
                     Some(ControlRequest::MarkEnvironmentStale) => {
@@ -302,6 +320,15 @@ async fn execute_one(
                     Some(&mut lifecycle),
                     true,
                 )?;
+                if let Some(capture) = &mut capture {
+                    capture.push(&frame);
+                }
+                if interrupted && !signal_sent && lifecycle.started && lifecycle.finished.is_none() {
+                    // Execution-start acknowledges that the worker installed its
+                    // execution signal guard. Never SIGINT its request parser.
+                    send_sigint(context.worker_pid).await?;
+                    signal_sent=true;
+                }
                 if let WorkerFrame::Response { ok, result, .. } = &frame {
                     let succeeded = *ok
                         && result
@@ -317,6 +344,11 @@ async fn execute_one(
                         OperationStatus::Failed
                     };
                     finish_operation(context, request.operation_id, status);
+                    if let Some(completion) = request.completion.take() {
+                        let frames = capture.take().map(BoundedExecutionCapture::finish)
+                            .unwrap_or_else(|| Err("capture unavailable".into()));
+                        let _ = completion.send(ExecutionCapture { operation_id: request.operation_id, status, frames });
+                    }
                     set_state(
                         context,
                         if *stale_environment {
@@ -340,17 +372,44 @@ async fn execute_one(
     }
 }
 
+#[derive(Default)]
+struct BoundedExecutionCapture {
+    frames: Vec<WorkerFrame>,
+    bytes: usize,
+    error: Option<String>,
+}
+
+impl BoundedExecutionCapture {
+    fn push(&mut self, frame: &WorkerFrame) {
+        if self.error.is_some() { return; }
+        if let WorkerFrame::Event { event, .. } = frame {
+            if matches!(event.as_str(), worker::event::HEARTBEAT | worker::event::WORKER_WARNING) { return; }
+        }
+        let size = match serde_json::to_vec(frame) {
+            Ok(bytes) => bytes.len(),
+            Err(_) => { self.error = Some("execution capture encoding failed".into()); self.frames.clear(); return; }
+        };
+        self.bytes = self.bytes.saturating_add(size);
+        if self.bytes > 32 * 1024 * 1024 || self.frames.len() >= 65_536 {
+            self.frames.clear();
+            self.error = Some("execution capture exceeded its byte/event budget; outputs were not persisted".into());
+        } else {
+            self.frames.push(frame.clone());
+        }
+    }
+
+    fn finish(self) -> Result<Vec<WorkerFrame>, String> {
+        match self.error { Some(error) => Err(error), None => Ok(self.frames) }
+    }
+}
+
 async fn inspect_one(
     context: &SessionActorContext,
-    writer: &mut OwnedWriteHalf,
-    child: &mut Child,
-    control_rx: &mut mpsc::Receiver<ControlRequest>,
-    worker_frames: &mut mpsc::Receiver<Result<WorkerFrame, SessionError>>,
+    transaction: WorkerTransaction<'_>,
     method: &'static str,
     payload: Value,
-    stale_environment: &mut bool,
-    last_worker_activity: &mut Instant,
 ) -> Result<InspectionDisposition, SessionError> {
+    let WorkerTransaction { writer, child, control_rx, worker_frames, stale_environment, last_worker_activity } = transaction;
     let request_id = format!("inspect-{}", OperationId::new());
     let frame = WorkerFrame::Request {
         protocol: WORKER_PROTOCOL_V1,
@@ -1020,21 +1079,18 @@ fn set_state(context: &SessionActorContext, state: SessionState) {
 }
 
 async fn send_sigint(pid: u32) -> Result<(), std::io::Error> {
-    send_signal(pid, "INT").await
+    send_signal(pid, libc::SIGINT).await
 }
 
-async fn send_signal(pid: u32, signal: &str) -> Result<(), std::io::Error> {
-    let status = Command::new("/bin/kill")
-        .arg(format!("-{signal}"))
-        .arg(pid.to_string())
-        .status()
-        .await?;
-    if status.success() {
+async fn send_signal(pid: u32, signal: libc::c_int) -> Result<(), std::io::Error> {
+    let pid = i32::try_from(pid).ok().filter(|pid| *pid > 1)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid owned worker PID"))?;
+    // The Runtime owns signal authority. Executing an unprivileged /bin/kill
+    // would discard CAP_KILL and fail for a different workload UID.
+    if unsafe { libc::kill(pid, signal) } == 0 {
         Ok(())
     } else {
-        Err(std::io::Error::other(format!(
-            "kill -{signal} {pid} returned {status}"
-        )))
+        Err(std::io::Error::last_os_error())
     }
 }
 
@@ -1097,10 +1153,9 @@ mod transaction_tests {
         result_operation_id: &str,
         status: &str,
         execution_count: u64,
-        output_truncated: bool,
-        output_omitted_bytes: u64,
-        output_truncation_reasons: &[&str],
+        truncation: (bool, u64, &[&str]),
     ) -> WorkerFrame {
+        let (output_truncated, output_omitted_bytes, output_truncation_reasons) = truncation;
         WorkerFrame::Response {
             protocol: WORKER_PROTOCOL_V1,
             id: request_id.into(),
@@ -1231,9 +1286,7 @@ mod transaction_tests {
             &operation_id,
             "SUCCEEDED",
             7,
-            false,
-            0,
-            &[],
+            (false, 0, &[]),
         );
         assert!(validate_execute_lifecycle(&mut lifecycle, &response).is_ok());
     }
@@ -1313,9 +1366,7 @@ mod transaction_tests {
             &operation_id,
             "SUCCEEDED",
             1,
-            false,
-            0,
-            &[],
+            (false, 0, &[]),
         );
         assert!(validate_execute_lifecycle(&mut lifecycle, &response).is_err());
 
@@ -1405,9 +1456,7 @@ mod transaction_tests {
             &other_operation,
             "SUCCEEDED",
             1,
-            true,
-            10,
-            &["event_limit"],
+            (true, 10, &["event_limit"]),
         );
         assert!(validate_execute_lifecycle(&mut lifecycle, &mismatched_operation).is_err());
 
@@ -1417,9 +1466,7 @@ mod transaction_tests {
             &operation_id,
             "SUCCEEDED",
             1,
-            true,
-            10,
-            &["operation_limit"],
+            (true, 10, &["operation_limit"]),
         );
         assert!(validate_execute_lifecycle(&mut lifecycle, &mismatched_reasons).is_err());
     }

@@ -1,18 +1,7 @@
 use rmcp::model::ToolAnnotations;
 use rmcp::transport::streamable_http_server::StreamableHttpServerConfig;
-use schemars::{JsonSchema, schema_for};
-use serde::Deserialize;
 use serde_json::Value;
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetVariableParams {
-    /// Stable CoKernel Project identifier.
-    pub project_id: String,
-    /// Stable CoKernel Notebook identifier.
-    pub notebook_id: String,
-    /// One Python identifier. Expressions are not accepted by the v1 safe-inspection API.
-    pub name: String,
-}
+pub mod contracts;
 
 /// Canonical annotation shape for bounded, closed-world read operations.
 pub fn safe_read_annotations(title: &str) -> ToolAnnotations {
@@ -36,8 +25,11 @@ pub fn streamable_http_config() -> StreamableHttpServerConfig {
 }
 
 pub fn get_variable_schema() -> Value {
-    serde_json::to_value(schema_for!(GetVariableParams))
-        .expect("schemars-generated MCP parameter schema must serialize")
+    contracts::all()
+        .into_iter()
+        .find(|t| t.name == "get_variable")
+        .map(|t| Value::Object(t.tool().input_schema.as_ref().clone()))
+        .unwrap_or(Value::Null)
 }
 
 #[cfg(test)]
@@ -55,12 +47,12 @@ mod tests {
     }
 
     #[test]
-    fn safe_inspection_schema_is_generated_from_rust_type() {
+    fn safe_inspection_schema_is_generated_from_validated_contract() {
         let schema = get_variable_schema();
         assert_eq!(schema["type"], "object");
         assert_eq!(schema["properties"]["name"]["type"], "string");
         assert_eq!(schema["properties"]["project_id"]["type"], "string");
-        assert_eq!(schema["properties"]["notebook_id"]["type"], "string");
+        assert_eq!(schema["properties"]["session_id"]["type"], "string");
     }
 
     #[test]
@@ -68,3 +60,11 @@ mod tests {
         let _ = streamable_http_config();
     }
 }
+#[cfg(target_os = "linux")]
+pub mod auth;
+#[cfg(target_os = "linux")]
+pub mod http_server;
+#[cfg(target_os = "linux")]
+pub mod runtime_client;
+#[cfg(target_os = "linux")]
+pub mod service;

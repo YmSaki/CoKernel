@@ -4,28 +4,53 @@ use cokernel_protocol::methods::{
     ProjectIdParams, RegisterProjectParams,
 };
 use cokernel_protocol::{PROTOCOL_V1, RequestEnvelope, ResponseEnvelope};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 
 use crate::project::{ProjectError, ProjectManager};
 use crate::uv::UvRunner;
 
+mod project_access;
+pub use project_access::ProjectAccess;
+
 pub struct RuntimeService<R> {
-    projects: ProjectManager<R>,
+    metrics_root: std::path::PathBuf,
+    metrics: std::sync::OnceLock<cokernel_metrics::Sampler>,
+    projects: ProjectAccess<R>,
+    #[cfg(target_os = "linux")]
+    notebooks: Option<crate::notebook::NotebookRuntime>,
+    #[cfg(target_os = "linux")]
+    packages: package_ops::PackageOperations,
+    #[cfg(target_os = "linux")]
+    requests: request_work::RequestWork<R>,
+    #[cfg(target_os = "linux")]
+    mcp: crate::mcp_supervisor::Monitor,
+    #[cfg(target_os = "linux")]
+    tunnel: crate::tunnel::Monitor,
 }
 
-impl<R: UvRunner> RuntimeService<R> {
+impl<R: UvRunner + 'static> RuntimeService<R> {
     pub fn new(projects: ProjectManager<R>) -> Self {
-        Self { projects }
+        Self {
+            metrics_root: projects.projects_root().to_path_buf(),
+            metrics: std::sync::OnceLock::new(),
+            projects: ProjectAccess::direct(projects),
+            #[cfg(target_os = "linux")]
+            notebooks: None,
+            #[cfg(target_os = "linux")]
+            packages: package_ops::PackageOperations::default(),
+            #[cfg(target_os = "linux")]
+            requests: request_work::RequestWork::default(),
+            #[cfg(target_os = "linux")]
+            mcp: crate::mcp_supervisor::Monitor::default(),
+            #[cfg(target_os = "linux")]
+            tunnel: crate::tunnel::Monitor::default(),
+        }
     }
 
-    pub fn projects(&self) -> &ProjectManager<R> {
+    pub fn projects(&self) -> &ProjectAccess<R> {
         &self.projects
-    }
-
-    pub fn projects_mut(&mut self) -> &mut ProjectManager<R> {
-        &mut self.projects
     }
 
     pub fn dispatch(&mut self, request: RequestEnvelope) -> ResponseEnvelope {
@@ -52,6 +77,76 @@ impl<R: UvRunner> RuntimeService<R> {
 
     fn dispatch_method(&mut self, method: &str, params: Value) -> Result<Value, DomainError> {
         match method {
+            #[cfg(target_os = "linux")]
+            "tunnel.start" | "tunnel.stop" | "tunnel.restart" | "runtime.get_tunnel_status" => {
+                let result = match method {
+                    "tunnel.start" => crate::tunnel::Credentials::from_params(params)
+                        .and_then(|credentials| self.tunnel.enable(credentials))
+                        .map(|epoch| json!({"accepted":true,"epoch":epoch})),
+                    _ if params != json!({}) => Err("CK-TUN-INPUT"),
+                    "tunnel.restart" => self
+                        .tunnel
+                        .restart()
+                        .map(|epoch| json!({"accepted":true,"epoch":epoch})),
+                    "tunnel.stop" => Ok(json!({"accepted":true,"epoch":self.tunnel.disable()})),
+                    _ => return to_value(self.tunnel.snapshot()),
+                };
+                result.map_err(|code| DomainError {
+                    code: code.into(),
+                    component: "tunnel".into(),
+                    summary: "Remote access request is invalid or unavailable".into(),
+                    action: "Check remote access configuration and status".into(),
+                    detail: None,
+                })
+            }
+            #[cfg(target_os = "linux")]
+            "runtime.get_mcp_status" | "mcp.restart" => {
+                if params != json!({}) {
+                    return Err(DomainError {
+                        code: "CK-RUN-BAD-PARAMS".into(),
+                        component: "mcp".into(),
+                        summary: "MCP control takes empty parameters".into(),
+                        action: "Use empty parameters".into(),
+                        detail: None,
+                    });
+                }
+                if method == "mcp.restart" {
+                    self.mcp.restart().map_err(|summary| DomainError {
+                        code: "CK-MCP-NOT-CONFIGURED".into(),
+                        component: "mcp".into(),
+                        summary: summary.into(),
+                        action: "Configure the managed MCP service".into(),
+                        detail: None,
+                    })?;
+                    return Ok(json!({"accepted":true}));
+                }
+                to_value(self.mcp.snapshot())
+            }
+            "runtime.get_linux_metrics" => {
+                if params != json!({}) {
+                    return Err(DomainError {
+                        code: "CK-RUN-BAD-PARAMS".into(),
+                        component: "metrics".into(),
+                        summary: "Resource snapshot takes empty parameters".into(),
+                        action: "Use empty parameters".into(),
+                        detail: None,
+                    });
+                }
+                if !cfg!(target_os = "linux") || tokio::runtime::Handle::try_current().is_err() {
+                    return Err(DomainError {
+                        code: "CK-RUN-NOT-READY".into(),
+                        component: "metrics".into(),
+                        summary: "Linux Runtime resource collector is unavailable".into(),
+                        action: "Connect to the Linux Runtime".into(),
+                        detail: None,
+                    });
+                }
+                to_value(
+                    self.metrics
+                        .get_or_init(|| cokernel_metrics::Sampler::start(self.metrics_root.clone()))
+                        .snapshot(),
+                )
+            }
             methods::name::BRIDGE_HELLO => {
                 let params: BridgeHelloParams = parse_params(params)?;
                 if !params.supported_protocols.contains(&PROTOCOL_V1) {
@@ -82,6 +177,7 @@ impl<R: UvRunner> RuntimeService<R> {
                 let params: CreateProjectParams = parse_params(params)?;
                 to_value(
                     self.projects
+                        .synchronous()?
                         .create_project(&params.name)
                         .map_err(project_error)?,
                 )
@@ -90,18 +186,24 @@ impl<R: UvRunner> RuntimeService<R> {
                 let params: RegisterProjectParams = parse_params(params)?;
                 to_value(
                     self.projects
+                        .synchronous()?
                         .register_existing(&params.path)
                         .map_err(project_error)?,
                 )
             }
             methods::name::PROJECTS_GET => {
                 let params: ProjectIdParams = parse_params(params)?;
-                to_value(self.projects.get(params.project_id).map_err(project_error)?)
+                to_value(
+                    self.projects
+                        .get(params.project_id)
+                        .map_err(project_error)?,
+                )
             }
             methods::name::PROJECTS_REMOVE_FROM_REGISTRY => {
                 let params: ProjectIdParams = parse_params(params)?;
                 to_value(
                     self.projects
+                        .synchronous()?
                         .remove_from_registry(params.project_id)
                         .map_err(project_error)?,
                 )
@@ -110,6 +212,7 @@ impl<R: UvRunner> RuntimeService<R> {
                 let params: ProjectIdParams = parse_params(params)?;
                 to_value(
                     self.projects
+                        .synchronous()?
                         .sync_project(params.project_id)
                         .map_err(project_error)?,
                 )
@@ -118,6 +221,7 @@ impl<R: UvRunner> RuntimeService<R> {
                 let params: PackageMutationParams = parse_params(params)?;
                 to_value(
                     self.projects
+                        .synchronous()?
                         .add_packages(params.project_id, &params.packages)
                         .map_err(project_error)?,
                 )
@@ -126,6 +230,7 @@ impl<R: UvRunner> RuntimeService<R> {
                 let params: PackageMutationParams = parse_params(params)?;
                 to_value(
                     self.projects
+                        .synchronous()?
                         .remove_packages(params.project_id, &params.packages)
                         .map_err(project_error)?,
                 )
@@ -134,6 +239,7 @@ impl<R: UvRunner> RuntimeService<R> {
                 let params: ProjectIdParams = parse_params(params)?;
                 to_value(
                     self.projects
+                        .synchronous()?
                         .environment_status(params.project_id)
                         .map_err(project_error)?,
                 )
@@ -149,13 +255,26 @@ impl<R: UvRunner> RuntimeService<R> {
     }
 }
 
+#[cfg(target_os = "linux")]
+mod document_rpc;
+#[cfg(target_os = "linux")]
+mod notebook_rpc;
+#[cfg(target_os = "linux")]
+mod package_ops;
+#[cfg(all(test, target_os = "linux"))]
+mod project_owner_tests;
+#[cfg(target_os = "linux")]
+mod project_rpc;
+#[cfg(target_os = "linux")]
+mod request_work;
+
 fn parse_params<T: DeserializeOwned>(params: Value) -> Result<T, DomainError> {
     serde_json::from_value(params).map_err(|error| DomainError {
         code: "CK-RUN-BAD-PARAMS".into(),
         component: "runtime".into(),
         summary: "Runtime request parameters are invalid".into(),
         action: "Refresh the client state and retry with valid parameters".into(),
-        detail: Some(error.to_string()),
+        detail: Some(bounded_detail(error.to_string())),
     })
 }
 
@@ -169,8 +288,31 @@ fn to_value<T: Serialize>(value: T) -> Result<Value, DomainError> {
     })
 }
 
+fn bounded_detail(mut detail: String) -> String {
+    if detail.len() > 8192 {
+        let mut end = 8192;
+        while !detail.is_char_boundary(end) {
+            end -= 1;
+        }
+        detail.truncate(end);
+    }
+    detail
+}
+
 fn project_error(error: ProjectError) -> DomainError {
     let (code, component, summary, action) = match &error {
+        ProjectError::OwnerClosed => (
+            "CK-PROJ-OWNER",
+            "project",
+            "Project storage owner is unavailable",
+            "Restart Runtime after inspecting storage diagnostics",
+        ),
+        ProjectError::OwnerBusy => (
+            "CK-PROJ-BUSY",
+            "project",
+            "Project storage queue is full",
+            "Wait for accepted Project storage work and retry",
+        ),
         ProjectError::InvalidName(_) => (
             "CK-PROJ-INVALID-NAME",
             "project",
@@ -201,6 +343,18 @@ fn project_error(error: ProjectError) -> DomainError {
             "Project does not contain pyproject.toml",
             "Initialize the Project with uv or create a new CoKernel Project",
         ),
+        ProjectError::InitializationRequired => (
+            "CK-UV-NEEDS-SYNC",
+            "environment",
+            "Project initialization is incomplete",
+            "Synchronize the Project to resume initialization before changing packages",
+        ),
+        ProjectError::InvalidPackages => (
+            "CK-UV-INVALID-PACKAGES",
+            "environment",
+            "Package arguments are invalid or exceed limits",
+            "Use at most 128 package specifications of at most 4096 bytes, without command options or control characters",
+        ),
         ProjectError::EmptyPackageList => (
             "CK-UV-EMPTY-PACKAGES",
             "environment",
@@ -212,6 +366,24 @@ fn project_error(error: ProjectError) -> DomainError {
             "environment",
             "Project Python environment is not ready",
             "Synchronize the Project environment",
+        ),
+        ProjectError::Uv(crate::uv::UvError::Cancelled) => (
+            "CK-UV-CANCELLED",
+            "environment",
+            "Package operation was cancelled",
+            "Synchronize the Project environment; restart stale Sessions explicitly when ready",
+        ),
+        ProjectError::Uv(crate::uv::UvError::Timeout) => (
+            "CK-UV-TIMEOUT",
+            "environment",
+            "Package operation exceeded its execution time limit",
+            "Check connectivity and dependencies, then synchronize the Project environment",
+        ),
+        ProjectError::Uv(crate::uv::UvError::OutputLimit) => (
+            "CK-UV-OUTPUT-LIMIT",
+            "environment",
+            "Package operation exceeded its output limit",
+            "Inspect the package build and synchronize the Project environment",
         ),
         ProjectError::Uv(_) => (
             "CK-UV-COMMAND",
@@ -244,7 +416,7 @@ fn project_error(error: ProjectError) -> DomainError {
         component: component.into(),
         summary: summary.into(),
         action: action.into(),
-        detail: Some(error.to_string()),
+        detail: Some(bounded_detail(error.to_string())),
     }
 }
 

@@ -2,6 +2,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn execution_capture_overflow_is_explicit_and_discards_partial_frames() {
+        let frame = WorkerFrame::Event { protocol:1,session_id:"test".into(),event:"stdout".into(),payload:json!({"text":"x".repeat(4*1024*1024)}) };
+        let mut capture=BoundedExecutionCapture::default();
+        for _ in 0..9 { capture.push(&frame); }
+        assert!(capture.frames.is_empty());
+        assert!(capture.finish().unwrap_err().contains("budget"));
+    }
+
+    #[test]
+    fn execution_capture_event_count_is_bounded_even_for_tiny_outputs() {
+        let frame = WorkerFrame::Event { protocol:1,session_id:"test".into(),event:"stdout".into(),payload:json!({"text":""}) };
+        let mut capture=BoundedExecutionCapture::default();
+        for _ in 0..65_537 { capture.push(&frame); }
+        assert!(capture.frames.is_empty());
+        assert!(capture.finish().unwrap_err().contains("budget"));
+    }
+
+    #[test]
     fn byte_tail_keeps_only_recent_bytes() {
         let mut tail = ByteTail::new(5);
         tail.push(b"abc");
@@ -207,11 +225,14 @@ mod tests {
         let context = SessionActorContext {
             session_id,
             worker_pid: 4242,
+            process_group: WorkerProcessGroup::disarmed(),
+            failure_store: FailureStore::new("unused-test-failures"),
+            last_failure: watch::channel(None).0,
             worker_generation: 7,
             worker_started_at,
             environment_generation: 11,
             state_tx,
-            events,
+            events: SessionEventBus {local:events,global:crate::events::EventHub::default(),project_id:ProjectId::new(),notebook_id:NotebookId::new()},
             current_operation: Arc::new(StdMutex::new(Some(operation_id))),
             current_cell_id: Arc::new(StdMutex::new(Some("cell-alpha".into()))),
             stderr_tail: Arc::new(Mutex::new(ByteTail::new(16))),
@@ -248,11 +269,14 @@ mod tests {
         let context = SessionActorContext {
             session_id,
             worker_pid: 1,
+            process_group: WorkerProcessGroup::disarmed(),
+            failure_store: FailureStore::new("unused-test-failures"),
+            last_failure: watch::channel(None).0,
             worker_generation: 1,
             worker_started_at: Utc::now(),
             environment_generation: 1,
             state_tx,
-            events,
+            events: SessionEventBus {local:events,global:crate::events::EventHub::default(),project_id:ProjectId::new(),notebook_id:NotebookId::new()},
             current_operation,
             current_cell_id: Arc::new(StdMutex::new(None)),
             stderr_tail: Arc::new(Mutex::new(ByteTail::new(16))),
@@ -269,6 +293,7 @@ mod tests {
                     origin: ExecutionOrigin::Human,
                     cell_id: Some("cell".into()),
                     source: "1 + 1".into(),
+                    completion: None,
                 })
                 .await
                 .unwrap();
@@ -284,6 +309,7 @@ mod tests {
                 origin: ExecutionOrigin::Human,
                 cell_id: None,
                 source: "2 + 2".into(),
+                completion: None,
             })
             .await
             .is_err());

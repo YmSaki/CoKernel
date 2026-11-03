@@ -1,0 +1,22 @@
+[package]
+name = "cokernel-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+cokernel-host = { path = "../../crates/cokernel-host" }
+cokernel-protocol = { path = "../../crates/cokernel-protocol" }
+tokio.workspace = true
+tauri = { version = "2", features = ["tray-icon"] }
+
+[target.'cfg(windows)'.build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+uuid.workspace = true

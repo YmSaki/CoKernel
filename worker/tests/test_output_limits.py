@@ -24,6 +24,7 @@ from cokernel_worker.protocol import (
 
 class FakeShell:
     user_ns = {}
+    execution_count = 1
 
 
 @dataclass
@@ -71,6 +72,7 @@ def request(method: str, payload=None, request_id: str = "r1"):
 
 def run_execute(outcome: ExecutionOutcome, limits: OutputLimits):
     server, client = socket.socketpair()
+    client.settimeout(5)
     loop = WorkerLoop("s1", FakeEngine(outcome), output_limits=limits)
     thread = threading.Thread(target=loop.run, args=(server,), daemon=True)
     thread.start()

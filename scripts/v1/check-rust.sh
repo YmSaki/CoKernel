@@ -48,10 +48,31 @@ cargo test --workspace
 echo '[v1-check-rust] Runtime Project + uv smoke'
 python3 scripts/v1/smoke_runtime_project.py
 
+echo '[v1-check-rust] Workload environment boundary (real package build and worker)'
+python3 scripts/v1/smoke_workload_environment.py
+
 echo '[v1-check-rust] Session Supervisor canonical smoke'
 cargo run -q -p cokernel-runtime --example session_supervisor_smoke
 
 echo '[v1-check-rust] Session safe-inspection smoke'
 cargo run -q -p cokernel-runtime --example session_inspection_smoke
+
+echo '[v1-check-rust] Notebook Runtime RPC/import/execute/persist smoke'
+uv run --no-project --with nbformat==5.11.1 python scripts/v1/smoke_notebook_runtime.py
+
+echo '[v1-check-rust] Asynchronous package/control RPC smoke'
+python3 scripts/v1/smoke_async_packages.py
+
+echo '[v1-check-rust] Asynchronous Project setup/recovery RPC smoke'
+python3 scripts/v1/smoke_async_projects.py
+
+echo '[v1-check-rust] Concurrent Session startup/inspection/control RPC smoke'
+python3 scripts/v1/smoke_session_rpc.py
+
+echo '[v1-check-rust] Authenticated MCP service lifecycle smoke'
+python3 scripts/v1/smoke_mcp_lifecycle.py
+
+echo '[v1-check-rust] Runtime-owned MCP supervision smoke'
+python3 scripts/v1/smoke_mcp_supervision.py
 
 echo '[v1-check-rust] PASS'
