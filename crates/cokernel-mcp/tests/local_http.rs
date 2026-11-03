@@ -341,8 +341,8 @@ async fn malformed_and_fragmented_unix_clients_do_not_block_other_requests() {
     assert_eq!(reply.request_id, "fragmented");
     for method in [
         "bridge.shutdown",
-        "projects.create",
-        "notebooks.apply_edits",
+        "projects.remove_from_registry",
+        "remote_access.configure",
     ] {
         assert_eq!(
             client
@@ -353,6 +353,19 @@ async fn malformed_and_fragmented_unix_clients_do_not_block_other_requests() {
                 .unwrap()
                 .code,
             "CK-RUN-NO-METHOD"
+        );
+    }
+    // Authoring is intentionally allowed, while malformed requests still fail validation.
+    for method in ["projects.create", "notebooks.apply_edits"] {
+        assert_eq!(
+            client
+                .call(method, json!({}))
+                .await
+                .unwrap()
+                .error
+                .unwrap()
+                .code,
+            "CK-RUN-BAD-PARAMS"
         );
     }
     api.shutdown().await.unwrap();

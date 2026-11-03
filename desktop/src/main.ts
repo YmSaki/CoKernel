@@ -120,7 +120,7 @@ async function refresh() {
   if (refreshBusy) return;
   refreshBusy = true;
   try {
-    const results = await Promise.allSettled([call<HostStatus>('runtime.get_status'), call<Project[]>('projects.list'), call<{ state: string }>('remote_access.get_status')]);
+    const results = await Promise.allSettled([call<HostStatus>('runtime.get_status'), call<Project[]>('projects.list'), call<{ state: string }>('remote_access.get_status'), call<{configured: boolean; tunnel_id: string | null}>('remote_access.get_configuration')]);
     home.replaceChildren(); const errors: string[] = [];
     results.forEach((result, index) => {
       if (result.status === 'rejected') { errors.push(errorText(result.reason)); return; }
@@ -128,7 +128,8 @@ async function refresh() {
         const status = result.value as HostStatus;
         const card = el('article', '', 'stat'); card.append(el('span', 'Runtime', 'muted'), el('strong', status.observed), el('small', status.runtime_version ?? '未起動')); home.append(card);
       } else if (index === 1) renderProjects(result.value as Project[]);
-      else { const card = el('article', '', 'stat'); card.append(el('span', 'Remote AI', 'muted'), el('strong', (result.value as { state: string }).state)); home.append(card); }
+      else if (index === 2) { const card = el('article', '', 'stat'); card.append(el('span', 'Remote AI', 'muted'), el('strong', (result.value as { state: string }).state)); home.append(card); }
+      else { const configuration = result.value as {configured: boolean; tunnel_id: string | null}; configuredTunnel.textContent = configuration.configured ? `コネクタで選択するTunnel ID: ${configuration.tunnel_id}` : 'APIキー・接続設定は未登録です。'; }
     });
     notice.textContent = errors.join('\n');
     if (selected) await refreshDetail();
@@ -164,6 +165,7 @@ async function tick() {
     connection.textContent = connected ? 'Hostに接続済み' : 'Hostに未接続 · 自動再接続中';
     connection.classList.toggle('offline', !connected);
     submit.disabled = !connected || mutationPending || !!pendingOperation;
+    configure.disabled = !connected || setupPending;
     if (!connected) notice.textContent = 'Hostの状態を確認できません。表示は最後に取得した情報です。';
     if (connected && observation.revision !== lastRevision && !refreshBusy) {
       lastRevision = observation.revision; void refresh();
@@ -174,6 +176,7 @@ async function tick() {
 }
 const setup = el('section', '', 'panel');
 setup.append(el('h2', 'AIに接続する'), el('p', 'Tunnel IDと実行用APIキーを保存すると接続を開始します。キーはWindowsの専用画面へ入力します。'));
+const configuredTunnel = el('p', '接続設定を確認しています…', 'path'); setup.append(configuredTunnel);
 const setupStatus = el('p'); setupStatus.setAttribute('role','status');
 let setupPending=false;
 const configure=button('APIキー・接続設定',()=>{

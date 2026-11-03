@@ -73,10 +73,13 @@ def exercise_tools(rpc, bridge, project, document, session, worker):
     edited=tool("insert_code_cell",**ai,expected_revision=doc["revision"],index=0,cell_id="ai-cell",source="ai_value = 321\nai_value + 1")
     revision=edited["document"]["revision"]
     tool("set_cell_source",**ai,expected_revision=revision-1,cell_id="ai-cell",source="raise Exception()",error="CK-NB-CONFLICT")
+    updated=tool("set_cell_source",**ai,expected_revision=revision,cell_id="ai-cell",source="ai_value = 321\nai_value + 2")
+    revision=updated["document"]["revision"]
     tool("save_notebook",**ai,expected_revision=revision)
     live_ai=tool("ensure_session",**ai)
     op=tool("execute_cell",**ai,session_id=live_ai["session_id"],expected_revision=revision,cell_id="ai-cell")
-    assert wait_operation(bridge,ai_project,op["operation_id"])["execution_status"]=="SUCCEEDED"
+    completed=wait_operation(bridge,ai_project,op["operation_id"])
+    assert completed["execution_status"]=="SUCCEEDED" and completed["state"]=="PERSISTED",completed
     assert tool("get_variable",project_id=ai_project,session_id=live_ai["session_id"],name="ai_value")["value"]==321
     assert tool("open_notebook",project_id=ai_project,relative_path="ai.ipynb")["document"]["notebook_id"]==doc["notebook_id"]
     tool("create_notebook",project_id=ai_project,relative_path="../escape.ipynb",error="CK-NB-")
