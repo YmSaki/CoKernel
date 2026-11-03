@@ -58,8 +58,21 @@ jobs:
       - name: Build frontend
         working-directory: desktop
         run: pnpm install --frozen-lockfile; if ($LASTEXITCODE) { exit $LASTEXITCODE }; pnpm build
+      - uses: actions/cache/restore@v4
+        id: windows-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+            target/release
+          key: windows-rust-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: windows-rust-${{ hashFiles('Cargo.lock') }}-
+      - name: Warm the Windows process-test interpreter
+        run: python -c "import json, hashlib, os, pathlib, struct, sys, time; print(sys.version)"
       - name: Windows tests
-        run: cargo test --locked -p cokernel-host -p cokernel-bootstrap -p cokernel-desktop
+        # Tests exercise concurrency internally; avoid racing unrelated cold Python starts.
+        run: cargo test --locked -p cokernel-host -p cokernel-bootstrap -p cokernel-desktop -- --test-threads=1
       - name: Build Windows application
         run: cargo build --locked --release -p cokernel-desktop -p cokernel-host -p cokernel-bootstrap
       - name: Download authenticated WebView2 bootstrapper
@@ -88,6 +101,15 @@ jobs:
         with:
           name: CoKernel-Windows-installer
           path: packaging/output/
+      - uses: actions/cache/save@v4
+        if: always() && steps.windows-cache.outputs.cache-primary-key != '' && steps.windows-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+            target/release
+          key: ${{ steps.windows-cache.outputs.cache-primary-key }}
   release:
     if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/release/alpha-installer'
     needs: windows
