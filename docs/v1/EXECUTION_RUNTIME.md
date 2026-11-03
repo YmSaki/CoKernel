@@ -279,6 +279,22 @@ Initial method:
 
 If an extension/native call is uninterruptible, user can escalate to terminate/restart Session.
 
+The current Linux implementation sends SIGINT to the verified worker PID only
+after receiving its validated `execution_started` acknowledgement. An earlier
+interrupt request is retained in the Session actor and delivered after that
+acknowledgement, not into the worker request parser. The worker installs its
+execution interrupt guard before committing the start frame. SIGINT during that
+commit or execution setup becomes a structured KeyboardInterrupt/terminal result;
+partially installed stream/display hooks are restored. The original namespace
+survives and the Supervisor reports INTERRUPTED for the requested operation.
+
+Outside an execution the production worker ignores SIGINT, covering a late signal
+which races completion/idle framing. During execution the guard enables normal
+KeyboardInterrupt behavior and defers it only across short frame/accounting
+commits. SIGINT is a Runtime control signal; deliberately replacing its handler
+from notebook code can change interruption behavior and is not a security
+containment guarantee. Stop/restart retains the separate supervised cleanup path.
+
 CoKernel must distinguish `Interrupt execution` from `Restart Session` in UI/API.
 
 ## 13. Stop/restart semantics
@@ -290,6 +306,12 @@ CoKernel must distinguish `Interrupt execution` from `Restart Session` in UI/API
 - after timeout, terminate process tree;
 - retain final diagnostics;
 - Session -> STOPPED.
+
+The launcher starts in a private OS process group. Runtime retains group ownership
+through startup and Session lifetime, and terminates remaining ordinary descendants
+even if the launcher/worker has already exited. Startup failure, stop, restart,
+crash and orderly actor cancellation release that group. Deliberately detached
+processes are outside this lifecycle mechanism; it is not a hostile-code sandbox.
 
 ### Restart
 
@@ -331,6 +353,21 @@ Unexpected termination sequence:
 8. Session -> CRASHED.
 9. Publish crash event.
 10. Do not silently replace worker before evidence is available and recovery policy/user action is applied.
+
+Runtime owns a private FailureRecord store separate from worker files and event
+subscriptions. Records use a versioned JSON envelope, immutable failure ID,
+atomic no-replace installation, and a synced file before crash publication.
+The initial bounds are 1 MiB per serialized record and the newest 64 records per
+Runtime store. Readers reject corrupt, oversized, mismatched-ID/version and
+symlink records; retention removes only validated oldest records.
+
+An absent store is empty; an unreadable or invalid store is an explicit error.
+Storage failure must not prevent process cleanup: the live Session retains the
+record and its persistence error, emits `FailurePersistenceFailed`, then emits
+the failure event. A caller can retrieve retained evidence after subscribing
+late, restarting a Session or reopening the store. Development places this store
+under its temporary socket directory; production config must use durable,
+Runtime-owned storage, not a Project or volatile `/run` directory.
 
 ## 16. OOM and GPU evidence
 
@@ -388,6 +425,14 @@ Worker must not receive:
 
 CoKernel supports concurrent Sessions, not concurrent code execution inside one Session.
 
+Startup/restart holds a per-notebook lock, so slow startup does not serialize
+unrelated notebooks. A shared shutdown gate prevents startup from escaping a
+whole-Supervisor stop. Runtime reserves pending lifecycle operations before
+launching tasks and coalesces same-notebook ensure requests. Its framed admission
+loop also keeps worker inspection waits separate from control requests, with 16
+pending replies at most. See INTERFACE_CONTRACTS section 22 for cancellation,
+Project mutation exclusion, private responses and out-of-order correlation.
+
 Initial admission behavior:
 
 - user may start multiple Sessions;
@@ -410,3 +455,77 @@ Initial admission behavior:
 - stdout flood/output limits behave predictably;
 - rich MIME output saves valid `.ipynb`;
 - hostile variable objects do not execute custom representation behavior in safe inspection.
+
+## 21. Execution results for notebook persistence
+
+UI event broadcast is best-effort and cannot be the source of truth for notebook
+output persistence. The Supervisor now offers `execute_cell_captured`, returning
+an operation ID and a one-shot completion receipt independent of subscribers.
+It queues through the same per-Session FIFO as ordinary execution.
+
+The actor collects validated ordered execution frames through the final response.
+Capture is bounded to 32 MiB serialized frames and 65,536 non-heartbeat events.
+Exceeding either budget discards the partial capture and returns an explicit
+capture error; it does not kill the otherwise healthy worker or label partial
+outputs complete. Worker output truncation within its own limits remains
+explicit in the captured terminal accounting.
+
+A crash, stop or queued-operation cancellation that prevents a complete final
+response closes the receipt without a successful result. FailureRecords and
+Session terminal events remain independently observable. Dropping a receipt
+does not cancel accepted user code. Runtime document integration must own the
+receipt/persistence task independently of a transient Desktop/MCP connection.
+
+`ensure_primary` and `restart_primary` also reject an existing notebook mapping
+whose Session belongs to a different Project, before returning or stopping it.
+These checks supplement authoritative Notebook/Project validation at the domain
+entrypoint; clients do not acquire arbitrary worker handles.
+
+## 22. Whole-Runtime shutdown
+
+The framed bridge closes admission before requesting SessionSupervisor.stop_all.
+All known nonterminal Sessions receive stop concurrently and are awaited using
+the existing bounded Session termination path. The document coordinator then
+waits up to five seconds for its accepted capture/persistence tasks and flushes
+all loaded documents. These flushes include retained documents whose Project was
+removed from the registry after stopping its Sessions. Roots are already owned
+by the document service; clients cannot supply replacement roots.
+
+Shutdown errors preserve conflicts and report CK-RUN-SHUTDOWN rather than false
+success. Volatile Session memory is intentionally lost on explicit Runtime stop.
+Desktop disconnection must not invoke this path; Windows Host owns bridge lifetime.
+The precise protocol/Host deadlines and failure limits are in INTERFACE_CONTRACTS
+sections 15–16.
+
+Execution preparation now receives a FIFO turn allocated per notebook at domain
+admission. Document preparation runs through the Document Service queue; only
+after that completes does the turn enqueue captured code to the Session actor.
+Cancelling a middle turn removes it without releasing later turns ahead of the
+head. Stop cancels pending preparation before stopping the worker; restart and
+environment changes reject conflicting preparation. Output commit/save uses the
+same owned document queue and retains its prior generation/ordinal checks.
+The Runtime service bounds the entire explicit shutdown response to 12 seconds,
+inside Host's 15-second response deadline, and preserves owned jobs on refusal.
+
+Session control uses constant-space intent separate from user-code FIFO. One
+pending interrupt is coalesced; stop and environment-stale are monotonic for the
+worker generation. Admission never waits for the actor to consume control. Stop
+has priority over stale/interrupt; graceful and forced process cleanup still run
+under Session supervision. See INTERFACE_CONTRACTS section 25. Environment change
+notification cannot be lost merely because a worker is executing or its control
+consumer is temporarily stalled. New worker generations start with clear intent.
+
+Every accepted worker execution finishes with a numeric execution_count in both
+the terminal event and response. IPython may return an ExecutionResult without
+a count for an empty cell or when its runner catches an early KeyboardInterrupt.
+The worker then reserves the count captured before execution and advances the
+shell counter to at least that count plus one, matching its outer-interrupt path.
+It preserves the error/status and live namespace. Runtime validation remains
+strict; legitimate early interruption must not become a worker-protocol crash.
+
+Worker launch explicitly sets the current directory to the validated Project
+root. `uv --project` chooses dependency configuration but does not itself change
+the inherited process directory. Notebook relative file operations therefore
+start in their own Project, never the Host/Runtime control or payload directory.
+This is an initial directory, not a filesystem sandbox: user code may change its
+own Session process directory without changing another Session's directory.

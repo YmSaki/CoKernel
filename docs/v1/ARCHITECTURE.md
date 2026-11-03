@@ -142,6 +142,13 @@ cokernel-tunnel    tunnel process identity where practical
 
 Exact user/group mechanics may be adjusted during bootstrap implementation, but the trust goal is fixed: notebook code must not inherit external tunnel/Windows secrets.
 
+The implemented managed launch primitive is D-027: non-root Runtime with exactly
+the identity-transition and signal capabilities, a distinct non-root workload
+UID/GID, cleared workload capabilities/groups and no_new_privs. Runtime keeps
+child/process-group supervision. MCP and Tunnel use the control identity without
+those capabilities after exec. Bootstrap supplies protected payload/state and
+shared Project directory permissions; see SECURITY_OBSERVABILITY section 4.
+
 Suggested layout:
 
 ```text

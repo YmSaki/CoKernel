@@ -15,6 +15,7 @@ CoKernel/
 │  ├─ cokernel-protocol/
 │  ├─ cokernel-runtime/
 │  ├─ cokernel-host/
+│  ├─ cokernel-metrics/
 │  ├─ cokernel-mcp/
 │  └─ cokernel-bootstrap/
 │
@@ -75,6 +76,12 @@ Rules:
 - highly unit-testable.
 
 ## 2. `cokernel-protocol`
+
+Host and Runtime share the `cokernel-metrics` OS sampling implementation. The
+resource observation models live in `cokernel-domain::resources`; the metrics crate
+owns bounded read-only OS/NVIDIA collection and cached sampling lifetime. It has
+no Project mutation, Session execution, document persistence or secret authority.
+Desktop/MCP still reach these observations through Host/Runtime domain APIs.
 
 Shared wire/protocol crate.
 

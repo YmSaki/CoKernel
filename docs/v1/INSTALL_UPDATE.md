@@ -88,7 +88,61 @@ Provisioning establishes:
 - product runtime files/permissions;
 - logging/state directories.
 
+Provision the already-validated D-027 identity boundary: root-owned 0750 Runtime
+payload with control primary group and exactly cap_kill,cap_setgid,cap_setuid=ep;
+distinct control/workload accounts and the specified supplementary Project group;
+2770 Project roots, 2710 Session socket directory and private 0700 control state.
+Pass both workload IDs through trusted Host/Runtime configuration. Workloads
+cannot execute the privileged Runtime payload. Updates that replace its inode
+must restore and verify owner/mode/capabilities before advertising readiness.
+Never run Notebook code as root or substitute control identity on configuration
+failure. The isolated Phase 7 fixture validates the primitive; fresh-distro
+creation, drive/interop hardening and installer/update acceptance remain required.
+D-028 requires the reusable provisioning/validation primitives to establish an
+owned dedicated Phase 7 connection-test distro before actual remote credentials
+are used. The Phase 9 installer drives those same primitives; it is not a second
+implementation or permission to modify an existing unrelated distro.
+
 No Linux NVIDIA kernel/display driver is installed inside WSL when Windows WSL GPU support is the required model.
+
+### Connection-validation image primitive (D-028)
+
+`cokernel-bootstrap image` accepts the SHA-256-pinned Ubuntu Base archive and an
+explicit development payload archive. It writes a new image and a separate
+completion receipt. The image includes disabled automount/interop policy, locked
+control/workload accounts, root-owned payload and permission layout before first
+boot. The builder bounds archive size/count, rejects collisions, escaping/cyclic
+links and entries below links, and never extracts into the host. The payload
+includes known Python/uv/worker/tunnel tools; it never copies a user's whole home.
+Hash receipts establish development integrity, not signed release provenance.
+
+The development payload must also supply the public CA bundle from Ubuntu
+`ca-certificates 20260601~24.04.1`, SHA-256
+`9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd`.
+The builder verifies this independent pin and installs a root-owned 0644 copy at
+`/etc/ssl/certs/ca-certificates.crt` and `/etc/ssl/cert.pem` before boot (the latter
+is bundled Python/OpenSSL's default file). Finalization checks both copies.
+Private/custom host certificate stores are not copied. TLS verification remains
+enabled; package availability through uv's bundled roots does not prove Go tunnel
+HTTPS readiness. Future CA updates require an explicit pinned artifact change.
+
+`import-validation` holds the image open against concurrent Windows replacement,
+checks its receipt, refuses existing distro names/destination directories and
+imports a unique `CoKernelV1-Validation-<image UUID>` environment. Root finalization
+checks the marker, file hashes, owners/modes, policy and effective boundary, then
+sets and verifies Runtime capabilities. Host configuration is published only on
+success. Immutable prepared/imported/provisioned receipts record completed stages.
+Import uncertainty retains evidence; there is no automatic retry/unregister/delete.
+
+This primitive requires no systemd. A root WSL boot command protects distro-local
+`/run/WSL` as 0700. The launch adapter checks exact root-owned policy, absent Windows
+drive mounts and protected socket-directory permissions before Runtime starts,
+then clears the environment and supplies explicit product paths/identities.
+Changed protection rejects launch. No VM-wide binfmt, Windows registry or other
+distro configuration is modified. See SECURITY_OBSERVABILITY section 3.
+
+These are connection prerequisites, not completion of setup UX, machine preflight,
+release authenticity, reboot/resume, repair, legacy reset, JAX or actual clients.
 
 ## 6. Product runtime payload
 
@@ -135,6 +189,28 @@ Auto-start requirement:
 - Desktop UI is independent and may start/show on demand.
 
 Future headless Node mode may require boot-before-login service semantics and is outside single-user desktop v1.
+
+The Windows Host registers one `REG_SZ` value, `CoKernelHost`, under the current
+user's `Software\Microsoft\Windows\CurrentVersion\Run` key. Its command runs the
+installed Host with absolute configuration/state paths and `serve ... --background`.
+It does not pass `--start`: persisted STOPPED remains authoritative. The Host is a
+Windows subsystem executable; background mode neither attaches a console nor waits
+for console interrupt delivery. No Desktop process is needed.
+
+The installer/repair CLI is `cokernel-host autostart status|enable|disable
+<absolute-config> <absolute-state-directory>`. Desktop uses the Host IPC settings
+in INTERFACE_CONTRACTS section 27. Enabling validates the local WSL configuration,
+existing executable and bounded quoted command before writing. Disabling removes
+only the fixed product value and is idempotent. Neither operation changes desired
+state or controls the current Runtime. Uninstall removes this registration before
+removing its executable; update/repair refreshes it if installed paths change.
+
+Commands over 260 UTF-16 units are rejected without truncation. Windows may delay
+Run entries or suppress them through Startup Apps/policy; registration alone is
+not evidence that a real sign-in launched Host. The status API leaves effective
+enablement unknown when registered. See Microsoft's
+[Run and RunOnce registry keys](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys).
+Actual sign-in acceptance and installer integration remain required release checks.
 
 ## 9. Desired state persistence
 

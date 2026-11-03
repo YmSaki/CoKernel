@@ -174,6 +174,8 @@ With no Desktop UI, Host can keep Runtime/Sessions alive, execute domain operati
 - exact annotations/schema tests;
 - response bounds;
 - Human/MCP shared queue tests.
+- bounded Runtime-owned MCP recovery that preserves live Sessions, as required
+  by MCP_TUNNEL section 17.
 
 ### Canonical proof
 
@@ -202,6 +204,26 @@ Same-Session proof and MCP security suite green locally.
 - readiness/reconnect/backoff;
 - remote access status;
 - credential isolation/redaction tests.
+
+Phase 7 must implement and validate the workload identity/permission launch
+boundary needed for credential isolation, including uv package build processes,
+worker IPC, Project access and owned process cleanup. A same-UID development
+fixture is not sufficient. Phase 9 provisions/packages this validated boundary in
+the managed distro; it does not defer the security primitive past its Phase 7
+consumer gate. Managed-distro automount/interop and complete installed-system
+acceptance remain required in Phases 9 and 11.
+
+Phase 7 includes a narrow human credential-entry adapter for real connection
+acceptance: a native Windows prompt and Host-client commands, using the existing
+Named Pipe/configuration owner. It does not start a second Host/Runtime or write
+the vault directly. The full Desktop remains Phase 8; it can reuse this adapter.
+
+Before actual provider keys are handed to Linux, Phase 7 also provisions and
+validates a dedicated connection-test environment using reusable bootstrap
+primitives (D-028). It includes drive/interop restrictions and the validated
+identity/payload contract. Synthetic local fixtures do not prove this prerequisite.
+Full installer UX, reboot/resume, legacy reset and installed-system acceptance
+remain Phase 9/11; no existing user distro is repurposed or reset for this proof.
 
 ### Gate
 

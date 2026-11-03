@@ -2,6 +2,12 @@
 
 Status: **implementation baseline**
 
+2026-09-24: the initial summary-screen implementation was rejected for incomplete
+workflow design. Navigation and information placement are **reopened** in
+[UI_WORKFLOWS.md](UI_WORKFLOWS.md), with a labeled interactive design preview.
+Existing domain/lifecycle/error invariants below remain binding. Successful
+transport/build tests do not close usability acceptance.
+
 ## 1. UX principle
 
 The UI exists to make Project/environment/notebook/session state understandable and operable. Visual ornamentation is secondary.

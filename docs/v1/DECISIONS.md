@@ -107,3 +107,46 @@ Host/Runtime and Runtime/Worker contracts have explicit protocol versions, IDs, 
 ## D-026 — Main v1 architecture is designed for future Node/Fabric reuse
 
 Runtime domain concepts and local APIs must not depend on Desktop UI or one specific Windows source tree. Future remote Nodes can expose the same Project/Session concepts.
+
+## D-027 — Runtime owns workload credential transition and signal authority
+
+Managed Linux Runtime runs as a non-root control UID with exactly CAP_SETUID,
+CAP_SETGID and CAP_KILL effective/permitted, no inheritable capabilities, and a
+root-owned 0750 executable whose group is the control primary GID. Workloads use
+a distinct non-root UID/GID. Both uv dependency operations and Session launches
+apply one pre-exec transition: clear supplementary groups, set all real/effective/
+saved workload IDs, clear capabilities, set no_new_privs and arm parent-death
+SIGKILL after the credential changes. Existing Runtime child/process-group
+ownership remains authoritative for interrupt, stop, cancellation and cleanup.
+Signals are syscalls by the Runtime, not an external unprivileged kill program.
+
+This avoids introducing a second privileged launch daemon and its separate
+lifecycle/IPC protocol. The tradeoff is explicit: ID-changing capabilities are
+powerful, and a compromised Runtime is a privileged control-plane compromise.
+The design isolates workload code from control credentials; it is not a claim
+that the Runtime itself is an untrusted sandbox. Workloads cannot execute or
+modify the privileged Runtime payload, and cannot supply identity settings over
+Notebook/MCP requests. Installer/update must preserve root ownership, restricted
+execution and the exact capability set. Missing capability/identity/permission
+configuration fails before workload execution, never by same-UID fallback.
+
+Kernel basis: [capabilities](https://man7.org/linux/man-pages/man7/capabilities.7.html),
+[no_new_privs](https://man7.org/linux/man-pages/man2/PR_SET_NO_NEW_PRIVS.2const.html),
+and [parent-death signal](https://man7.org/linux/man-pages/man2/PR_SET_PDEATHSIG.2const.html).
+
+## D-028 — Provision connection-validation prerequisites before real remote keys
+
+Phase 7 real-account acceptance requires a dedicated validation WSL environment
+with the product's workload identities, Windows-drive and interop restrictions,
+and checked payload/Host launch target. Its minimal reusable provisioning and
+validation primitives belong to bootstrap and precede that consumer, even though
+the complete installer remains Phase 9. The current-user development distro and
+the synthetic different-UID fixture are not substitutes for this environment.
+
+Use an explicitly owned validation distro identity and refuse name/path collisions;
+do not overwrite or unregister an existing development, legacy or product distro.
+Validate effective workload restrictions using synthetic inputs before handing off
+a real key. Phase 9 packages the same primitives into setup, reboot/resume,
+update/repair and installation acceptance. This closes a dependency omission in
+the schedule without waiving a security gate or changing runtime ownership.
+See [prerequisite audit](evidence/phase7-real-connection-prerequisite-audit-20260922.md).

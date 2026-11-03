@@ -265,6 +265,7 @@ CONNECTED
 DEGRADED
 RECONNECTING
 ERROR
+STOPPING
 ```
 
 Startup ordering:
@@ -347,3 +348,116 @@ Mandatory tests:
 - tunnel down leaves local execution healthy;
 - MCP restart leaves live Session worker alive;
 - Human/AI same-Session value proof.
+
+## 19. Local implementation increment and remaining gates
+
+The Phase 6 service uses `cokernel-mcp serve` and the optional private Runtime
+Unix API described in INTERFACE_CONTRACTS sections 29-30. It registers all fourteen
+minimum tools plus read-only `get_operation` for execution/persistence completion.
+Schemas/validation share one contract and annotations preserve section 6's
+side-effect distinctions. Notebook reads are revision-aware cell pages with
+bounded source previews and opt-in outputs. Full registered contracts are
+snapshotted in `protocol/mcp/tools.json`.
+
+The canonical Linux gate includes official SDK interoperation, protocol-version
+negotiation, authentication/Origin/Host/body limits, private-file/socket handling,
+framing/correlation rejection, and actual service-process crash/restart while a
+real uv/IPython primary Session retains its PID and namespace. The process proof
+uses test-driven restart. A separate Runtime-owned supervision proof exercises
+section 17 recovery, health failure, retry exhaustion and explicit MCP-only restart
+as defined in INTERFACE_CONTRACTS section 31. The actual HTTP smoke also covers the canonical Human-to-MCP
+variable value, unchanged primary/worker identity, shared FIFO, parallel isolated
+Notebooks, Project ownership, revision conflicts, hostile inspection, large
+document/value bounds and interrupt/restart/stop. Actual Desktop/Codex/Web ChatGPT
+acceptance and managed workload identity separation remain separate requirements.
+No remote endpoint or tunnel is enabled by this increment.
+
+## 20. External provider and Windows credential storage
+
+v1 retains OpenAI Secure MCP Tunnel as the outbound provider. The current official
+[guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) confirms
+private HTTP MCP forwarding and separate Platform tunnel/workspace permissions.
+This is a private developer-mode connection; public plugin distribution is outside
+this product path. CoKernel must select and verify a pinned tunnel-client release
+before enabling supervision. No public proxy or independent execution runtime is
+introduced. The local bearer remains an internal routing credential.
+
+External runtime keys are stored by the Windows Host using the current user's
+Credential Manager, generic type, local-machine persistence (same user and PC,
+not all machine users). One versioned credential blob contains tunnel ID plus key,
+so replacement cannot publish mismatched pairs. The target is product-scoped and
+derived from the canonical Host state directory; other credentials are never
+enumerated. Moving that state directory requires explicit reconfiguration.
+
+The Host configuration methods in INTERFACE_CONTRACTS section 32 never return a
+key or automatically enable Remote Access. Credentials are loaded only by the
+private Host integration path when a tunnel needs them. Windows Secret Store is
+the durable source; Project files and Runtime configuration are not substitutes.
+The Host Remote Access owner serializes configuration/control and hands credentials
+to the Runtime through the owned bridge; exact contracts are INTERFACE_CONTRACTS
+sections 33–34. Actual client access and managed workload isolation remain Phase 7
+acceptance work.
+
+Human setup is available through `cokernel-host remote configure` while the Host
+is already running. Its native Windows credential dialog collects Tunnel ID as
+the user-name field and the provider runtime key as the password. It never asks
+for Windows logon credentials. The native adapter accepts 16–255 graphic ASCII
+key characters and rejects the Windows credential UI's 256-character boundary
+to avoid accepting a potentially clipped paste. The underlying Host API retains
+its 2048-byte limit; a later Desktop input path must support that complete bound.
+The dialog itself does not persist, prefill from the vault or connect remotely.
+Cancellation leaves both stored credentials and remote intent unchanged.
+Saving uses the same authenticated Named Pipe `remote_access.configure` operation
+as Desktop. It preserves existing intent, so replacing credentials while enabled
+reconciles the existing tunnel. Keys are never CLI arguments or output fields.
+See [connection runbook](REMOTE_CONNECTION.md) for the actual-client proof.
+
+## 21. Tunnel reconciliation and state authority
+
+Normal lifecycle decisions derive from facts, not from the previous UI label.
+The owner has three independent inputs: desired enable/configuration epoch,
+MCP readiness plus endpoint generation, and its currently owned child incarnation.
+The desired incarnation is `(configuration epoch, MCP generation, endpoint)` when
+enabled and MCP is ready; otherwise there is no desired child.
+
+| Owned child | Desired incarnation | Normal action |
+|---|---|---|
+| absent | absent | wait; show DISABLED when disabled, DEGRADED while the required MCP is unavailable |
+| absent | present | prepare and launch that incarnation |
+| present | equal to owned incarnation | observe the same process |
+| present | absent or different | reclaim the owned child, then reconcile again |
+
+Disable, configuration replacement, MCP loss/replacement and Runtime shutdown
+therefore share one ownership rule. A replacement cannot start before the previous
+group is killed and the leader reaped. Asynchronous preparation is checked against
+the current incarnation before launch; stale preparation cannot start a child.
+Repeated enable with identical credentials and repeated disable are idempotent.
+An explicit restart creates a new incarnation. Only the tunnel owner publishes
+operational state; public snapshots/events contain no credentials.
+
+Failure recovery is a separate policy: process/configuration/health failures permit
+three retries after 250 ms, 1 s and 4 s, then ERROR. A new configuration or explicit
+restart resets the allowance; an unchanged enable does not bypass the circuit.
+Sixty seconds of continuous connection before a process failure renews its retry
+allowance. Failure evidence is bounded to eight static-code/time/exit records.
+Cleanup failure retains ownership and STOPPING; it cannot publish a successful
+stop. An old configuration's failure never consumes a new configuration's allowance.
+
+The current adapter targets the verified official tunnel-client v0.0.14. It uses
+only a private Unix health/admin socket, no TCP admin listener, no inherited user
+configuration, and no raw process output in product logs. CONNECTED requires exact
+`200 ready` plus a successful provider poll observed in the pinned client's metric
+`commands_poll_last_successful_timestamp_seconds`. `/readyz` alone, including its
+authentication/timeout fallbacks, cannot establish connection. A poll timestamp
+unchanged for 45 seconds is stale, measured with monotonic observation time. After
+60 seconds initial grace, unhealthy observation displays DEGRADED. The client owns
+short network retries; 120 seconds without a healthy observation consumes one
+supervisor attempt. These are observations of connectivity, not a guarantee that
+an external user has authorized or successfully called a tool.
+
+Remote Access is disabled initially. Runtime credential handoff is transient and
+not persisted to Linux files. Control requires the trusted Host bridge, never MCP.
+The Host restores the separately persisted Remote Access intent and loads current
+Windows credentials for each changed Runtime/configuration target. Remote intent
+never overrides an explicit Runtime stop. Managed Linux identity isolation and
+actual external clients remain required acceptance.

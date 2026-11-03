@@ -83,6 +83,19 @@ Policy:
 
 This avoids surprise loss of loaded models/variables.
 
+Project creation/registration uses the asynchronous setup contract in
+INTERFACE_CONTRACTS section 21. An incomplete creation retains its identity and
+files with `initialization_required`; synchronization resumes uv initialization
+before syncing, without replacing an existing pyproject or deleting user files.
+
+Package add/remove/sync admission and completion follow INTERFACE_CONTRACTS
+section 20. Runtime persists an uncertainty marker before uv starts, reconciles
+failed attempts as well as successful ones, and refuses new Session startup until
+an uncertain environment is synchronized. Existing Session memory is preserved.
+An uncertain attempt can conservatively advance environment_generation even when
+dependency-file fingerprints match; the generation also invalidates uncertain
+installed environment state. A no-op successful sync need not advance it.
+
 ## 6. Project Python selection
 
 The Project Environment Manager owns resolution of the Python interpreter used for new Sessions.
@@ -280,3 +293,177 @@ A broader `Import Project Directory` feature can stream/copy a Windows directory
 - atomic save survives simulated write failure without corrupting original;
 - external modification is detected before overwrite;
 - Notebook close leaves live Session visible/running.
+
+## 21. Initial document implementation contract
+
+The first document slice lives in Runtime's `notebook` module. Its JSON model is
+platform-independent; authoritative persistence is Linux-only, matching the WSL
+Runtime boundary. Desktop does not write Project notebook files directly.
+
+### Format and limits
+
+- Read nbformat 4.0 through 4.5. Unsupported versions, cell/output types and
+  malformed required fields fail explicitly; they are never silently dropped.
+- Preserve unknown JSON fields and opaque metadata, attachments, rich MIME,
+  stream/error outputs, source string-versus-string-array representation and
+  existing valid unique IDs. Duplicate JSON object keys are rejected.
+- Legacy 4.0–4.4 documents receive IDs for cells missing them and normalize to
+  4.5 in memory. This makes the document dirty; opening does not rewrite disk.
+  Invalid/duplicate IDs and missing IDs in a declared 4.5 document are errors.
+- Bounds: 64 MiB serialized document, 10,000 cells, 1,000 edits per transaction,
+  128 loaded documents and 256 MiB of their serialized content per Runtime.
+  These are admission bounds, not a claim about total allocator/RSS usage.
+- Project discovery examines at most 100,000 entries, 32 directory levels and
+  10,000 notebook paths. It skips symlinks and `.venv`, `.git`, `.cokernel`
+  directories, returns sorted Project-relative paths, and does not parse files
+  merely to list them. Malformed notebook files are reported when opened.
+
+The supported structural shapes follow the
+[nbformat description](https://nbformat.readthedocs.io/en/latest/format_description.html).
+The parser validates owned structural fields; it does not interpret arbitrary
+third-party metadata or install/launch an imported kernelspec.
+
+### Identity, revisions and state
+
+One Runtime service owns documents, deduplicated by Project ID and relative path.
+Notebook IDs and revisions are Runtime-lifetime identities; clients refresh their
+references after Runtime replacement. Opening an already managed path retains
+its identity and unsaved edits. Runtime restart loses volatile Session state;
+saved `.ipynb` content remains the durable document truth.
+
+An edit batch validates a cloned candidate and commits in memory as one revision.
+`set_cell_source`, `insert_cell`, `delete_cell`, `move_cell`,
+`set_notebook_metadata` and `set_cell_metadata` require an expected revision.
+Metadata-setting operations replace the specified metadata object deliberately;
+source/reorder operations preserve unrelated metadata. Move index means final
+index after movement. Inserts without an ID receive a generated one. Invalid
+batches leave the document and its revision unchanged. Stale revisions return
+`CK-NB-CONFLICT` with the current revision in the typed error.
+
+State is `CLEAN`, `DIRTY`, `EXTERNAL_CHANGE_DETECTED` or `SAVE_FAILED`.
+`content_hash` hashes current compact JSON plus newline;
+`saved_content_hash` hashes actual last-observed persisted bytes. Saving unchanged
+content does not create an edit revision. Explicit reload replaces in-memory
+content and increments revision; a caller must explain that unsaved edits are
+discarded. Neither operation mutates Session memory.
+
+### Filesystem and save behavior
+
+The service obtains its Project from the Project manager, never from an arbitrary
+client root path. It opens the Project directory, walks relative directories
+through descriptor-relative `openat` with `O_NOFOLLOW`, rejects traversal,
+absolute/Windows-style paths, symlink components, non-regular files and multiply
+linked notebook files. Parents must already exist. Create uses atomic
+`renameat2(RENAME_NOREPLACE)`; collision never overwrites a file.
+
+Save writes a private same-directory temporary file, syncs it, checks the original
+file's device/inode/size/timestamps/SHA-256 again, then atomically replaces and
+syncs the directory. Failure before replacement removes temporary data and leaves
+the original intact. Failed directory sync is reported as `CK-NB-SAVE` with
+`SAVE_FAILED`, even if replacement is already visible; it never reports false
+durability. Unsaved content stays available for recovery.
+
+Detection is optimistic against external tools: Linux filesystems do not provide
+a hash-conditional atomic rename. An uncooperative writer can still modify a file
+in the final check-to-rename interval. Product-mediated mutations are serialized;
+this mechanism is not isolation from a hostile process with write access to the
+same Project directories. Existing conflicts stop normal writes until explicit
+reload or a later save-as reconciliation path.
+
+The Linux Runtime bridge exposes these document operations through the shared
+domain coordinator. MCP, Host event forwarding and Desktop autosave orchestration
+are later-phase adapters; they must use this same document authority.
+
+## 22. Bounded import and output application
+
+Runtime import methods are `begin_import`, `import_chunk`, `finish_import` and
+`cancel_import`. A random typed ImportId binds the transaction to Project ID,
+Project root and target path. Size must be 1..64 MiB and the declared SHA-256
+must contain exactly 64 hexadecimal characters. The target must not exist.
+
+- Admission permits four active imports and 128 MiB total declared staging size.
+- Chunks contain 1..262,144 decoded bytes and exactly the next expected offset.
+- The RPC adapter bounds base64 text to 349,528 bytes before decoding and invokes
+  this byte-oriented domain API. Malformed or oversized base64 aborts the owned
+  transaction; wrong-Project requests cannot abort it.
+- Staging is an anonymous `O_TMPFILE` in the target filesystem. Closing the
+  transaction or Runtime process removes it without named partial files.
+- A transaction expires five minutes after begin, not after its latest chunk.
+  Expired transactions are rejected and collected on the next import API call;
+  idle staging is always bounded and is released on service shutdown.
+- Wrong-Project calls do not cancel another Project's transaction. Invalid chunks,
+  incomplete finish, hash mismatch, malformed document or finish failure discard
+  that transaction; continuation requires a new begin.
+- Finish checks total bytes and SHA-256, rereads and rechecks staged content,
+  validates the notebook, re-resolves the target safely and installs through the
+  document service's no-overwrite atomic write. Parent swaps/symlinks and files
+  created during upload are rejected. Import does not execute or install packages.
+- An already-managed document retains its identity even if its file disappeared
+  externally. Create/import cannot establish a second identity over that path.
+
+`NotebookOutputs` converts complete captured worker results into nbformat stream,
+display_data, execute_result and error outputs. It rejects missing/gapped events,
+mixed Session/operation IDs, invalid output shapes, inconsistent final accounting
+and missing terminal responses. `apply_outputs` uses the same expected-revision,
+Project ownership and external-change checks as edits, then marks the document
+dirty for ordinary save. Only the target cell outputs/count and the owned
+`metadata.cokernel.execution` field change; unrelated metadata and cells remain.
+Execution metadata records operation/status and output truncation accounting.
+
+## 23. Authoritative execution and view lifetime
+
+`NotebookRuntime` coordinates the document service and existing Session
+Supervisor. Admission validates Project/Notebook/Session ownership, the expected
+document revision and a code cell ID. Source is resolved internally; public
+execute requests cannot supply source or caller origin. The transport adapter
+supplies the authenticated Human/MCP origin separately.
+
+Each accepted execution captures a private source-generation token and monotonic
+execution ordinal. Output revisions and edits to other cells preserve that token.
+Editing the target source (even to the same text), deleting/reinserting its ID,
+or explicitly reloading the document invalidates it. A late completion must not
+replace a newer completion for the same cell. These cases return
+`CK-NB-STALE-EXECUTION`; accepted code may still have changed Session memory.
+
+A Runtime-owned task receives the complete captured result, applies outputs to
+the current document revision under the document lock and saves atomically.
+It survives the requesting caller's cancellation after acceptance. At most 32
+document executions are pending globally; 128 compact operation records are
+retained in Runtime memory, evicting old completed records first. Clients poll
+`operations.get` to distinguish execution status from persistence status.
+`NOT_PERSISTED` explicitly reports capture/conflict/save failures; it never claims
+that a successful Python execution implies a saved notebook. Unsaved output that
+has already been applied remains in the document for save retry.
+
+Closing a view flushes the document at the supplied revision and keeps its
+NotebookId and primary Session association. Flush failure is returned, never
+silently discarded. Explicit reload discards unsaved edits without resetting
+Python memory. Non-execution edits stay DIRTY until save/close; Desktop's short
+debounce autosave is implemented with the UI in Phase 8. Save-as reconciliation
+remains a future extension. Runtime process shutdown still loses volatile Session
+memory and retained operation status; Host/UI lifetime separation is Phase 5.
+
+Document work now has an owned FIFO queue. Public file operations, execution
+preparation, output commit/save and shutdown flush run through that queue's
+blocking-pool jobs. Domain admission and worker control do not hold its filesystem
+waits. Queue cancellation, bounds and shutdown refusal are specified in
+INTERFACE_CONTRACTS section 24. Source/revision and atomic-write guarantees above
+remain authoritative; moving the work does not permit stale results to overwrite
+newer edits or give workers a persistence path.
+
+Notebook Service also maintains a bounded loaded-identity index alongside its
+document table. Registration updates it before returning a new Notebook ID.
+The index contains only Notebook/Project IDs, allowing lifecycle admission to
+reject cross-Project access without acquiring the document filesystem lock.
+It is not a cache of document contents or disk validity; owned document work still
+performs authoritative path, revision and external-change checks.
+
+Project registry storage likewise has a single owner and read-only projection.
+Prepare, write-ahead uncertainty, status probes, canonical registration lookup,
+post-uv fingerprint/reconciliation and registry removal run as owned jobs. uv
+execution remains parallel across different Projects, with each Project reserved
+through reconciliation. Registration aliases resolve to the same reservation.
+Projection updates follow the storage attempt, including conservative uncertainty
+on failure. Registry removal failure restores the in-memory record for retry and
+never deletes Project files. See INTERFACE_CONTRACTS section 26 for admission,
+capacity, failure and shutdown behavior.

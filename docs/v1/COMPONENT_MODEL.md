@@ -200,6 +200,13 @@ Central Linux control-plane process.
 - expose tunnel secrets to workers;
 - let one client bypass domain invariants.
 
+The daemon owns one Runtime endpoint and domain service. Transport adapters submit
+through cloneable request handles and await independent response tickets; they
+do not own domain completion loops or stop Runtime when a client disconnects.
+Request correlation/capacity and daemon termination belong to that endpoint.
+Project environment, Notebook document and Notebook primary Session remain the
+domain ownership boundaries. See INTERFACE_CONTRACTS section 23.
+
 ## 9. C-LNX-02 — Project Registry
 
 ### Responsibilities

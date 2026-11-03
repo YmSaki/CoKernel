@@ -9,6 +9,7 @@ This matrix connects requirement families to use cases, implementation phases/is
 | R-INST-* Installation/runtime | UC-01, UC-22, UC-23, UC-25 | #31, #34, #35 | WSL integration + real Windows install/reboot/repair |
 | R-PROJ-* Project | UC-02, UC-03, UC-24 | #28, #33 | Project create/open/delete registry tests + E2E |
 | R-ENV-* uv environment/packages | UC-02–05, UC-10–11 | #27, #28, #29 | uv component tests, stale-session E2E, cache/storage inspection |
+| R-ENV-008 JAX on the target NVIDIA workstation | Project GPU computation and shared human/AI Session | #28, #29, #32, #33, #35; DELIVERY_PLAN D11 | Actual JAX GPU discovery/computation in a Project Session, recorded package/driver versions, Desktop/Codex/ChatGPT sharing |
 | R-NB-* notebook documents/import | UC-06–09, UC-17, UC-24 | #30, #33 | nbformat fixtures, Windows import, atomic save/conflict tests |
 | R-EXEC-* interactive execution | UC-08–13, UC-19 | #27, #29 | persistent namespace, queue, interrupt/restart, parallel-session tests |
 | R-SUP-* supervision/failure | UC-12–14, UC-25 | #29, #33, #35 | forced crash/SIGKILL, FailureRecord, isolation tests |

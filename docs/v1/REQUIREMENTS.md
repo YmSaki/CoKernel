@@ -7,6 +7,10 @@ Scope: single Windows workstation / managed WSL compute runtime
 
 The user wants to use the CPU, memory, storage, and NVIDIA GPU already present in a Windows PC as a simple Linux-based Python/AI compute environment.
 
+JAX GPU execution is an explicit reason for the Linux/WSL environment. The target
+workstation delivery must demonstrate JAX computation through a Project Session;
+merely installing a Linux environment or importing JAX does not prove this need.
+
 The desired workflow is centered on projects and notebook documents:
 
 ```text
@@ -113,6 +117,12 @@ When an environment changes while one or more Sessions for that Project are aliv
 
 **R-ENV-007 (P1)**  
 Package operation failures shall be surfaced in user-oriented terms with the relevant resolver/install evidence available for diagnostics.
+
+**R-ENV-008 (P0)**
+The target workstation shall support a uv-managed Project that discovers the
+NVIDIA GPU through JAX and completes a representative JAX computation in a
+CoKernel Execution Session. Human and AI clients shall share that Session through
+the standard product paths. Dependency/driver compatibility must be recorded.
 
 ## 7. Notebook document requirements
 
