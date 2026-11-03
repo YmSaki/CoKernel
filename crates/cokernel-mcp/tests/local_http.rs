@@ -355,8 +355,12 @@ async fn malformed_and_fragmented_unix_clients_do_not_block_other_requests() {
             "CK-RUN-NO-METHOD"
         );
     }
-    // Authoring is intentionally allowed, while malformed requests still fail validation.
-    for method in ["projects.create", "notebooks.apply_edits"] {
+    // Authoring passes the transport allowlist. This minimal fixture has no
+    // NotebookRuntime, so notebook admission reports unavailable (not forbidden).
+    for (method, expected) in [
+        ("projects.create", "CK-RUN-BAD-PARAMS"),
+        ("notebooks.apply_edits", "CK-RUN-404"),
+    ] {
         assert_eq!(
             client
                 .call(method, json!({}))
@@ -365,7 +369,7 @@ async fn malformed_and_fragmented_unix_clients_do_not_block_other_requests() {
                 .error
                 .unwrap()
                 .code,
-            "CK-RUN-BAD-PARAMS"
+            expected
         );
     }
     api.shutdown().await.unwrap();
