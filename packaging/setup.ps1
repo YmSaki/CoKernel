@@ -72,7 +72,7 @@ try {
         & $hostExe start
         if ($LASTEXITCODE -ne 0) { throw 'Existing Host refused runtime start.' }
     } elseif ($LASTEXITCODE -ne 0) {
-        $arguments = 'serve "{0}" "{1}" --start' -f $config,$state
+        $arguments = 'serve "{0}" "{1}" --start --background' -f $config,$state
         Start-Process -FilePath $hostExe -ArgumentList $arguments -WindowStyle Hidden | Out-Null
     }
     $ready = $false
