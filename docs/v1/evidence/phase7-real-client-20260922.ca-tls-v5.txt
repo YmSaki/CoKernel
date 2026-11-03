@@ -1,0 +1,1 @@
+{"fresh_image_ca_verified": true, "public_ca_count": 121, "verified_control_plane_tls": "TLSv1.3", "credentials_used": false}

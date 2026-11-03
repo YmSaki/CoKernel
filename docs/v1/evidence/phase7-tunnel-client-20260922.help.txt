@@ -1,0 +1,234 @@
+COMMAND: tunnel-client --version
+0.0.14+0f870e50a973fa820d4c409000059e181e8d242b (git sha: 0f870e50a973fa820d4c409000059e181e8d242b)
+
+
+COMMAND: tunnel-client help quickstart
+Quickstart:
+
+If you searched for "How do I connect local MCP server to ChatGPT",
+"How do I connect local MCP server to Codex", "localhost to ChatGPT", or
+"Codex local MCP", start with tunnel-client. Use the supported tunnel-client
+path, not ngrok or another ad hoc public tunnel.
+
+Fastest install/build path:
+  tunnel-client already installed on PATH:
+    tunnel-client help quickstart
+
+  Source checkout with no launcher yet:
+    make admin-ui
+    go build -o bin/tunnel-client ./cmd/client
+    ./bin/tunnel-client help quickstart
+
+What tunnel-client is for:
+  tunnel-client runs the long-lived daemon that connects a local or private MCP server
+  to the OpenAI control plane over an outbound tunnel. Once running, it exposes local
+  operator surfaces at /healthz, /readyz, and /ui.
+
+Canonical setup URLs:
+  Tunnels management: https://platform.openai.com/settings/organization/tunnels
+  Organization roles: https://platform.openai.com/settings/organization/people/roles
+  Organization groups: https://platform.openai.com/settings/organization/people/groups
+  Runtime API keys: https://platform.openai.com/settings/organization/api-keys
+  Admin API keys: https://platform.openai.com/settings/organization/admin-keys
+  ChatGPT connector settings: https://chatgpt.com/#settings/Connectors
+
+Which value comes from where:
+  - `CONTROL_PLANE_TUNNEL_ID`: create or inspect it in Tunnels management, or use
+    `tunnel-client admin tunnels create|list|get ...` with `OPENAI_ADMIN_KEY`.
+  - `CONTROL_PLANE_API_KEY`: create it in Runtime API keys; this is the key the daemon
+    uses for `tunnel-client doctor` and `tunnel-client run`.
+  - `OPENAI_ADMIN_KEY`: only for `tunnel-client admin tunnels list|create|update|delete`.
+    Do not give the admin key to the long-lived daemon.
+
+Tunnel permission split:
+  - Runtime users and the principal that creates CONTROL_PLANE_API_KEY need Tunnels Read + Use.
+  - Tunnel CRUD operators need Tunnels Read + Manage.
+  - Admin-key creators need Platform admin-key permission separately.
+  - Full role/group guidance lives in docs/permissions.md.
+
+Pick the shortest matching starter sample:
+
+0. One-command demo path with the embedded MCP server:
+   tunnel-client run --embedded-mcp-stub --control-plane.tunnel-id tunnel_... --health.listen-addr 127.0.0.1:0 --health.url-file /tmp/tunnel-client-health.url
+   After startup:
+   curl -fsS "$(cat /tmp/tunnel-client-health.url)/readyz"
+   open "$(cat /tmp/tunnel-client-health.url)/ui"
+
+1. Local stdio MCP command:
+   tunnel-client init --sample sample_mcp_stdio_local --profile local-stdio --tunnel-id tunnel_... --mcp-command "python /path/to/server.py"
+
+2. Remote HTTP MCP server with no OAuth/PRMD metadata:
+   tunnel-client init --sample sample_mcp_remote_no_auth --profile remote-http --tunnel-id tunnel_... --mcp-server-url https://mcp.example.com/mcp
+
+3. HTTP or stdio MCP target behind an outbound proxy or private PKI:
+   export HTTPS_PROXY="http://proxy.internal.example.com:8080"
+   export ENTERPRISE_CA_BUNDLE="/etc/ssl/certs/proxy-root.pem"
+   tunnel-client init --sample sample_mcp_enterprise_proxy --profile corp-proxy --tunnel-id tunnel_... --mcp-server-url https://mcp.internal.example.com/mcp
+
+4. HTTP MCP server with OAuth/DCR metadata, or when you want to exercise the full contract:
+   tunnel-client dev mcp-stub
+   tunnel-client init --sample sample_mcp_with_dcr --profile sample_mcp_with_dcr --tunnel-id tunnel_... --mcp-server-url http://127.0.0.1:NNNN/mcp
+
+Then validate and start:
+  tunnel-client doctor --profile <name> --explain
+  tunnel-client run --profile <name>
+
+Supervision choice:
+  - Use `tunnel-client run ...` when you intentionally want a foreground daemon
+    attached to the current terminal.
+  - For a long-lived local runtime managed by Codex, prefer
+    `tunnel-client runtimes connect ...`.
+  - Do not use `nohup` or `disown` as the tunnel-client supervision path.
+  - After `runtimes connect`, check `tunnel-client runtimes status <alias>`
+    before reporting success. Only report success when status shows the managed
+    runtime running with health reported. Use `--json` when Codex needs explicit
+    `process_running`, `healthy`, and `ready` fields.
+
+ChatGPT connector note:
+  Create or verify the connector in ChatGPT settings only while tunnel-client is running.
+  Keep tunnel-client up for connector discovery and every MCP call from ChatGPT.
+
+If you used the embedded demo MCP server and connected the tunnel in ChatGPT, try:
+  - Use the server_info tool and summarize the demo MCP server.
+  - Use the echo tool with input "hello from tunnel-client".
+  - Use the uppercase tool on "openai tunnel".
+
+Starter prompts for Codex:
+  - "Figure out what tunnel-client is for from the binary help, then get me to /ui with the shortest local path."
+  - "Use tunnel-client to create or reuse a profile, run doctor --explain, and then start the foreground daemon attached to this terminal."
+  - "Run tunnel-client codex assistant and summarize what this checkout is for in one sentence."
+  - "Install the Codex plugin from the tunnel-client binary, connect the provided tunnel id, and tell me whether the runtime is launched, healthy, or ready."
+  - "For a long-lived local runtime, use tunnel-client runtimes connect to attach the provided tunnel id, then run tunnel-client runtimes status <alias> before reporting whether the runtime is launched, healthy, or ready."
+
+If you already know a tunnel id and only need metadata:
+  tunnel-client admin tunnels get tunnel_...     # runtime key or admin key
+  tunnel-client admin --json tunnels get tunnel_...   # inspect organization_ids/workspace_ids for admin CRUD scope
+
+If you need create/list/update/delete:
+  tunnel-client admin tunnels ...                # admin key required
+
+If your rollout has self-serve tunnel access:
+  - create the tunnel yourself in Tunnels management or with `tunnel-client admin tunnels create`
+  - use the returned tunnel id as `CONTROL_PLANE_TUNNEL_ID`
+  - create a separate runtime key from Runtime API keys and export it as `CONTROL_PLANE_API_KEY`
+  - make sure the runtime-key principal has Tunnels Read + Use for the tunnel
+
+Useful follow-ups:
+  tunnel-client codex assistant "Summarize what tunnel-client is for."
+  tunnel-client codex plugin install
+  tunnel-client runtimes list
+  tunnel-client profiles samples list
+  tunnel-client profiles samples show sample_mcp_stdio_local
+  tunnel-client profiles samples show sample_mcp_remote_no_auth
+  tunnel-client profiles samples show sample_mcp_enterprise_proxy
+  tunnel-client help samples
+  tunnel-client help oauth
+  tunnel-client help plugin
+  tunnel-client help troubleshooting
+
+
+COMMAND: tunnel-client run --help
+run version 0.0.14+0f870e50a973fa820d4c409000059e181e8d242b (git sha: 0f870e50a973fa820d4c409000059e181e8d242b)
+Usage of run:
+      --admin-ui.log-buffer-events int                   Number of recent log events to keep in memory for the embedded web UI and export archive (env.ADMIN_UI_LOG_BUFFER_EVENTS, max 100000) (default 2000)
+      --allow-remote-ui                                  Allow remote access to the embedded web UI and log endpoints (env.ALLOW_REMOTE_UI)
+      --ca-bundle string                                 Path to PEM CA bundle for outbound TLS trust (additive to system trust) (env.CA_BUNDLE)
+      --cloudflared.managed                              Fetch the managed Cloudflare Tunnel runtime token from the control plane on startup (env.CLOUDFLARED_MANAGED)
+      --cloudflared.path string                          Path to the bundled cloudflared executable; defaults to the executable beside tunnel-client (env.CLOUDFLARED_PATH)
+      --cloudflared.ready-timeout duration               Maximum time to wait for bundled cloudflared to report ready (env.CLOUDFLARED_READY_TIMEOUT) (default 30s)
+      --cloudflared.token string                         Reference to an environment variable or file containing a pre-provisioned Cloudflare Tunnel token (format env:VARNAME or file:/path; env.CLOUDFLARED_TUNNEL_TOKEN)
+      --config string                                    Path to YAML config file (env.TUNNEL_CLIENT_CONFIG). Precedence: flags > environment > YAML > defaults
+      --control-plane.api-key string                     Reference to environment variable or file containing the control-plane API key (format env:VARNAME or file:/path/to/secret)
+      --control-plane.base-url string                    Tunnel control-plane base URL (env.CONTROL_PLANE_BASE_URL) (default "https://api.openai.com")
+      --control-plane.client-cert string                 Path to PEM client certificate for control-plane mTLS (format <path|env:VAR|file:/path>) (env.CONTROL_PLANE_CLIENT_CERT)
+      --control-plane.client-key string                  Path to PEM client private key for control-plane mTLS (format <path|env:VAR|file:/path>) (env.CONTROL_PLANE_CLIENT_KEY)
+      --control-plane.extra-headers stringArray          Additional HTTP headers to send to the tunnel control-plane (format 'Key: Value', repeatable; values accept env:VAR or file:/path) (env.CONTROL_PLANE_EXTRA_HEADERS)
+      --control-plane.http-proxy string                  Outbound HTTP proxy for the control plane (format <url|env:VAR>)
+      --control-plane.max-inflight int                   Capacity of the local polled-command buffer; polling pauses while the buffer is full (env.CONTROL_PLANE_MAX_INFLIGHT_REQUESTS, max 10000) (default 20)
+      --control-plane.organization-id string             Organization ID to send as OpenAI-Organization on tunnel control-plane requests (env.CONTROL_PLANE_ORGANIZATION_ID)
+      --control-plane.poll-channel stringArray           Channel to drain from the control plane (repeatable; env.CONTROL_PLANE_POLL_CHANNELS)
+      --control-plane.poll-deadline-guardrail duration   Extra time after the requested long-poll wait before the control-plane HTTP/context deadline (env.CONTROL_PLANE_POLL_DEADLINE_GUARDRAIL) (default 5s)
+      --control-plane.poll-timeout duration              Long-poll timeout when fetching commands from the control plane (env.CONTROL_PLANE_POLL_TIMEOUT) (default 30s)
+      --control-plane.tunnel-id string                   Identifier for this client/tunnel (env.CONTROL_PLANE_TUNNEL_ID)
+      --control-plane.url-path string                    Optional URL path appended to the control-plane base URL before tunnel-client adds its /v1/... routes (env.CONTROL_PLANE_URL_PATH)
+      --embedded-mcp-listen-addr string                  Listen address for the embedded demo MCP stub used by --embedded-mcp-stub (default "127.0.0.1:0")
+      --embedded-mcp-server-name string                  Server name advertised by the embedded demo MCP stub (default "mcp-stub")
+      --embedded-mcp-server-version string               Server version advertised by the embedded demo MCP stub (default "0.1.0")
+      --embedded-mcp-stub                                Start the embedded demo MCP + OAuth stub and bind the main channel to it for this run
+      --harpoon.additional-transport stringArray         Additional harpoon transports (http-streamable) (env.HARPOON_ADDITIONAL_TRANSPORTS)
+      --harpoon.allow-plaintext-http                     Allow http:// harpoon targets and redirects (env.HARPOON_ALLOW_PLAINTEXT_HTTP)
+      --harpoon.capture-payloads                         Capture request/response payloads for the Harpoon admin UI (debug only). (env.HARPOON_CAPTURE_PAYLOADS)
+      --harpoon.hosts-include-loopback                   Treat loopback hosts as private for Harpoon auto-registration (env.HARPOON_HOSTS_INCLUDE_LOOPBACK) (default true)
+      --harpoon.hosts-include-private                    Treat private IPs as private for Harpoon auto-registration (env.HARPOON_HOSTS_INCLUDE_PRIVATE) (default true)
+      --harpoon.hosts-include-regex stringArray          Host regex patterns treated as private for Harpoon auto-registration (repeatable) (env.HARPOON_HOSTS_INCLUDE_REGEX)
+      --harpoon.hosts-include-suffix stringArray         Host suffixes treated as private for Harpoon auto-registration (repeatable) (env.HARPOON_HOSTS_INCLUDE_SUFFIX)
+      --harpoon.http-proxy string                        Outbound HTTP proxy for Harpoon requests (format <url|env:VAR>)
+      --harpoon.max-redirects int                        Maximum number of harpoon redirects (env.HARPOON_MAX_REDIRECTS) (default 5)
+      --harpoon.max-response-bytes int                   Maximum harpoon response size in bytes (env.HARPOON_MAX_RESPONSE_BYTES) (default 102400)
+      --harpoon.target stringArray                       Harpoon target mapping (format 'label=...,url=...,unix-socket=...,desc=...') (env.HARPOON_TARGETS)
+      --health.listen-addr string                        Address the health HTTP server listens on (ip:port). Use :8080 to listen on all interfaces, or 127.0.0.1:0 to request a loopback ephemeral port from the OS. Ignored when health.unix-socket is set. (env.HEALTH_LISTEN_ADDR) (default "127.0.0.1:8080")
+      --health.unix-socket string                        Unix socket path for the health HTTP server. When set, tunnel-client serves health over the socket instead of binding TCP. (env.HEALTH_UNIX_SOCKET)
+      --health.url-file string                           File to write the health base URL to after startup (env.HEALTH_URL_FILE)
+  -h, --help                                             help for run
+      --http-proxy string                                Global outbound HTTP proxy (applies to control-plane, MCP, and Harpoon) (format <url|env:VAR>)
+      --log.file string                                  Log file path; defaults to stdout when empty (env.LOG_FILE) (default "stdout")
+      --log.format string                                Log format (struct-text, json) (env.LOG_FORMAT)
+      --log.http-raw-unsafe                              Log full raw HTTP requests and responses (including bodies/headers). WARNING: May include PII or sensitive data. Use only for debugging. (env.LOG_HTTP_RAW_UNSAFE)
+      --log.level string                                 Log level (debug, info, warn) (env.LOG_LEVEL) (default "info")
+      --mcp.client-cert string                           Path to PEM client certificate for MCP mTLS (format <path|env:VAR>) (env.MCP_CLIENT_CERT)
+      --mcp.client-key string                            Path to PEM client private key for MCP mTLS (format <path|env:VAR>) (env.MCP_CLIENT_KEY)
+      --mcp.command stringArray                          Command to launch an MCP server over stdio (repeatable; format command=...,channel=...) (env.MCP_COMMAND)
+      --mcp.connection-max-ttl duration                  Maximum lifetime of MCP transport connections (env.MCP_CONNECTION_MAX_TTL) (default 10m0s)
+      --mcp.discovery-extra-headers stringArray          Static HTTP headers to send to MCP discovery/probe requests for the configured MCP server origin (format 'Key: Value', repeatable; values accept env:VAR or file:/path) (env.MCP_DISCOVERY_EXTRA_HEADERS)
+      --mcp.extra-headers stringArray                    Static HTTP headers to send to the configured MCP server origin (format 'Key: Value', repeatable; values accept env:VAR or file:/path) (env.MCP_EXTRA_HEADERS)
+      --mcp.http-proxy string                            Outbound HTTP proxy for MCP (format <url|env:VAR>)
+      --mcp.max-concurrent-requests int                  Maximum number of requests actively dispatched to the MCP server (env.MCP_MAX_CONCURRENT_REQUESTS) (default 10)
+      --mcp.server-url stringArray                       Target MCP server URL (repeatable; format url=...,channel=...,unix-socket=...,http-proxy=...,client-cert=...,client-key=...) (env.MCP_SERVER_URL)
+      --mcp.startup-wait-timeout duration                Maximum opt-in startup wait for the main MCP HTTP listener before first poll (env.MCP_STARTUP_WAIT_TIMEOUT)
+      --mcp.stdio-send-initialized-notification          Opt in to sending notifications/initialized after a successful stdio initialize response (env.MCP_STDIO_SEND_INITIALIZED_NOTIFICATION)
+      --open-web-ui                                      Open the embedded web UI in your default browser on startup (env.OPEN_WEB_UI)
+      --pid.file string                                  File to write the tunnel-client process ID to (env.PID_FILE)
+      --profile string                                   Profile name to load from the profile directory (env.TUNNEL_CLIENT_PROFILE)
+      --profile-dir string                               Directory containing profile YAML files (env.TUNNEL_CLIENT_PROFILE_DIR; default $XDG_CONFIG_HOME/tunnel-client or ~/.config/tunnel-client)
+      --profile-file string                              Path to a specific profile YAML file (env.TUNNEL_CLIENT_PROFILE_FILE)
+      --proxy.check-interval duration                    Interval between proxy connectivity checks (env.PROXY_CHECK_INTERVAL) (default 1m0s)
+
+Agent-first next steps:
+  tunnel-client help quickstart
+  health_url_file="$(mktemp "${TMPDIR:-/tmp}/tunnel-client-health.XXXXXX.url")"; tunnel-client run --embedded-mcp-stub --control-plane.tunnel-id tunnel_... --health.listen-addr 127.0.0.1:0 --health.url-file "$health_url_file"
+  tunnel-client init --profile sample_mcp_with_dcr --tunnel-id tunnel_... --mcp-server-url http://127.0.0.1:3001/mcp
+  tunnel-client doctor --profile sample_mcp_with_dcr
+  tunnel-client profiles samples list
+  UI convention: http://<health.listen-addr>/ui
+
+Environment variables:
+  CONTROL_PLANE_API_KEY	API key used to authenticate to the tunnel control plane (required; preferred)
+  OPENAI_API_KEY	API key env var used when CONTROL_PLANE_API_KEY unset
+  CONTROL_PLANE_ORGANIZATION_ID	Organization ID sent as OpenAI-Organization on tunnel control-plane requests (optional)
+  CONTROL_PLANE_URL_PATH	Optional URL path appended to CONTROL_PLANE_BASE_URL before tunnel-client adds its /v1/... routes
+  CONTROL_PLANE_CLIENT_CERT	Path to PEM client certificate for control-plane mTLS (optional)
+  CONTROL_PLANE_CLIENT_KEY	Path to PEM client private key for control-plane mTLS (optional)
+  CONTROL_PLANE_EXTRA_HEADERS	Static headers for tunnel control-plane requests; values accept env:VAR or file:/path (optional)
+  TUNNEL_CLIENT_CONFIG	Path to YAML config file (optional)
+  TUNNEL_CLIENT_PROFILE	Profile name to load from the profile directory (optional)
+  TUNNEL_CLIENT_PROFILE_FILE	Path to a specific profile YAML file (optional)
+  TUNNEL_CLIENT_PROFILE_DIR	Profile directory override (default: $XDG_CONFIG_HOME/tunnel-client or ~/.config/tunnel-client)
+  XDG_CONFIG_HOME	Base directory for default tunnel-client profiles (optional)
+  HEALTH_LISTEN_ADDR	Health/admin listen address; use :0 to request an ephemeral port (optional)
+  HEALTH_UNIX_SOCKET	Health/admin Unix socket path; when set, tunnel-client does not bind TCP for health/admin (optional)
+  HEALTH_URL_FILE	Write the resolved health base URL after startup; recommended with HEALTH_LISTEN_ADDR=:0 or HEALTH_UNIX_SOCKET (optional)
+  ALLOW_REMOTE_UI	Set to true to allow non-loopback access to the embedded web UI (optional)
+  OPEN_WEB_UI	Set to true to open the embedded web UI in a browser on startup (optional)
+  ADMIN_UI_LOG_BUFFER_EVENTS	Recent log-event capacity for the embedded web UI and export archive (optional)
+  CLOUDFLARED_TUNNEL_TOKEN	Pre-provisioned remotely managed Cloudflare Tunnel token; enables bundled cloudflared supervision (optional)
+  CLOUDFLARED_MANAGED	Fetch the managed Cloudflare Tunnel runtime token from the control plane on startup (optional)
+  CLOUDFLARED_PATH	Advanced override for the bundled cloudflared executable path (optional)
+  CLOUDFLARED_READY_TIMEOUT	Maximum startup wait for bundled cloudflared readiness (optional)
+  CA_BUNDLE	Path to a PEM CA bundle used for outbound TLS connections (additive to system trust) (optional)
+  MCP_EXTRA_HEADERS	Static headers for outbound MCP HTTP requests to the configured MCP server origin; values accept env:VAR or file:/path (optional)
+  MCP_DISCOVERY_EXTRA_HEADERS	Static headers for MCP discovery/probe requests to the configured MCP server origin; values accept env:VAR or file:/path (optional)
+  MCP_STARTUP_WAIT_TIMEOUT	Maximum opt-in startup wait for the main MCP HTTP listener before first poll (optional)
+  MCP_STDIO_SEND_INITIALIZED_NOTIFICATION	Opt in to sending notifications/initialized after a successful stdio initialize response (optional)
+  MCP_CLIENT_CERT	Path (or env:VAR) to PEM client certificate for MCP mTLS (optional)
+  MCP_CLIENT_KEY	Path (or env:VAR) to PEM client private key for MCP mTLS (optional)
+  PROXY_CHECK_INTERVAL	Interval between proxy connectivity checks (optional)

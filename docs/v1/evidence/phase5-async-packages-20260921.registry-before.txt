@@ -1,0 +1,22 @@
+   Compiling cokernel-runtime v1.0.0-alpha.0 (/home/ymsaki/.cache/cokernel-v1-dev/repo/crates/cokernel-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.47s
+     Running tests/package_operations.rs (target/debug/deps/package_operations-6340880523fd4935)
+
+running 1 test
+test registry_commit_failure_keeps_environment_uncertain_in_memory ... FAILED
+
+failures:
+
+---- registry_commit_failure_keeps_environment_uncertain_in_memory stdout ----
+
+thread 'registry_commit_failure_keeps_environment_uncertain_in_memory' panicked at crates/cokernel-runtime/tests/package_operations.rs:418:5:
+failed registry commit must not make the in-memory environment ready
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    registry_commit_failure_keeps_environment_uncertain_in_memory
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.05s
+
+error: test failed, to rerun pass `-p cokernel-runtime --test package_operations`

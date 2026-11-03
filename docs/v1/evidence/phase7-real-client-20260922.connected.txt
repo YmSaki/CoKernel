@@ -1,0 +1,2 @@
+{"method":"remote_access.get_configuration","result":{"configured":true,"tunnel_id":"tunnel_6ab21d83a06c81919b9fc65cd7facf99"}}
+{"method":"remote_access.get_status","result":{"consecutive_failures":0,"desired_enabled":true,"error_code":null,"runtime_generation":1,"state":"CONNECTED","tunnel_generation":3}}

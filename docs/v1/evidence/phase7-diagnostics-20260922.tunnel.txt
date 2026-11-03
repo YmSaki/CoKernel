@@ -1,0 +1,1 @@
+[tunnel-supervision-smoke] PASS: pinned actual client; local fake provider -> authenticated MCP -> same primary worker/value; provider disconnect/reconnect without worker loss; MCP replacement; process crash recovery; disable; shutdown; credential environment/argv/event boundaries. Actual Host secret handoff, managed identities and Web ChatGPT remain unverified.

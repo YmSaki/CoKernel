@@ -1,0 +1,11 @@
+{
+  "worker_pids": [
+    4771,
+    4801
+  ],
+  "tunnel_pids": [
+    4923
+  ],
+  "credential_only_in_tunnel": true,
+  "all_children_gone": true
+}

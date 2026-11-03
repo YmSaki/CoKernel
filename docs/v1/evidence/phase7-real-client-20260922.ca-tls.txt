@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "<stdin>", line 6, in <module>
+  File "/opt/cokernel/python/lib/python3.12/ssl.py", line 457, in wrap_socket
+    return self.sslsocket_class._create(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/cokernel/python/lib/python3.12/ssl.py", line 1053, in _create
+    self.do_handshake()
+  File "/opt/cokernel/python/lib/python3.12/ssl.py", line 1331, in do_handshake
+    self._sslobj.do_handshake()
+ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1010)

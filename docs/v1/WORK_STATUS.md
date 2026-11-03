@@ -21,28 +21,81 @@ Purpose: this file is the executable work-management ledger for `cokernel-v1`. R
 
 ## Current progress
 
-- Total tracked work items: **202**
-- DONE: **43**
-- READY_VERIFY: **22**
-- IN_PROGRESS: **0**
+- Total tracked work items: **210**
+- DONE: **132**
+- READY_VERIFY: **0**
+- IN_PROGRESS: **1**
 - TODO: **0**
-- BLOCKED: **137**
-- Ledger DONE ratio (`DONE / total`, equal-weight rows, not effort or product completeness): **21.3%**
-- Phase gates completed: **3 / 12 phases = 25.0%** (Phase 0, 1, 2; inherited closure records)
-- Active Phase: **Phase 3 / #29**
-- Phase 3: **17 / 39 implementation rows DONE, 22 READY_VERIFY; worker pytest + protocol fixtures DONE; 13 Rust/WSL/Windows verification/acceptance/gate rows BLOCKED**.
+- BLOCKED: **77**
+- Ledger DONE ratio (`DONE / total`, equal-weight rows, not effort or product completeness): **62.9%**
+- Phase gates completed: **7 / 12 phases = 58.3%** (Phase 0, 1, 2 inherited; Phases 3, 4, 5 and 6 local evidence; lower-layer repairs revalidated)
+- Active Phase: **Phase 7 / #32**
+- Phase 3: **43 / 43 implementation rows DONE; 10 / 10 verification rows DONE; 4 / 4 Session acceptance rows DONE; local gate DONE**.
 
-The worker-side implementation slice #39 is closed. The remaining Phase 3 critical path requires Runtime/Supervisor verification on a Rust-equipped Linux/WSL checkout and, for Windows-side checks, a Windows/WSL target. Runtime-side inspection revalidation discovered during this phase is tracked separately as `P3-INSP-05` rather than hidden inside the already-complete worker inspection rows. The original 24 DONE rows are inherited from #27/#28 closure records.
+The worker, Session Supervisor and Host/WSL bridge are verified on the local Windows/WSL machine. The canonical gate, real-worker execution, durable failure evidence, ordinary descendant cleanup and Phase 5 Host acceptance pass. The original 24 DONE rows are inherited from #27/#28. Desktop, actual Codex/Web ChatGPT clients, managed-WSL deployment and JAX GPU acceptance remain later-phase work; simulated caller origins are not actual-client proof.
+
+Dedicated connection environment: [E-MANAGED-IMAGE-20260922](evidence/phase7-managed-image-20260922.md). Fresh owned WSL import, actual Host/worker execution, effective restrictions, fail-closed launch, distro restart and full Windows/WSL gate PASS. This closes D-028's environment prerequisite, not actual clients, Desktop, full installer or JAX.
 
 ## Execution order
 
-1. `P3-V-01` .. `P3-V-04` — run cargo fmt/check/clippy/test on a Rust-equipped Linux/WSL checkout; this also verifies `P3-INSP-05` and the other READY_VERIFY Runtime/Supervisor rows.
-2. `P3-V-07` .. `P3-V-10` — run canonical `check.sh`, applicable `check.ps1`, and real Runtime Session Supervisor/inspection smokes. `check-worker.sh` includes WBS/fixture checks and a source-tree AF_UNIX smoke before its mandatory uv path.
-3. `P3-A-01` .. `P3-A-04` — persistent-state, A/B concurrency, crash containment and hostile-inspection acceptance.
-4. A failed test reopens its owning implementation row; fix it and rerun the affected tests in the same batch. No speculative re-audit loop and no gate bypass.
-5. `P3-GATE` — close #29 and #40 only after all acceptance evidence passes; then proceed to Phase 4 in numeric WBS order.
+1. `P7-GATE` — actual Web ChatGPT and Codex same-primary reads pass P7-A-01. Web ChatGPT's execution was immediately rejected by its safety check; no operation ID or approval UI was returned. The user is checking execution directly. Preserve the live Session, honest annotations and revision 2; do not retry the rejected action through another path.
+2. Complete actual-client execution evidence and review Phase 7 before Desktop implementation. P7-06 and P7-A-02 are locally DONE; the corrected fresh image passes import, verified TLS and Host execution. Managed installation, Desktop and full diagnostic ZIP remain later gates.
 
-Evidence: [E-WORKER-FULL](evidence/phase3-worker-full-e7b208f.md), [E-BATCH](evidence/phase3-worker-components-946d479.md), [E-FIX](evidence/phase3-protocol-fixtures-9a22667.md), [E-RUNTIME-INSP](evidence/phase3-runtime-inspection-51e50e5.md).
+Real connection: [checkpoint](evidence/phase7-real-client-20260922.md), updated 2026-09-23. Native credential entry, provider CONNECTED, 15-tool discovery and actual Web ChatGPT/Codex shared-value reads pass. Codex sees the original worker PID 95/generation 1/value 123456789; ai-check is unexecuted. Actual-client execution remains open. The fresh image includes verified public CA roots for Go and Python HTTPS.
+
+Current checkpoint: [E-DIAGNOSTICS-20260922](evidence/phase7-diagnostics-20260922.md). Typed diagnostic projection, actual different-UID build/worker denial, 147 secret-free public frames, native Host/WSL diagnostics, tunnel disconnect-survival and the complete Windows/WSL gate PASS. The remote service in these tests is local and simulated; actual Codex/Web ChatGPT acceptance remains open. Earlier notes below retain their checkpoint-specific scope.
+
+Component work: [E-WORKLOAD-IDENTITY-20260922](evidence/phase7-workload-identity-20260922.md). One managed launch policy now separates Runtime and workload UIDs for both builds and Sessions while retaining Runtime supervision. Actual denial and lifecycle proof pass; P7-06 remains open for complete redaction/diagnostics and boundary review. Installed managed WSL and actual clients remain separate gates.
+
+Component work: [workload environment boundary](evidence/phase7-workload-environment-20260922.md) closes inherited control environment exposure in uv build hooks using the same policy as workers. P7-06 remains IN_PROGRESS. The [isolation contract audit](evidence/phase7-isolation-contract-audit-20260922.md) defines remaining identity/IPC/filesystem/cleanup proof and clarifies Phase 7 versus installer responsibilities.
+
+Evidence: [E-HOST-HANDOFF-20260922](evidence/phase7-host-handoff-20260922.md). Controlled Windows credential handoff, durable independent remote intent, rotation, Host/Runtime recovery and confirmed cleanup pass native tests, actual Windows Host/WSL/pinned tunnel-client with a local mock provider, and the complete Windows/WSL gate. Worker identity/value survive enable and credential removal. Managed identity isolation and actual external clients remain open; Phase 7 gate is not complete.
+
+Evidence: [E-TUNNEL-SUPERVISION-20260922](evidence/phase7-tunnel-supervision-20260922.md). P7-03..05 Runtime lifecycle/order/recovery pass normal-state reconciliation tests, real child supervision, full Windows/WSL gate and pinned actual tunnel-client -> local mock provider -> actual MCP/primary Session. Provider disconnect/reconnect preserves local computation and worker identity. Windows credential handoff, managed identities and real external clients remain open; Phase 7 gate is not complete.
+
+Evidence: [E-SECRET-STORE-20260922](evidence/phase7-secret-store-20260922.md). P7-01 Windows credential storage and metadata-only Host IPC pass actual native API/Named Pipe tests and the full Windows/WSL gate. Official tunnel-client v0.0.14 was hash-verified and its version/help inspected without credentials or a running tunnel. Controlled handoff, remote supervision and actual client proof remain open.
+
+Evidence: [E-MCP-SUPERVISION-20260922](evidence/phase6-mcp-supervision-20260922.md). Actual Runtime-owned recovery, retry exhaustion/manual recovery, hung-service health, stable endpoint/bearer and surviving Notebook namespace pass. Full Windows/WSL and actual Host proofs revalidate worker environment isolation and startup-event handshake repairs. Phase 6 is locally DONE. Actual Desktop/Codex/Web ChatGPT, managed identities and JAX GPU remain required.
+
+Earlier checkpoint: [E-MCP-TOOLS-20260922](evidence/phase6-mcp-tools-20260922.md). All 15 tools, exact contracts/bounds, actual HTTP shared-state/FIFO, independent Notebook execution, hostile inspection and Session controls pass. The full gate exposed early-interrupt/empty-cell null execution counts and inherited Runtime cwd; both were repaired and Phase 3 revalidated. P6-05..08 are locally DONE; P6-10 and parent gates remain open.
+
+Earlier checkpoint: [E-MCP-FOUNDATION-20260922](evidence/phase6-mcp-foundation-20260922.md). P6-01..04 local service, official SDK transport, bearer and private Runtime connection pass the full Windows/WSL gate and actual process crash/restart proof. Two read tools exist; the minimum tool surface, automatic supervised recovery, managed identity isolation and actual Desktop/Codex/Web ChatGPT acceptance remain open. P6-10 makes the existing MCP_TUNNEL section 17 recovery requirement explicit in this ledger.
+
+Evidence: [E-METRICS-20260922](evidence/phase5-metrics-20260922.md). Resource collection/aggregation passes component tests, the full Windows/WSL gate, real RTX 5090 readings, independent OS/NVIDIA references and actual Host/Notebook proof. The requirement-by-requirement audit closes P5-09, P5-11, P5-A-01 and P5-GATE locally. No Desktop/MCP/JAX or real Windows sign-in acceptance is implied.
+
+Evidence: [E-AUTOSTART-20260922](evidence/phase5-autostart-20260922.md). P5-08 registration/argument/isolation tests, actual background Host STOPPED/RUNNING/reconnect, full Windows/WSL gate and actual notebook proof PASS. Real sign-in and installer acceptance remain open. A pre-existing fake-worker startup mode defect was repaired and its restart/stop regression strengthened.
+
+P5-07 is locally DONE after the common Runtime, document ownership, control and
+Project ownership refinements. Evidence notes below describe their chronological
+checkpoints; current task rows and this execution order govern remaining work.
+
+Evidence: [E-NB-RUNTIME-20260921](evidence/phase4-runtime-20260921.md). Phase 4's real imported-notebook execution/persistence gate passes; actual Desktop/MCP/JAX GPU acceptance remains required.
+
+Evidence: [E-HOST-CORE-20260921](evidence/phase5-host-core-20260921.md). Host startup/bridge/handshake/desired state/recovery components pass, including real Windows Host -> WSL -> worker. This is not Named Pipe/Desktop/MCP acceptance and does not close P5-GATE.
+
+Evidence: [E-HOST-PIPE-IMPORT-20260921](evidence/phase5-pipe-import-20260921.md). Current-user Named Pipe and Windows chunked import pass through actual WSL/uv/IPython, including multiple clients, accepted execution after disconnect, saved-file validation and worker exit. Host-only snapshots do not close P5-07; Rust clients do not replace Desktop/MCP acceptance.
+
+Evidence: [E-HOST-EVENTS-20260921](evidence/phase5-events-20260921.md). Runtime snapshots and live execution/output/completion events pass through actual Named Pipe/WSL without polling. Early-interrupt worker failure was reproduced and repaired; the complete Windows/WSL gate passes. Package dispatch was still synchronous at that checkpoint.
+
+Evidence: [E-ASYNC-PACKAGES-20260921](evidence/phase5-async-packages-20260921.md). Package add/remove/sync now return operation IDs while Session control stays responsive. Cancellation/EOF recovery, persistent uncertainty and registry-write-failure repair pass the full gate; actual Host observes package completion without polling. Project create/register and long Session startup/inspection keep P5-07 IN_PROGRESS.
+
+Evidence: [E-PROJECT-SETUP-20260922](evidence/phase5-project-setup-20260922.md). Project create/register now return operation IDs; cancellation preserves files and sync resumes incomplete initialization across Runtime restart. The full gate and real Windows Host proof pass. Long Session startup/inspection dispatch is the remaining P5-07 work.
+
+Evidence: [E-SESSION-RPC-20260922](evidence/phase5-session-rpc-20260922.md). Bounded concurrent replies, deduplicated primary startup, independent notebook startup, control during pending inspection, lifecycle exclusion and cancellation/cleanup pass actual uv/IPython, full Windows/WSL gate and real Host checks. P5-07 was then reopened by user architecture review: the common admission/completion interface still needs refinement. Earlier test results remain valid for their recorded snapshot; Desktop/MCP/JAX GPU acceptance remains open.
+
+Evidence: [E-RUNTIME-ENDPOINT-20260922](evidence/phase5-runtime-endpoint-20260922.md). Common client tickets/lifetime/correlation and nonblocking Linux bridge input pass the full Windows/WSL gate and actual Host proof. Same-Project notebooks share Project packages while keeping distinct namespaces and overlapping execution. P5-07 remains IN_PROGRESS for domain storage waits and generic completion scheduling.
+
+Evidence: [E-DOCUMENT-OWNER-20260922](evidence/phase5-document-owner-20260922.md). Document storage, snapshots and execution preparation now use owned FIFO work and common reply scheduling. Stalled storage leaves unrelated Session status/interrupt responsive; preparation cancellation, lifecycle exclusion and shutdown refusal preserve accepted writes. Full Windows/WSL gate and actual Host proof PASS. Project registry/control queue waits remain; P5-07 stays IN_PROGRESS.
+
+Evidence: [E-CONTROL-INTENT-20260922](evidence/phase5-control-intent-20260922.md). Session control no longer waits for queue slots; interrupt coalescing and sticky stop/stale intent keep memory bounded. A non-yielding burst proof, surviving same-Project Notebook, full gate and actual Host proof PASS. Project registry storage remains the next P5-07 work.
+
+Evidence: [E-PROJECT-OWNER-20260922](evidence/phase5-project-owner-20260922.md). Owned Project preparation/reconciliation/status/removal, canonical alias reservations, failed-write retry and EOF without a late uv launch pass component tests, the full gate and actual Host proof. The completion audit closes P5-07 locally. Phase 5 and real Desktop/MCP/JAX acceptance remain open.
+
+Evidence: [E-IMPORT-OUTPUT-20260921](evidence/phase4-import-output-20260921.md).
+
+Evidence: [E-DOC-20260921](evidence/phase4-documents-20260921.md).
+
+Evidence: [E-LOCAL-20260921](evidence/phase3-local-20260921.md), [E-WORKER-FULL](evidence/phase3-worker-full-e7b208f.md), [E-BATCH](evidence/phase3-worker-components-946d479.md), [E-FIX](evidence/phase3-protocol-fixtures-9a22667.md), [E-RUNTIME-INSP](evidence/phase3-runtime-inspection-51e50e5.md).
 
 ## Phase summary
 
@@ -50,11 +103,11 @@ Evidence: [E-WORKER-FULL](evidence/phase3-worker-full-e7b208f.md), [E-BATCH](evi
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | 0 | #27 | 8 | 8 | 0 | 0 | 0 | 0 | DONE |
 | 1-2 | #28 | 16 | 16 | 0 | 0 | 0 | 0 | DONE |
-| 3 | #29 | 54 | 19 | 22 | 0 | 0 | 13 | ACTIVE / ENV-BLOCKED |
-| 4 | #30 | 14 | 0 | 0 | 0 | 0 | 14 | BLOCKED |
-| 5 | #31 | 13 | 0 | 0 | 0 | 0 | 13 | BLOCKED |
-| 6 | #32 | 11 | 0 | 0 | 0 | 0 | 11 | BLOCKED |
-| 7 | #32 | 9 | 0 | 0 | 0 | 0 | 9 | BLOCKED |
+| 3 | #29 | 58 | 58 | 0 | 0 | 0 | 0 | DONE (local gate) |
+| 4 | #30 | 16 | 16 | 0 | 0 | 0 | 0 | DONE (local gate) |
+| 5 | #31 | 14 | 14 | 0 | 0 | 0 | 0 | DONE (local gate) |
+| 6 | #32 | 12 | 12 | 0 | 0 | 0 | 0 | DONE (local gate) |
+| 7 | #32 | 9 | 8 | 0 | 1 | 0 | 0 | ACTIVE |
 | 8 | #33 | 17 | 0 | 0 | 0 | 0 | 17 | BLOCKED |
 | 9 | #34 | 11 | 0 | 0 | 0 | 0 | 11 | BLOCKED |
 | 10 | #34 | 12 | 0 | 0 | 0 | 0 | 12 | BLOCKED |
@@ -117,110 +170,118 @@ Umbrella #26 remains open until Phase 11 release acceptance closes.
 | P3-INSP-02 | Inspection | Implement get_variable | DONE | P3-INSP-01 | Returns bounded exact built-in safe values | E-BATCH: exact built-in, integer, identifier and rejection tests PASS |
 | P3-INSP-03 | Inspection | Reject hostile/custom object behavior | DONE | P3-INSP-01..02 | No repr/str/iter/getattr/operator hooks invoked | E-BATCH: identity-only dispatch; hostile/metaclass regressions PASS |
 | P3-INSP-04 | Inspection | Bound inspection depth/items/string/response size | DONE | P3-INSP-02 | Inspection cannot generate unbounded response | E-BATCH: complete get/list result budget and exact boundaries PASS |
-| P3-INSP-05 | Inspection / Runtime boundary | Revalidate worker inspection results fail-closed before exposing callers | READY_VERIFY | P3-INSP-01..04 | Runtime rejects malformed, duplicate, oversized or internally inconsistent list/get results and preserves explicit Python None semantics | 210559b + 616ccaad + 5bd0245; 8 Rust tests + WSL smoke assertions added; cargo Gate pending |
-| P3-SUP-01 | Supervisor | Own one worker process per Session | READY_VERIFY | P3-WRK-01 | Each Session has independent worker/process ownership | implemented baseline; Rust/WSL Gate pending |
-| P3-SUP-02 | Supervisor | Private listener/socket + ready handshake | READY_VERIFY | P3-SUP-01 | Runtime establishes and validates worker readiness | implemented baseline; Rust/WSL Gate pending |
-| P3-SUP-03 | Supervisor | Per-Session FIFO single-flight queue shared by callers | READY_VERIFY | P3-SUP-02 | Human/AI operations serialize in accepted order | implemented baseline; Rust/WSL Gate pending |
-| P3-SUP-04 | Supervisor | Interrupt active execution | READY_VERIFY | P3-SUP-03 | Interrupt terminates active operation without corrupting Session | implemented baseline; Rust/WSL Gate pending |
-| P3-SUP-05 | Supervisor | Graceful stop | READY_VERIFY | P3-SUP-02 | Session stops cleanly and reports state | implemented baseline; Rust/WSL Gate pending |
-| P3-SUP-06 | Supervisor | Restart Session | READY_VERIFY | P3-SUP-05 | Worker restarts with explicit Session semantics | implemented baseline; Rust/WSL Gate pending |
-| P3-SUP-07 | Supervisor | Heartbeat timeout/liveness semantics | READY_VERIFY | P3-WRK-02,P3-SUP-02 | Lost/stale worker is detected deterministically | actor heartbeat_timeout path present; canonical Gate pending |
-| P3-SUP-08 | Supervisor | Crash containment | READY_VERIFY | P3-SUP-01 | Worker crash does not kill Runtime or other Sessions | implemented baseline; Rust/WSL Gate pending |
-| P3-SUP-09 | Supervisor | FailureRecord capture | READY_VERIFY | P3-SUP-08 | Crash records exit/failure evidence and last operation | implemented baseline; Rust/WSL Gate pending |
-| P3-SUP-10 | Supervisor | Environment generation/stale marking | READY_VERIFY | P12-13,P3-SUP-01 | Existing Session stays alive but becomes stale after env mutation | implemented baseline; Rust/WSL Gate pending |
-| P3-SUP-11 | Supervisor | Concurrent independent Sessions | READY_VERIFY | P3-SUP-01 | A/B overlap and namespaces remain isolated | implemented baseline; Rust/WSL Gate pending |
-| P3-LC-01 | Protocol invariants | Bind worker frames to active transaction | READY_VERIFY | P3-SUP-03 | Stale/wrong transaction frames fail closed | 4eeb763 lineage; Rust tests pending |
-| P3-LC-02 | Protocol invariants | Require single execution_started before outputs | READY_VERIFY | P3-LC-01 | Duplicate/missing/out-of-order start rejected | acefea7 lineage; Rust tests pending |
-| P3-LC-03 | Protocol invariants | Allow outputs only between start and finish | READY_VERIFY | P3-LC-02 | Output before start/after finish rejected | acefea7 lineage; Rust tests pending |
-| P3-LC-04 | Protocol invariants | Require contiguous output sequence 1..N | READY_VERIFY | P3-LC-02 | Sequence gaps/duplicates rejected | acefea7 lineage; Rust tests pending |
-| P3-LC-05 | Protocol invariants | Validate execution_finished.output_count | READY_VERIFY | P3-LC-04 | Count equals accepted outputs | acefea7 lineage; Rust tests pending |
-| P3-LC-06 | Protocol invariants | Require final response after execution_finished | READY_VERIFY | P3-LC-05 | Early/missing response rejected | acefea7 lineage; Rust tests pending |
-| P3-LC-07 | Protocol invariants | Align status/execution_count between finish and response | READY_VERIFY | P3-LC-06 | Terminal response agrees with lifecycle | acefea7 lineage; Rust tests pending |
-| P3-LC-08 | Protocol invariants | Preflight oversized execute requests | READY_VERIFY | P3-SUP-03 | Oversized caller request rejected without crashing healthy Session | ecdcc65 lineage; Rust tests pending |
-| P3-LC-09 | Protocol invariants | Bind final result.operation_id exactly to active Runtime operation | READY_VERIFY | P3-LC-06 | Mismatch is rejected fail-closed with regression test | de52f4b + c68db10; Rust tests pending |
-| P3-LC-10 | Protocol invariants | Validate truncation accounting self-consistency and final-response agreement | READY_VERIFY | P3-EXE-07,P3-LC-05 | Flags/omitted bytes/reasons are internally consistent and identical at finish/response | c68db10; Rust tests pending |
-| P3-V-01 | Verification | cargo fmt --check | BLOCKED | P3-WRK-01..P3-LC-10 | exit 0 on Rust-equipped checkout | cargo/rustfmt unavailable in current executor |
-| P3-V-02 | Verification | cargo check --workspace | BLOCKED | P3-WRK-01..P3-LC-10 | exit 0 | cargo/rustc unavailable in current executor |
-| P3-V-03 | Verification | cargo clippy --workspace --all-targets -- -D warnings | BLOCKED | P3-WRK-01..P3-LC-10 | exit 0 with no warnings | Rust toolchain unavailable in current executor |
-| P3-V-04 | Verification | cargo test --workspace | BLOCKED | P3-WRK-01..P3-LC-10 | all tests pass | Rust toolchain unavailable in current executor |
-| P3-V-05 | Verification | worker pytest | DONE | P3-WRK-01..P3-LC-10 | all worker tests pass | E-WORKER-FULL: exact-source worker/tests 137/137 PASS; failures/errors/skips 0 |
-| P3-V-06 | Verification | protocol fixture validation | DONE | P3-WRK-01..P3-LC-10 | all fixtures pass | E-FIX: 5/5 PASS |
-| P3-V-07 | Verification | scripts/v1/check.sh | BLOCKED | P3-V-01..06 | canonical Linux/WSL local gate exits 0 | worker source preflight integrated; uv dependency sync + Rust Gate unavailable here |
-| P3-V-08 | Verification | scripts/v1/check.ps1 applicable checks | BLOCKED | P3-V-01..06 | canonical Windows-side checks exit 0 | Windows gate now mirrors WBS/script/fixture/source diagnostics and requires mandatory WSL check.sh; no Windows target here |
-| P3-V-09 | Verification | Supervisor real-process/socket smoke | BLOCKED | P3-V-07 | start/handshake/queue/interrupt/restart/stop/crash paths pass | Rust/WSL Gate pending |
-| P3-V-10 | Verification | Inspection hostile-object smoke | BLOCKED | P3-V-07 | safe inspection passes against real worker | Runtime validator + Python None assertion added; Rust/WSL Gate pending |
-| P3-A-01 | Acceptance | Persistent state proof: x=123 then x+1 == 124 | BLOCKED | P3-V-09 | returns 124 in same Session | Runtime Supervisor proof pending; worker proof is not substitute |
-| P3-A-02 | Acceptance | Parallel A/B Session proof | BLOCKED | P3-V-09 | actual overlap + isolated namespace/PID | Runtime Supervisor proof pending |
-| P3-A-03 | Acceptance | Crash containment proof | BLOCKED | P3-V-09 | kill A; B survives; A has FailureRecord | Runtime Supervisor proof pending |
-| P3-A-04 | Acceptance | Hostile inspection acceptance | BLOCKED | P3-V-10 | hostile object corpus does not execute user hooks | Runtime real-worker proof pending |
-| P3-GATE | Gate | Close Phase 3 / #29 | BLOCKED | P3-A-01..04 | All Phase 3 deliverables and canonical gate evidence PASS | #29 remains open; no gate waiver |
+| P3-INSP-05 | Inspection / Runtime boundary | Revalidate worker inspection results fail-closed before exposing callers | DONE | P3-INSP-01..04 | Runtime rejects malformed, duplicate, oversized or internally inconsistent list/get results and preserves explicit Python None semantics | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-SUP-01 | Supervisor | Own one worker process per Session | DONE | P3-WRK-01 | Each Session has independent worker/process ownership | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-SUP-02 | Supervisor | Private listener/socket + ready handshake | DONE | P3-SUP-01 | Runtime establishes and validates worker readiness | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-SUP-03 | Supervisor | Per-Session FIFO single-flight queue shared by callers | DONE | P3-SUP-02 | Human/AI operations serialize in accepted order | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-SUP-04 | Supervisor | Interrupt active execution | DONE | P3-SUP-03 | Interrupt terminates active operation without corrupting Session | E-MCP-TOOLS-20260922: IPython-caught early interrupt/empty-cell null-count regression reproduced and repaired; numeric wire lifecycle, real Supervisor and full gate PASS |
+| P3-SUP-05 | Supervisor | Graceful stop | DONE | P3-SUP-02 | Session stops cleanly and reports state | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-SUP-06 | Supervisor | Restart Session | DONE | P3-SUP-05 | Worker restarts with explicit Session semantics | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-SUP-07 | Supervisor | Heartbeat timeout/liveness semantics | DONE | P3-WRK-02,P3-SUP-02 | Lost/stale worker is detected deterministically | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-SUP-08 | Supervisor | Crash containment | DONE | P3-SUP-01 | Worker crash does not kill Runtime or other Sessions | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-SUP-09 | Supervisor | FailureRecord capture | DONE | P3-SUP-08 | Crash records exit/failure evidence and last operation | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-SUP-10 | Supervisor | Environment generation/stale marking | DONE | P12-13,P3-SUP-01 | Existing Session stays alive but becomes stale after env mutation | E-LOCAL-20260921: Supervisor stale notification preserves live memory; public Project mutation wiring remains D06 |
+| P3-SUP-11 | Supervisor | Concurrent independent Sessions | DONE | P3-SUP-01 | A/B overlap and namespaces remain isolated | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-SUP-12 | Failure evidence | Durable bounded failure store and observable persistence errors | DONE | P3-SUP-09 | Failure survives no subscriber/reopen/restart; persistence failure remains visible | E-LOCAL-20260921: failure-store and process tests PASS |
+| P3-SUP-13 | Process ownership | Cleanup worker process group on stop/restart/crash/startup failure | DONE | P3-SUP-01 | Ordinary descendants exit; unrelated Session survives | E-LOCAL-20260921: real descendant process tests PASS |
+| P3-SUP-14 | Worker launch | Project-root initial working directory | DONE | P3-SUP-01 | Relative notebook file operations resolve in the Project rather than Runtime control directory | E-MCP-TOOLS-20260922: real worker getcwd equals Project root; relative file barrier and full Windows/WSL gate PASS |
+| P3-SUP-15 | Worker launch | Explicit workload environment and Project-local profile | DONE | P3-SUP-01 | Product/control variables do not reach worker environment or Runtime-home profile | E-MCP-SUPERVISION-20260922: actual sentinel inheritance failed before repair; explicit worker environment/profile, actual process proof and final full Windows/WSL gate PASS |
+| P3-LC-01 | Protocol invariants | Bind worker frames to active transaction | DONE | P3-SUP-03 | Stale/wrong transaction frames fail closed | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-LC-02 | Protocol invariants | Require single execution_started before outputs | DONE | P3-LC-01 | Duplicate/missing/out-of-order start rejected | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-LC-03 | Protocol invariants | Allow outputs only between start and finish | DONE | P3-LC-02 | Output before start/after finish rejected | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-LC-04 | Protocol invariants | Require contiguous output sequence 1..N | DONE | P3-LC-02 | Sequence gaps/duplicates rejected | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-LC-05 | Protocol invariants | Validate execution_finished.output_count | DONE | P3-LC-04 | Count equals accepted outputs | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-LC-06 | Protocol invariants | Require final response after execution_finished | DONE | P3-LC-05 | Early/missing response rejected | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-LC-07 | Protocol invariants | Align status/execution_count between finish and response | DONE | P3-LC-06 | Terminal response agrees with lifecycle | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-LC-08 | Protocol invariants | Preflight oversized execute requests | DONE | P3-SUP-03 | Oversized caller request rejected without crashing healthy Session | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-LC-09 | Protocol invariants | Bind final result.operation_id exactly to active Runtime operation | DONE | P3-LC-06 | Mismatch is rejected fail-closed with regression test | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-LC-10 | Protocol invariants | Validate truncation accounting self-consistency and final-response agreement | DONE | P3-EXE-07,P3-LC-05 | Flags/omitted bytes/reasons are internally consistent and identical at finish/response | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-V-01 | Verification | cargo fmt --check | DONE | P3-WRK-01..P3-LC-10 | exit 0 on Rust-equipped checkout | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-V-02 | Verification | cargo check --workspace | DONE | P3-WRK-01..P3-LC-10 | exit 0 | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-V-03 | Verification | cargo clippy --workspace --all-targets -- -D warnings | DONE | P3-WRK-01..P3-LC-10 | exit 0 with no warnings | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-V-04 | Verification | cargo test --workspace | DONE | P3-WRK-01..P3-LC-10 | all tests pass | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-V-05 | Verification | worker pytest | DONE | P3-WRK-01..P3-LC-10 | all worker tests pass | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-V-06 | Verification | protocol fixture validation | DONE | P3-WRK-01..P3-LC-10 | all fixtures pass | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-V-07 | Verification | scripts/v1/check.sh | DONE | P3-V-01..06 | canonical Linux/WSL local gate exits 0 | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-V-08 | Verification | scripts/v1/check.ps1 applicable checks | DONE | P3-V-01..06 | canonical Windows-side checks exit 0 | E-LOCAL-20260921: combined Windows/WSL gate PASS; 170-file identity verified before/after; GitHub issue state unchanged |
+| P3-V-09 | Verification | Supervisor real-process/socket smoke | DONE | P3-V-07 | start/handshake/queue/interrupt/restart/stop/crash paths pass | E-LOCAL-20260921; E-HOST-EVENTS-20260921: early-interrupt repair and real-process smoke reverified in full gate |
+| P3-V-10 | Verification | Inspection hostile-object smoke | DONE | P3-V-07 | safe inspection passes against real worker | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-A-01 | Acceptance | Persistent state proof: x=123 then x+1 == 124 | DONE | P3-V-09 | returns 124 in same Session | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-A-02 | Acceptance | Parallel A/B Session proof | DONE | P3-V-09 | actual overlap + isolated namespace/PID | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-A-03 | Acceptance | Crash containment proof | DONE | P3-V-09 | kill A; B survives; A has FailureRecord | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-A-04 | Acceptance | Hostile inspection acceptance | DONE | P3-V-10 | hostile object corpus does not execute user hooks | E-LOCAL-20260921: Linux check.sh / real Supervisor / inspection / component tests PASS |
+| P3-GATE | Gate | Close Phase 3 / #29 | DONE | P3-A-01..04,P3-V-08 | All Phase 3 deliverables and canonical gate evidence PASS | E-MCP-TOOLS-20260922: lower gate revalidated after early-interrupt and Project cwd repairs; full Windows/WSL gate PASS |
 
 ## Phase 4 — Notebook Document Service (#30)
 
 | ID | Work package | Work item | State | Depends on | Done when | Evidence / note |
 |---|---|---|---|---|---|---|
-| P4-01 | Notebook model | Implement nbformat v4 Rust model | BLOCKED | P3-GATE | Supported notebooks parse/serialize structurally valid | Phase 4 |
-| P4-02 | Notebook model | Preserve unknown notebook/cell metadata | BLOCKED | P4-01 | Round-trip preserves unknown metadata | Phase 4 |
-| P4-03 | Document service | Create/open/list notebooks | BLOCKED | P4-01 | Project notebook CRUD read paths work | Phase 4 |
-| P4-04 | Document service | Revisioned edits and conflict detection | BLOCKED | P4-03 | Stale revision is rejected without overwrite | Phase 4 |
-| P4-05 | Persistence | Atomic save | BLOCKED | P4-03 | Save is atomic and failure-safe | Phase 4 |
-| P4-06 | Persistence | External-change detection | BLOCKED | P4-03 | External modification causes explicit conflict | Phase 4 |
-| P4-07 | Execution integration | Convert worker events to nbformat outputs | BLOCKED | P3-GATE,P4-01 | Streams/errors/rich MIME persist validly | Phase 4 |
-| P4-08 | Execution integration | Execute cell by authoritative notebook/cell ID | BLOCKED | P4-03,P4-07 | Correct cell executes in Project Session | Phase 4 |
-| P4-09 | Import | Windows->WSL notebook import transaction | BLOCKED | P4-03 | Chunk/import transaction handles bytes safely | Phase 4 |
-| P4-10 | Import | Validate import hash/size/path/collision | BLOCKED | P4-09 | Mismatch/path escape/collision rejected | Phase 4 |
-| P4-11 | Compatibility | Build notebook fixture suite | BLOCKED | P4-01 | Required fixtures cover streams/errors/HTML/PNG/SVG/attachments/metadata/large/malformed | TEST_ACCEPTANCE §11 |
-| P4-12 | Verification | Notebook unit/component/fixture tests | BLOCKED | P4-01..11 | All notebook tests pass | Phase 4 |
-| P4-A-01 | Acceptance | Import/execute/persist standard .ipynb proof | BLOCKED | P4-12 | Imported notebook executes, persists outputs, remains valid | Phase 4 gate |
-| P4-GATE | Gate | Close Phase 4 / #30 | BLOCKED | P4-A-01 | All Phase 4 evidence PASS | #30 closes |
+| P4-01 | Notebook model | Implement nbformat v4 Rust model | DONE | P3-GATE | Supported notebooks parse/serialize structurally valid | E-DOC-20260921: 18 new notebook tests PASS; Linux Rust 115 PASS; fixture nbformat validation PASS (domain component only) |
+| P4-02 | Notebook model | Preserve unknown notebook/cell metadata | DONE | P4-01 | Round-trip preserves unknown metadata | E-DOC-20260921: 18 new notebook tests PASS; Linux Rust 115 PASS; fixture nbformat validation PASS (domain component only) |
+| P4-03 | Document service | Create/open/list notebooks | DONE | P4-01 | Project notebook CRUD read paths work | E-DOC-20260921: 18 new notebook tests PASS; Linux Rust 115 PASS; fixture nbformat validation PASS (domain component only) |
+| P4-04 | Document service | Revisioned edits and conflict detection | DONE | P4-03 | Stale revision is rejected without overwrite | E-DOC-20260921: 18 new notebook tests PASS; Linux Rust 115 PASS; fixture nbformat validation PASS (domain component only) |
+| P4-05 | Persistence | Atomic save | DONE | P4-03 | Save is atomic and failure-safe | E-DOC-20260921: 18 new notebook tests PASS; Linux Rust 115 PASS; fixture nbformat validation PASS (domain component only) |
+| P4-06 | Persistence | External-change detection | DONE | P4-03 | External modification causes explicit conflict | E-DOC-20260921: 18 new notebook tests PASS; Linux Rust 115 PASS; fixture nbformat validation PASS (domain component only) |
+| P4-07 | Execution integration | Convert worker events to nbformat outputs | DONE | P3-GATE,P4-01 | Streams/errors/rich MIME persist validly | E-IMPORT-OUTPUT-20260921: Runtime component proofs PASS; public/Host adapters remain integration work |
+| P4-08 | Execution integration | Execute cell by authoritative notebook/cell ID | DONE | P4-03,P4-07 | Correct cell executes in Project Session | E-NB-RUNTIME-20260921: real framed RPC/Project/IPython execution plus admission/source-conflict/late-completion regression PASS |
+| P4-09 | Import | Windows->WSL notebook import transaction | DONE | P4-03 | Chunk/import transaction handles bytes safely | E-IMPORT-OUTPUT-20260921: Runtime component proofs PASS; public/Host adapters remain integration work |
+| P4-10 | Import | Validate import hash/size/path/collision | DONE | P4-09 | Mismatch/path escape/collision rejected | E-IMPORT-OUTPUT-20260921: Runtime component proofs PASS; public/Host adapters remain integration work |
+| P4-11 | Compatibility | Build notebook fixture suite | DONE | P4-01 | Required fixtures cover streams/errors/HTML/PNG/SVG/attachments/metadata/large/malformed | E-DOC-20260921: 18 new notebook tests PASS; Linux Rust 115 PASS; fixture nbformat validation PASS (domain component only) |
+| P4-13 | Document lifecycle | Integrate explicit reconciliation and editor close/flush | DONE | P4-08 | Close preserves Session and notebook identity; dirty/conflict states require explicit handling | E-NB-RUNTIME-20260921: dirty close flush, same NotebookId/Session reopen, reload/external-conflict and caller-independent persistence PASS |
+| P4-14 | Execution delivery | Bounded complete output receipt independent of UI subscriptions | DONE | P3-GATE | Subscriber lag cannot silently lose persisted results; overflow/crash fail explicitly | E-IMPORT-OUTPUT-20260921: 2048 outputs persisted despite listener lag; real IPython capture and overflow tests PASS |
+| P4-12 | Verification | Notebook unit/component/fixture tests | DONE | P4-01..11,P4-13,P4-14 | All notebook tests pass | E-NB-RUNTIME-20260921: canonical Windows/WSL gates PASS; 133 Linux/39 Windows Rust tests plus 5-test protocol follow-up per platform |
+| P4-A-01 | Acceptance | Import/execute/persist standard .ipynb proof | DONE | P4-12 | Imported notebook executes, persists outputs, remains valid | E-NB-RUNTIME-20260921: real Runtime/uv/IPython framed import, 124/HTML persisted and nbformat 5.11.1 validation PASS |
+| P4-GATE | Gate | Close Phase 4 / #30 | DONE | P4-A-01 | All Phase 4 evidence PASS | E-NB-RUNTIME-20260921: combined Windows/WSL gate PASS; 95-file executable source identity; local closure only, GitHub issue unchanged |
 
 ## Phase 5 — Windows Host + WSL Runtime bridge (#31)
 
 | ID | Work package | Work item | State | Depends on | Done when | Evidence / note |
 |---|---|---|---|---|---|---|
-| P5-01 | Host | Create cokernel-host Windows binary/crate | BLOCKED | P4-GATE | Host builds and starts | Phase 5 |
-| P5-02 | Bridge | Own long-lived wsl.exe runtime bridge | BLOCKED | P5-01 | Host owns persistent bridge process | Phase 5 |
-| P5-03 | Bridge | Protocol handshake/version mismatch handling | BLOCKED | P5-02 | Compatible handshake succeeds; mismatch fails clearly | Phase 5 |
-| P5-04 | Lifetime | Persist desired RUNNING/STOPPED state | BLOCKED | P5-02 | Host converges runtime to desired state | Phase 5 |
-| P5-05 | Recovery | Reconnect/backoff/circuit breaker | BLOCKED | P5-02 | Bridge failures recover boundedly | Phase 5 |
-| P5-06 | IPC | Current-user Named Pipe RPC/events | BLOCKED | P5-01 | Authorized local clients can RPC/subscribe | Phase 5 |
-| P5-07 | IPC | Event forwarding and request correlation | BLOCKED | P5-03,P5-06 | Runtime events correlate correctly to clients | Phase 5 |
-| P5-08 | Autostart | Install/user auto-start behavior | BLOCKED | P5-01 | Host can run independently of Desktop | Phase 5 |
-| P5-09 | Metrics | Aggregate Windows + WSL metrics | BLOCKED | P5-02 | CPU/RAM/WSL RAM/GPU/VRAM/storage dashboard | Phase 5 |
-| P5-10 | Import bridge | Stream Windows notebook bytes to Runtime | BLOCKED | P4-GATE,P5-06 | Notebook import works without unsafe path assumptions | Phase 5 |
-| P5-11 | Verification | Host fake-runtime component tests | BLOCKED | P5-01..10 | desired state/reconnect/ACL/events/secrets/UI disconnect tests pass | TEST_ACCEPTANCE L2 Host |
-| P5-A-01 | Acceptance | UI-independent Host/Runtime lifetime proof | BLOCKED | P5-11 | Host keeps Runtime/Sessions alive across client reconnects | Phase 5 gate |
-| P5-GATE | Gate | Close Phase 5 / #31 | BLOCKED | P5-A-01 | All Phase 5 evidence PASS | #31 closes |
+| P5-01 | Host | Create cokernel-host Windows binary/crate | DONE | P4-GATE | Host builds and starts | E-HOST-CORE-20260921: native binary build/serve and independent supervisor PASS |
+| P5-02 | Bridge | Own long-lived wsl.exe runtime bridge | DONE | P5-01 | Host owns persistent bridge process | E-HOST-CORE-20260921: actual Windows Host/WSL/Runtime/worker execution, caller drop, acknowledged stop and worker exit PASS |
+| P5-03 | Bridge | Protocol handshake/version mismatch handling | DONE | P5-02 | Compatible handshake succeeds; mismatch fails clearly | E-HOST-CORE-20260921: real handshake plus wrong envelope/protocol, malformed/oversized and timeout tests PASS |
+| P5-04 | Lifetime | Persist desired RUNNING/STOPPED state | DONE | P5-02 | Host converges runtime to desired state | E-HOST-CORE-20260921: lock/persist/reopen, failed state save, dirty flush, refused stop with retained document connection and explicit reconciliation PASS |
+| P5-05 | Recovery | Reconnect/backoff/circuit breaker | DONE | P5-02 | Bridge failures recover boundedly | E-HOST-CORE-20260921: bounded failure attempts, version circuit break, generation/evidence, no request replay and STOPPED no-reconnect PASS |
+| P5-06 | IPC | Current-user Named Pipe RPC/events | DONE | P5-01 | Authorized local clients can RPC/subscribe | E-HOST-PIPE-IMPORT-20260921: kernel ACL, peer identity, bounded RPC/status subscriptions, correlation/cancellation and actual WSL reconnect PASS |
+| P5-07 | IPC | Event forwarding and request correlation | DONE | P5-03,P5-06 | Runtime events correlate correctly to clients through common bounded admission/completion | E-PROJECT-OWNER-20260922: common endpoint, document/Project ownership, immediate control, correlation/lifecycle and full gate/actual Host PASS; local closure only |
+| P5-08 | Autostart | Install/user auto-start behavior | DONE | P5-01 | Host can run independently of Desktop | E-AUTOSTART-20260922: HKCU setting/argument/isolation tests, actual background binary STOPPED/RUNNING/reconnect and full gate PASS; real sign-in remains P11-L6-13 |
+| P5-09 | Metrics | Aggregate Windows + WSL metrics | DONE | P5-02 | CPU/RAM/WSL RAM/GPU/VRAM/storage dashboard | E-METRICS-20260922: cached owned sampler, typed availability/scope, bounded diagnostic, actual Host/WSL and independent hardware references PASS; dashboard rendering is P8-10 |
+| P5-10 | Import bridge | Stream Windows notebook bytes to Runtime | DONE | P4-GATE,P5-06 | Notebook import works without unsafe path assumptions | E-HOST-PIPE-IMPORT-20260921: Japanese Windows path, multi-chunk transfer, collision/malformed rejection, actual Project execution, nbformat validation and no Windows path forwarding PASS |
+| P5-11 | Verification | Host fake-runtime component tests | DONE | P5-01..10 | desired state/reconnect/ACL/events/secrets/UI disconnect tests pass | E-METRICS-20260922: current full corpus including kernel ACL denial, token restoration, bounded failure recovery, autostart and partial metric failures PASS |
+| P5-12 | Bridge startup | Validate startup events before hello | DONE | P5-02 | Bounded startup events preserve sequence without failing a valid handshake | E-MCP-SUPERVISION-20260922: before/fix regression, bounded event validation/sequence continuity and actual Host/MCP-only restart PASS |
+| P5-A-01 | Acceptance | UI-independent Host/Runtime lifetime proof | DONE | P5-11 | Host keeps Runtime/Sessions alive across client reconnects | E-METRICS-20260922: actual Named Pipe/WSL/IPython shared primary and accepted execution survive client drop; final background Host binary respects persisted desired state |
+| P5-GATE | Gate | Close Phase 5 / #31 | DONE | P5-A-01 | All Phase 5 evidence PASS | E-METRICS-20260922 local gate audit; GitHub #31 state unchanged; actual Desktop/MCP/JAX/managed distro and L6 sign-in remain later requirements |
 
 ## Phase 6 — CoKernel-native MCP (#32)
 
 | ID | Work package | Work item | State | Depends on | Done when | Evidence / note |
 |---|---|---|---|---|---|---|
-| P6-01 | MCP service | Create cokernel-mcp service | BLOCKED | P5-GATE | Service starts locally | Phase 6 |
-| P6-02 | Transport | Implement Streamable HTTP | BLOCKED | P6-01 | MCP transport interoperates with client | Phase 6 |
-| P6-03 | Security | Require local bearer auth | BLOCKED | P6-01 | Unauthenticated calls rejected | Phase 6 |
-| P6-04 | Runtime client | Implement Runtime Unix API client | BLOCKED | P3-GATE,P6-01 | MCP calls Runtime domain API | Phase 6 |
-| P6-05 | Tool surface | Project/Notebook/Session/Variable/Resource tools | BLOCKED | P6-04 | Minimum v1 domain tool set exists | Phase 6 |
-| P6-06 | Tool contracts | Exact annotations/schema snapshots | BLOCKED | P6-05 | Annotations and schemas match intended capabilities | Phase 6 |
-| P6-07 | Bounds | Bound MCP responses and validate inputs | BLOCKED | P6-05 | Huge/invalid requests cannot escape limits | Phase 6 |
-| P6-08 | Queue integration | Human + MCP shared Session FIFO semantics | BLOCKED | P3-GATE,P6-04 | MCP and Human serialize through same Session queue | Phase 6 |
-| P6-09 | Verification | MCP contract/security suite | BLOCKED | P6-01..08 | bearer/tools/inspection/revision/bounds tests pass | TEST_ACCEPTANCE L5 MCP local |
-| P6-A-01 | Acceptance | Local same-Session secret_from_master proof | BLOCKED | P6-09 | MCP get_variable returns 123456789 with no second worker | Canonical proof |
-| P6-GATE | Gate | Close Phase 6 portion of #32 | BLOCKED | P6-A-01 | Local native MCP gate PASS | Phase 6 |
+| P6-01 | MCP service | Create cokernel-mcp service | DONE | P5-GATE | Service starts locally | E-MCP-FOUNDATION-20260922: actual CLI readiness, SIGKILL/restart retain live Runtime/worker/primary/value; Runtime-owned recovery completed by E-MCP-SUPERVISION-20260922/P6-10 |
+| P6-02 | Transport | Implement Streamable HTTP | DONE | P6-01 | MCP transport interoperates with client | E-MCP-FOUNDATION-20260922: official SDK initialization/list/call and older protocol negotiation, Host/Origin/body limits PASS |
+| P6-03 | Security | Require local bearer auth | DONE | P6-01 | Unauthenticated calls rejected | E-MCP-FOUNDATION-20260922: all-method auth, duplicate/wrong bearer rejection, private persistent credential, process args/env/log absence PASS; managed UID boundary remains deployment acceptance |
+| P6-04 | Runtime client | Implement Runtime Unix API client | DONE | P3-GATE,P6-01 | MCP calls Runtime domain API | E-MCP-FOUNDATION-20260922: existing authority, peer UID/private socket, active/stale path safety, framing/correlation/bounds PASS |
+| P6-05 | Tool surface | Project/Notebook/Session/Variable/Resource tools | DONE | P6-04 | Minimum v1 domain tool set exists | E-MCP-TOOLS-20260922: all 14 minimum tools plus get_operation implemented and exercised through actual HTTP/uv/IPython |
+| P6-06 | Tool contracts | Exact annotations/schema snapshots | DONE | P6-05 | Annotations and schemas match intended capabilities | E-MCP-TOOLS-20260922: shared schema/validation contract and protocol/mcp/tools.json snapshot; exact annotations PASS |
+| P6-07 | Bounds | Bound MCP responses and validate inputs | DONE | P6-05 | Huge/invalid requests cannot escape limits | E-MCP-TOOLS-20260922: closed schemas, UUID/revision/identifier bounds, request-ID caps, huge Unicode/image/value response limits and revisioned pages PASS |
+| P6-08 | Queue integration | Human + MCP shared Session FIFO semantics | DONE | P3-GATE,P6-04,P6-05 | MCP and Human serialize through same Session queue | E-MCP-TOOLS-20260922: actual Human-origin bridge and MCP same primary/worker/value; explicit-barrier FIFO; independent Notebook overlap/namespace isolation PASS |
+| P6-09 | Verification | MCP contract/security suite | DONE | P6-01..08,P6-10 | bearer/tools/inspection/revision/bounds tests pass | E-MCP-SUPERVISION-20260922: final official SDK/auth/contracts/bounds/ownership/revision/hostile inspection plus all actual HTTP tools and supervision PASS; managed UID isolation remains deployment acceptance |
+| P6-10 | MCP supervision | Bounded Runtime-owned MCP recovery | DONE | P6-01 | MCP failure recovers boundedly with readiness evidence and no Session interruption | E-MCP-SUPERVISION-20260922: actual Runtime-owned crash/hang recovery, bounded retries/circuit/manual restart, stable port/bearer, surviving worker/namespace and owned cleanup PASS |
+| P6-A-01 | Acceptance | Local same-Session secret_from_master proof | DONE | P6-09 | MCP get_variable returns 123456789 with no second worker | E-MCP-SUPERVISION-20260922: actual authenticated MCP reads Human-origin Host/bridge-created 123456789 from the unchanged primary/worker; actual Desktop/Codex/Web clients remain later acceptance |
+| P6-GATE | Gate | Close Phase 6 portion of #32 | DONE | P6-A-01 | Local native MCP gate PASS | E-MCP-SUPERVISION-20260922: combined local native MCP gate audit PASS; #32 remains open for Phase 7; managed isolation and actual clients remain required |
 
 ## Phase 7 — Secure Tunnel integration (#32)
 
 | ID | Work package | Work item | State | Depends on | Done when | Evidence / note |
 |---|---|---|---|---|---|---|
-| P7-01 | Secrets | Windows Secret Store abstraction | BLOCKED | P6-GATE | Credentials stored outside worker/runtime-visible channels | Phase 7 |
-| P7-02 | Secrets | Controlled credential handoff | BLOCKED | P7-01 | Only tunnel/MCP components receive required secret | Phase 7 |
-| P7-03 | Tunnel | Tunnel Supervisor | BLOCKED | P6-GATE | Tunnel process lifecycle is supervised | Phase 7 |
-| P7-04 | Tunnel | MCP-before-tunnel startup/readiness ordering | BLOCKED | P7-03 | Tunnel starts only after MCP ready | Phase 7 |
-| P7-05 | Tunnel | Reconnect/backoff and remote-access status | BLOCKED | P7-03 | Tunnel recovers and status is observable | Phase 7 |
-| P7-06 | Security | Credential isolation/redaction tests | BLOCKED | P7-01..05 | No tunnel/MCP secret reaches worker/log/diagnostics | Phase 7 |
-| P7-A-01 | Acceptance | Remote same-Session proof | BLOCKED | P7-06 | Remote MCP reads Human-created value from same Session | Phase 7 gate |
-| P7-A-02 | Acceptance | Tunnel-disconnect local-survival proof | BLOCKED | P7-06 | Disconnect/restart leaves local execution healthy | Phase 7 gate |
-| P7-GATE | Gate | Close Phase 7 / #32 | BLOCKED | P7-A-01..02 | All MCP+tunnel evidence PASS | #32 closes |
+| P7-01 | Secrets | Windows Secret Store abstraction | DONE | P6-GATE | Credentials stored outside worker/runtime-visible channels | E-SECRET-STORE-20260922: actual Windows Credential Manager, native Named Pipe metadata-only configuration, queue/cancellation/bounds, full Windows/WSL gate PASS; no Linux handoff yet |
+| P7-02 | Secrets | Controlled credential handoff | DONE | P7-01 | Only tunnel/MCP components receive required secret | E-HOST-HANDOFF-20260922: native credential/pipe recovery, actual Host/WSL/pinned-client local-provider proof and full Windows/WSL gate PASS; worker env/argv exclude keys; hostile same-UID access remains P7-06 |
+| P7-03 | Tunnel | Tunnel Supervisor | DONE | P6-GATE | Tunnel process lifecycle is supervised | E-TUNNEL-SUPERVISION-20260922: seven model/security/process tests, full Windows/WSL gate and actual pinned-client/local-provider real-Session proof PASS; Host handoff P7-02 remains open |
+| P7-04 | Tunnel | MCP-before-tunnel startup/readiness ordering | DONE | P7-03 | Tunnel starts only after MCP ready | E-TUNNEL-SUPERVISION-20260922: seven model/security/process tests, full Windows/WSL gate and actual pinned-client/local-provider real-Session proof PASS; Host handoff P7-02 remains open |
+| P7-05 | Tunnel | Reconnect/backoff and remote-access status | DONE | P7-03 | Tunnel recovers and status is observable | E-TUNNEL-SUPERVISION-20260922: seven model/security/process tests, full Windows/WSL gate and actual pinned-client/local-provider real-Session proof PASS; Host handoff P7-02 remains open |
+| P7-06 | Security | Credential isolation/redaction tests | DONE | P7-01..05 | No tunnel/MCP secret reaches worker/log/diagnostics | E-DIAGNOSTICS-20260922: typed diagnostic exclusion corpus, actual distinct-UID build/worker denial, 147 secret-free response/events, local log/failure/notebook scans, native Host/WSL proof and full gate PASS. Full installed system/ZIP remain later gates |
+| P7-A-01 | Acceptance | Remote same-Session proof | DONE | P7-06 | Remote MCP reads Human-created value from same Session | E-REAL-CLIENT-20260922 updated 20260923: actual Web ChatGPT tool response and actual Codex connector read Host-created 123456789 in unchanged primary Session/worker PID 95/generation 1; Desktop and actual execution remain open |
+| P7-A-02 | Acceptance | Tunnel-disconnect local-survival proof | DONE | P7-06 | Disconnect/restart leaves local execution healthy | E-DIAGNOSTICS-20260922: actual pinned tunnel-client/local mock provider disconnect/reconnect, MCP replacement and process recovery preserve local worker/value; not actual ChatGPT evidence |
+| P7-GATE | Gate | Close Phase 7 / #32 | IN_PROGRESS | P7-A-01..02 | All MCP+tunnel evidence PASS | Actual-client execution remains unproven: Web ChatGPT safety rejection; user checking directly. No annotation weakening or alternate-path retry. Read criterion alone does not close this gate |
 
 ## Phase 8 — Desktop application (#33)
 
@@ -300,7 +361,7 @@ Umbrella #26 remains open until Phase 11 release acceptance closes.
 | P11-L6-02 | Real workstation | Managed WSL auto-created; no routine manual Linux setup | BLOCKED | P11-L6-01 | Provisioning fully automatic | TEST_ACCEPTANCE L6.2-3 |
 | P11-L6-03 | Real workstation | uv Project + representative CPU package | BLOCKED | P11-L6-02 | Project/env/package works | TEST_ACCEPTANCE L6.4-5 |
 | P11-L6-04 | Real workstation | PyTorch GPU smoke when supported | BLOCKED | P11-L6-03 | CUDA workload PASS | TEST_ACCEPTANCE L6.6 |
-| P11-L6-05 | Real workstation | JAX GPU smoke when supported | BLOCKED | P11-L6-03 | JAX GPU workload PASS or matrix marks unsupported | TEST_ACCEPTANCE L6.7 |
+| P11-L6-05 | Real workstation | JAX GPU computation in target Project Session | BLOCKED | P11-L6-03 | GPU discovery and completed JAX workload PASS on target workstation; import-only or unsupported is not completion | R-ENV-008 P0; TEST_ACCEPTANCE L6.7; user requirement |
 | P11-L6-06 | Real workstation | .ipynb create/import/edit/save | BLOCKED | P11-L6-03 | Notebook workflows PASS | TEST_ACCEPTANCE L6.8 |
 | P11-L6-07 | Real workstation | Persistent Session state | BLOCKED | P11-L6-06 | State survives cells | TEST_ACCEPTANCE L6.9 |
 | P11-L6-08 | Real workstation | Two Sessions in parallel | BLOCKED | P11-L6-07 | Actual concurrency PASS | TEST_ACCEPTANCE L6.10 |

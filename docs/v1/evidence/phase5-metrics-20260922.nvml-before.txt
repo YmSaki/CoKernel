@@ -1,0 +1,9 @@
+   Compiling cokernel-metrics v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-metrics)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.57s
+     Running `target\debug\examples\resources_smoke.exe --require-gpu`
+
+thread 'main' (51388) panicked at crates\cokernel-metrics\examples\resources_smoke.rs:41:30:
+real NVIDIA diagnostic
+{"sequence":2,"age_ms":6,"stale":false,"collecting":true,"resources":{"source":"WINDOWS_HOST","sampled_at":"2026-09-21T17:59:39.255445900+00:00","cpu_percent":{"value":32.43933588761175,"unavailable":null},"memory":{"value":{"total_bytes":68519723008,"used_bytes":37101379584,"available_bytes":31418343424},"unavailable":null},"storage":{"value":{"total_bytes":4095688568832,"used_bytes":3620142071808,"available_bytes":475546497024},"unavailable":null},"cgroup_memory":{"value":null,"unavailable":"NOT_SUPPORTED"},"gpus":{"value":null,"unavailable":"READ_FAILED"},"process_gpu_attribution":{"value":null,"unavailable":"NOT_SUPPORTED"}}}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: process didn't exit successfully: `target\debug\examples\resources_smoke.exe --require-gpu` (exit code: 101)

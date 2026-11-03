@@ -1,0 +1,16 @@
+Before-fix observation, transcribed from the tool result in this task.
+Command (inside development WSL repo, after actual Runtime/MCP build):
+python3 scripts/v1/smoke_mcp_supervision.py
+Exit code: 1
+
+Traceback (most recent call last):
+  File "/home/ymsaki/.cache/cokernel-v1-dev/repo/scripts/v1/smoke_mcp_supervision.py", line 170, in <module>
+    main()
+  File "/home/ymsaki/.cache/cokernel-v1-dev/repo/scripts/v1/smoke_mcp_supervision.py", line 132, in main
+    assert b"must-not-reach-mcp-or-worker" not in data
+AssertionError
+
+The ordered loop inspected worker then MCP. Worker launch inherited Runtime
+environment; MCP launch already used env_clear. The sentinel is disposable test
+data, not a credential. Worker launch now uses an explicit environment and
+Project-local HOME/IPYTHONDIR. The same actual process proof passed after repair.

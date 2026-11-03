@@ -1,0 +1,31 @@
+   Compiling cokernel-bootstrap v1.0.0-alpha.0 (/home/ymsaki/.cache/cokernel-v1-dev/repo/crates/cokernel-bootstrap)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.35s
+     Running unittests src/lib.rs (target/debug/deps/cokernel_bootstrap-35d227183cd28431)
+
+running 4 tests
+test image::tests::relative_link_resolution_stays_inside_payload_even_through_chains ... ok
+test image::tests::unpinned_trust_roots_cannot_produce_a_complete_image ... ok
+test image::tests::collisions_and_payload_symlink_children_fail_before_completion ... ok
+test image::tests::first_boot_policy_accounts_and_permissions_are_in_the_image ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/cokernel_bootstrap-7e1502dfd3b00a7d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_bootstrap
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking cokernel-domain v1.0.0-alpha.0 (/home/ymsaki/.cache/cokernel-v1-dev/repo/crates/cokernel-domain)
+    Checking cokernel-bootstrap v1.0.0-alpha.0 (/home/ymsaki/.cache/cokernel-v1-dev/repo/crates/cokernel-bootstrap)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.91s
+   Compiling cokernel-bootstrap v1.0.0-alpha.0 (/home/ymsaki/.cache/cokernel-v1-dev/repo/crates/cokernel-bootstrap)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.70s
+payload archive created; not an installed-system acceptance result
+{"identity":"4a8f6cef-97f5-4d75-bbb0-e3f869ac5d02","image_sha256":"49c7982eda40936189a064c80ca5edb8d7f8884b49bb67451f54cefcf242af63","receipt":"/mnt/c/programing/CoKernel/target/dev-tools/validation-20260922/image-v4.tar\r.json"}

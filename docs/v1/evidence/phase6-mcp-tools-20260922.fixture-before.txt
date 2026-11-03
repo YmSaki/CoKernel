@@ -1,0 +1,28 @@
+[v1-check] Environment
+Python 3.11.9
+cargo 1.91.1 (ea2d97820 2025-10-10)
+uv 0.12.11 (4b53f66b7 2026-09-08 x86_64-pc-windows-msvc)
+[v1-check] WBS ledger consistency
+[wbs] PASS: 207 items; DONE=113, READY_VERIFY=0, IN_PROGRESS=1, TODO=1, BLOCKED=92
+[wbs] This is a ledger structure/count check, not runtime acceptance.
+[v1-check] Local v1 script contract tests
+----------------------------------------------------------------------
+Ran 21 tests in 13.761s
+
+OK
+[v1-check] Protocol fixtures
+OK protocol\fixtures\bridge-hello.request.json
+Traceback (most recent call last):
+OK protocol\fixtures\error.response.json
+  File "C:\programing\CoKernel\scripts\v1\validate_protocol_fixtures.py", line 27, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "C:\programing\CoKernel\scripts\v1\validate_protocol_fixtures.py", line 19, in main
+    if data.get("protocol") != 1:
+       ^^^^^^^^
+AttributeError: 'list' object has no attribute 'get'
+Exception: C:\programing\CoKernel\scripts\v1\check.ps1:6
+Line |
+   6 |          throw "$Step failed with exit code $LASTEXITCODE"
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Protocol fixtures failed with exit code 1

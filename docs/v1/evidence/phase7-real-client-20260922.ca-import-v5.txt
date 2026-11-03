@@ -1,0 +1,4 @@
+   Compiling cokernel-bootstrap v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-bootstrap)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.65s
+     Running `target\debug\cokernel-bootstrap.exe import-validation C:/programing/CoKernel/target/dev-tools/validation-20260922/image-v5.tar C:/programing/CoKernel/target/dev-tools/validation-20260922/installed-v5`
+{"actual_client_acceptance":false,"distribution":"CoKernelV1-Validation-1148d5f88d1f4030964d66ad71adebd9","host_config":"C:/programing/CoKernel/target/dev-tools/validation-20260922/installed-v5\\host-wsl.json","image_identity":"1148d5f8-8d1f-4030-964d-66ad71adebd9","provisioning":{"control_uid":61001,"gpu_device_present":true,"identity":"1148d5f8-8d1f-4030-964d-66ad71adebd9","provisioned":true,"schema":1,"workload_uid":61002}}

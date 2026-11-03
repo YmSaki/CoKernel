@@ -1,0 +1,22 @@
+   Compiling cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.16s
+     Running tests\lifecycle.rs (target\debug\deps\lifecycle-a97021915a3e6ed8.exe)
+
+running 1 test
+test startup_events_precede_hello_and_preserve_sequence_across_handshake ... FAILED
+
+failures:
+
+---- startup_events_precede_hello_and_preserve_sequence_across_handshake stdout ----
+
+thread 'startup_events_precede_hello_and_preserve_sequence_across_handshake' (63856) panicked at crates\cokernel-host\tests\lifecycle.rs:124:78:
+called `Result::unwrap()` on an `Err` value: BridgeError { code: "CK-HOST-BRIDGE", message: "Runtime transport failed; pending operations may have executed. Refresh state before retrying." }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    startup_events_precede_hello_and_preserve_sequence_across_handshake
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.07s
+
+error: test failed, to rerun pass `-p cokernel-host --test lifecycle`

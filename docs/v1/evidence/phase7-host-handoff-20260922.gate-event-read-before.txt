@@ -1,0 +1,144 @@
+[v1-check] Environment
+Python 3.11.9
+cargo 1.91.1 (ea2d97820 2025-10-10)
+uv 0.12.11 (4b53f66b7 2026-09-08 x86_64-pc-windows-msvc)
+[v1-check] WBS ledger consistency
+[wbs] PASS: 210 items; DONE=128, READY_VERIFY=1, IN_PROGRESS=0, TODO=0, BLOCKED=81
+[wbs] This is a ledger structure/count check, not runtime acceptance.
+[v1-check] Local v1 script contract tests
+----------------------------------------------------------------------
+Ran 21 tests in 12.052s
+
+OK
+[v1-check] Protocol fixtures
+OK protocol\fixtures\bridge-hello.request.json
+OK protocol\fixtures\error.response.json
+OK protocol\fixtures\runtime-status.response.json
+OK protocol\fixtures\session-execute.request.json
+OK protocol\fixtures\session-output.event.json
+[v1-check] Source-tree worker smoke (Linux/WSL proof; skips on native Windows)
+[worker-source-smoke] SKIP: AF_UNIX requires Linux/WSL
+[v1-check] Rust format
+[v1-check] Rust check
+    Checking cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.96s
+[v1-check] Rust clippy
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.19s
+[v1-check] Rust tests
+   Compiling cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.04s
+     Running unittests src\lib.rs (target\debug\deps\cokernel_bootstrap-59da8f012c8203a8.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_domain-4770ac381f0f4422.exe)
+
+running 2 tests
+test tests::domain_ids_round_trip_through_strings ... ok
+test tests::initial_worker_generation_is_one ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_host-878d8e5b0d76c964.exe)
+
+running 16 tests
+test import_file::tests::reject_device_network_relative_and_alternate_stream_paths ... ok
+test secrets::tests::bounded_versioned_blob_roundtrip_and_rejection_do_not_echo_secret ... ok
+test named_pipe::tests::named_pipe_round_trip ... ok
+test autostart::tests::quoted_command_round_trips_through_windows_argument_parser ... ok
+test pipe_security::tests::descriptor_has_one_protected_allow_ace_for_current_user_only ... ok
+test pipe_security::tests::kernel_acl_denies_a_client_not_named_in_the_dacl ... ok
+test secrets::tests::failed_backend_mutation_preserves_stored_configuration ... ok
+test secrets::tests::bounded_fifo_owner_retains_accepted_write_after_reply_disconnection ... ok
+test pipe_security::tests::peer_identity_mismatch_is_rejected_and_thread_identity_is_restored ... ok
+test import_file::tests::reject_empty_oversized_directory_and_wrong_extension ... ok
+test autostart::tests::foreign_values_and_malformed_registration_are_not_silently_accepted ... ok
+test autostart::tests::invalid_and_overlong_launches_do_not_register ... ok
+test autostart::tests::registry_round_trip_is_scoped_and_leaves_desired_state_untouched ... ok
+test import_file::tests::stable_handle_blocks_writers_and_hashes_exact_bytes ... ok
+test remote_intent::tests::durable_intent_is_bounded_and_never_inferred_from_configuration ... ok
+test secrets::tests::actual_windows_credential_roundtrip_replacement_isolation_and_clear ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running unittests src\main.rs (target\debug\deps\cokernel_host-ef41e065a54a74f5.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\lifecycle.rs (target\debug\deps\lifecycle-e21cd72d3b5c0e9d.exe)
+
+running 19 tests
+test desired_state_save_failure_does_not_launch_runtime ... ok
+
+running 1 test
+test desired_state_is_locked_atomic_and_reopened_without_guessing ... ok
+test correlates_out_of_order_replies_and_separates_events_and_stderr ... ok
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.17s
+
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+test shutdown_failure_is_not_reported_as_clean_stop ... ok
+test wrong_response_id_invalidates_connection ... ok
+test host_exit_propagates_runtime_shutdown_failure ... ok
+test refused_stop_and_host_exit_keep_document_connection_available ... ok
+test startup_events_precede_hello_and_preserve_sequence_across_handshake ... ok
+test caller_cancellation_does_not_cancel_or_corrupt_connection ... ok
+test unexpected_exit_reconnects_with_a_new_generation_and_visible_evidence ... ok
+test oversized_request_is_rejected_without_losing_the_healthy_connection ... ok
+test startup_event_flood_bad_protocol_and_reordered_sequence_fail_closed ... ok
+test host_survives_client_drop_preserves_explicit_stop_and_resumes_running ... ok
+test runtime_events_follow_bridge_generation_and_slow_subscribers_do_not_block_calls ... ok
+test request_timeout_is_not_replayed_and_reports_unknown_outcome ... ok
+test stopped_desire_does_not_reconnect_after_refused_stop_then_crash ... ok
+test handshake_mismatch_oversize_and_timeout_fail_closed ... ok
+test recovery_is_bounded_and_version_mismatch_never_loops ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s
+
+     Running tests\pipe.rs (target\debug\deps\pipe-dc6041e15ceaa719.exe)
+
+running 17 tests
+test autostart_rejects_command_injection_and_requires_trusted_launch_binding ... ok
+test duplicate_id_is_confined_to_its_connection ... ok
+test malformed_and_oversized_clients_do_not_stop_other_clients ... ok
+test protocol_and_internal_methods_cannot_bypass_host_admission ... ok
+test cancelled_event_read_requires_a_fresh_connection ... FAILED
+test tunnel_credentials_stay_in_windows_store_and_never_echo_over_pipe ... ok
+test resources_are_available_when_runtime_is_stopped_and_reject_client_paths ... ok
+test same_request_id_on_distinct_connections_is_correlated_independently ... ok
+test failed_import_cancels_its_transaction_without_forwarding_windows_paths ... ok
+test ninth_inflight_request_is_rejected_without_cancelling_eight_accepted_requests ... ok
+test draining_client_receives_a_burst_without_disconnect_or_response_interleaving ... ok
+test current_user_handshake_snapshot_and_control_survive_reconnect ... ok
+test cancelled_rpc_poisons_client_but_accepted_work_outlives_connection ... ok
+test unavailable_linux_metrics_do_not_hide_host_data_or_block_runtime_control ... ok
+test remote_clear_preserves_credential_until_cleanup_is_confirmed_and_local_control_stays_responsive ... ok
+test remote_intent_handoff_rotation_and_host_runtime_recovery_share_one_owner ... ok
+test remote_rejects_false_connected_observations_and_explicit_reconnect_recovers ... ok
+
+failures:
+
+---- cancelled_event_read_requires_a_fresh_connection stdout ----
+
+thread 'cancelled_event_read_requires_a_fresh_connection' (45680) panicked at crates\cokernel-host\tests\pipe.rs:850:5:
+assertion failed: tokio::time::timeout(Duration::from_millis(20),
+            client.next_event()).await.is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cancelled_event_read_requires_a_fresh_connection
+
+test result: FAILED. 16 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.07s
+
+error: test failed, to rerun pass `-p cokernel-host --test pipe`
+Exception: C:\programing\CoKernel\scripts\v1\check.ps1:6
+Line |
+   6 |          throw "$Step failed with exit code $LASTEXITCODE"
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Rust tests failed with exit code 101

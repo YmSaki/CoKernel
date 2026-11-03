@@ -1,0 +1,52 @@
+   Compiling cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.20s
+     Running unittests src\lib.rs (target\debug\deps\cokernel_host-88c66233f56a8dde.exe)
+
+running 19 tests
+test import_file::tests::reject_device_network_relative_and_alternate_stream_paths ... ok
+test ipc_pipe::setup_tests::unconfirmed_configuration_never_echoes_private_response_fields ... ok
+test autostart::tests::quoted_command_round_trips_through_windows_argument_parser ... ok
+test remote_setup::tests::cancellation_and_native_errors_do_not_produce_credentials ... ok
+test secrets::tests::bounded_versioned_blob_roundtrip_and_rejection_do_not_echo_secret ... ok
+test named_pipe::tests::named_pipe_round_trip ... ok
+test remote_setup::tests::native_blob_unpack_preserves_key_and_rejects_invalid_or_oversized_input ... ok
+test secrets::tests::bounded_fifo_owner_retains_accepted_write_after_reply_disconnection ... ok
+test secrets::tests::failed_backend_mutation_preserves_stored_configuration ... ok
+test pipe_security::tests::descriptor_has_one_protected_allow_ace_for_current_user_only ... ok
+test pipe_security::tests::kernel_acl_denies_a_client_not_named_in_the_dacl ... ok
+test pipe_security::tests::peer_identity_mismatch_is_rejected_and_thread_identity_is_restored ... ok
+test autostart::tests::invalid_and_overlong_launches_do_not_register ... ok
+test autostart::tests::foreign_values_and_malformed_registration_are_not_silently_accepted ... FAILED
+test secrets::tests::actual_windows_credential_roundtrip_replacement_isolation_and_clear ... FAILED
+test import_file::tests::reject_empty_oversized_directory_and_wrong_extension ... ok
+test autostart::tests::registry_round_trip_is_scoped_and_leaves_desired_state_untouched ... FAILED
+test import_file::tests::stable_handle_blocks_writers_and_hashes_exact_bytes ... ok
+test remote_intent::tests::durable_intent_is_bounded_and_never_inferred_from_configuration ... ok
+
+failures:
+
+---- autostart::tests::foreign_values_and_malformed_registration_are_not_silently_accepted stdout ----
+
+thread 'autostart::tests::foreign_values_and_malformed_registration_are_not_silently_accepted' (15516) panicked at crates\cokernel-host\src\autostart.rs:376:43:
+called `Result::unwrap()` on an `Err` value: BridgeError { code: "CK-HOST-AUTOSTART", message: "Cannot open current-user startup registration" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- secrets::tests::actual_windows_credential_roundtrip_replacement_isolation_and_clear stdout ----
+
+thread 'secrets::tests::actual_windows_credential_roundtrip_replacement_isolation_and_clear' (11500) panicked at crates\cokernel-host\src\secrets\tests.rs:182:38:
+called `Result::unwrap()` on an `Err` value: Unavailable
+
+---- autostart::tests::registry_round_trip_is_scoped_and_leaves_desired_state_untouched stdout ----
+
+thread 'autostart::tests::registry_round_trip_is_scoped_and_leaves_desired_state_untouched' (24160) panicked at crates\cokernel-host\src\autostart.rs:318:54:
+called `Result::unwrap()` on an `Err` value: BridgeError { code: "CK-HOST-AUTOSTART", message: "Cannot open current-user startup registration" }
+
+
+failures:
+    autostart::tests::foreign_values_and_malformed_registration_are_not_silently_accepted
+    autostart::tests::registry_round_trip_is_scoped_and_leaves_desired_state_untouched
+    secrets::tests::actual_windows_credential_roundtrip_replacement_isolation_and_clear
+
+test result: FAILED. 16 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p cokernel-host --lib`

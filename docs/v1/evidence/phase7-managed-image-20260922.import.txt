@@ -1,0 +1,1 @@
+Error: CK-SETUP-WSL: command failed; validation directory retained

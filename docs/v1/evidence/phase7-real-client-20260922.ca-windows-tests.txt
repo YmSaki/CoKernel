@@ -1,0 +1,27 @@
+   Compiling cokernel-bootstrap v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-bootstrap)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.41s
+     Running unittests src\lib.rs (target\debug\deps\cokernel_bootstrap-ca6e97dab3c1377e.exe)
+
+running 7 tests
+test image::tests::relative_link_resolution_stays_inside_payload_even_through_chains ... ok
+test windows::tests::wsl_decoding_accepts_utf8_and_utf16_but_rejects_corruption ... ok
+test image::tests::unpinned_trust_roots_cannot_produce_a_complete_image ... ok
+test image::tests::collisions_and_payload_symlink_children_fail_before_completion ... ok
+test image::tests::first_boot_policy_accounts_and_permissions_are_in_the_image ... ok
+test windows::tests::phase_evidence_never_overwrites_an_existing_receipt ... ok
+test windows::tests::invalid_artifacts_fail_before_wsl_or_destination_creation ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests src\main.rs (target\debug\deps\cokernel_bootstrap-2821c5e3d068bf82.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_bootstrap
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

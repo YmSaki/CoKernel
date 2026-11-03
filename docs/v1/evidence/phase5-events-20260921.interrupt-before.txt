@@ -1,0 +1,63 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_sigint_at_execution_started_is_terminal_output_not_worker_exit ______
+
+    @pytest.mark.skipif(os.name != 'posix', reason='SIGINT is a Linux/WSL worker contract')
+    def test_sigint_at_execution_started_is_terminal_output_not_worker_exit():
+        worker = WorkerLoop('early-interrupt')
+        assert worker.engine.execute('marker=41').success
+        frames = []
+        previous = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        def send(sock, frame):
+            frames.append(json.loads(encode_json(frame)))
+            if frame.get('event') == 'execution_started':
+                signal.raise_signal(signal.SIGINT)
+        worker._send_message = send
+        try:
+            try:
+>               worker._execute(None, 'op', {'operation_id':'op', 'source':'marker=0'})
+
+worker/tests/test_streaming_output.py:242: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+worker/src/cokernel_worker/protocol.py:237: in _execute
+    self._send_event(sock, "execution_started", {"operation_id": operation_id})
+worker/src/cokernel_worker/protocol.py:400: in _send_event
+    self._send_message(sock, self._event_message(event, payload))
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+sock = None
+frame = {'protocol': 1, 'type': 'event', 'session_id': 'early-interrupt', 'event': 'execution_started', ...}
+
+    def send(sock, frame):
+        frames.append(json.loads(encode_json(frame)))
+        if frame.get('event') == 'execution_started':
+>           signal.raise_signal(signal.SIGINT)
+E           KeyboardInterrupt
+
+worker/tests/test_streaming_output.py:238: KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+    @pytest.mark.skipif(os.name != 'posix', reason='SIGINT is a Linux/WSL worker contract')
+    def test_sigint_at_execution_started_is_terminal_output_not_worker_exit():
+        worker = WorkerLoop('early-interrupt')
+        assert worker.engine.execute('marker=41').success
+        frames = []
+        previous = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        def send(sock, frame):
+            frames.append(json.loads(encode_json(frame)))
+            if frame.get('event') == 'execution_started':
+                signal.raise_signal(signal.SIGINT)
+        worker._send_message = send
+        try:
+            try:
+                worker._execute(None, 'op', {'operation_id':'op', 'source':'marker=0'})
+            except KeyboardInterrupt:
+>               pytest.fail('SIGINT escaped the execution-start boundary and would terminate the worker')
+E               Failed: SIGINT escaped the execution-start boundary and would terminate the worker
+
+worker/tests/test_streaming_output.py:244: Failed
+=========================== short test summary info ============================
+FAILED worker/tests/test_streaming_output.py::test_sigint_at_execution_started_is_terminal_output_not_worker_exit

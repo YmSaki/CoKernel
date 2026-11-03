@@ -1,0 +1,17 @@
+
+running 1 test
+
+thread 'stop_during_restart_cancels_replacement_and_does_not_revive_worker' panicked at crates/cokernel-runtime/tests/deferred_requests.rs:291:5:
+initial worker was not healthy: Some(DomainError { code: "CK-SESS-REQUEST", component: "session", summary: "worker inspection is unavailable: worker transport I/O failed: Connection reset by peer (os error 104)", action: "Refresh Session status and retry when the pending operation has completed", detail: None })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+stop_during_restart_cancels_replacement_and_does_not_revive_worker --- FAILED
+
+failures:
+
+failures:
+    stop_during_restart_cancels_replacement_and_does_not_revive_worker
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.09s
+
+error: test failed, to rerun pass `-p cokernel-runtime --test deferred_requests`
+kill: (3384): No such process

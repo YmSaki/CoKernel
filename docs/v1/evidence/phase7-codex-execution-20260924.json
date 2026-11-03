@@ -1,0 +1,47 @@
+{
+  "captured": "2026-09-24",
+  "receipt": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"notebook_id\":\"ee0b41ce-9966-4482-831f-fcdaf31583eb\",\"operation_id\":\"3527641b-328f-462f-91fd-8fd2ad4fd220\",\"project_id\":\"629f42c4-beda-4bd8-b6f9-d770c431d724\",\"result\":{\"state\":\"PENDING\"},\"session_id\":\"e067e0f3-0329-4825-9503-c7809d2351c8\"}"
+      }
+    ],
+    "isError": false
+  },
+  "completion": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"notebook_id\":\"ee0b41ce-9966-4482-831f-fcdaf31583eb\",\"operation_id\":\"3527641b-328f-462f-91fd-8fd2ad4fd220\",\"project_id\":\"629f42c4-beda-4bd8-b6f9-d770c431d724\",\"result\":{\"execution_status\":\"SUCCEEDED\",\"revision\":4,\"state\":\"PERSISTED\"},\"session_id\":\"e067e0f3-0329-4825-9503-c7809d2351c8\"}"
+      }
+    ],
+    "isError": false
+  },
+  "after": [
+    {
+      "status": "fulfilled",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"cells\":[{\"cell_id\":\"human-seed\",\"cell_type\":\"code\",\"execution_count\":1,\"index\":0,\"output_bytes\":102,\"outputs\":[{\"data\":{\"text/plain\":\"123456789\"},\"execution_count\":1,\"metadata\":{},\"output_type\":\"execute_result\"}],\"outputs_included\":true,\"outputs_truncated\":false,\"source\":\"import os\\nworker_pid = os.getpid()\\nsecret_from_master = 123456789\\nsecret_from_master\",\"source_bytes\":84,\"source_truncated\":false},{\"cell_id\":\"ai-check\",\"cell_type\":\"code\",\"execution_count\":3,\"index\":1,\"output_bytes\":102,\"outputs\":[{\"data\":{\"text/plain\":\"123456790\"},\"execution_count\":3,\"metadata\":{},\"output_type\":\"execute_result\"}],\"outputs_included\":true,\"outputs_truncated\":false,\"source\":\"secret_from_master + 1\",\"source_bytes\":22,\"source_truncated\":false}],\"document\":{\"notebook_id\":\"ee0b41ce-9966-4482-831f-fcdaf31583eb\",\"project_id\":\"629f42c4-beda-4bd8-b6f9-d770c431d724\",\"relative_path\":\"shared.ipynb\",\"revision\":4},\"next_offset\":null,\"offset\":0,\"revision\":4,\"state\":\"CLEAN\",\"total_cells\":2}"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"current_operation_id\":null,\"environment_generation\":1,\"notebook_id\":\"ee0b41ce-9966-4482-831f-fcdaf31583eb\",\"project_id\":\"629f42c4-beda-4bd8-b6f9-d770c431d724\",\"queue_depth\":0,\"session_id\":\"e067e0f3-0329-4825-9503-c7809d2351c8\",\"started_at\":\"2026-09-22T06:22:58.682342964Z\",\"state\":\"IDLE\",\"worker_generation\":1}"
+          }
+        ],
+        "isError": false
+      }
+    }
+  ]
+}

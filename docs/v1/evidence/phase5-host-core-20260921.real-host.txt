@@ -1,0 +1,3 @@
+{"generation":2,"proof":"real-windows-host-wsl-runtime","same_session_after_caller_drop":true,"saved_outputs":true,"shutdown_flush":true,"worker_pid":5081}
+PASS: real WSL worker exited after Host stop; saved notebook output and shutdown edit retained
+PASS: real Windows Host service entrypoint remains alive in persisted STOPPED state; no Runtime launched

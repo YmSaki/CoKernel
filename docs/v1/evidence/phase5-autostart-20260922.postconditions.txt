@@ -1,0 +1,1 @@
+PASS: imported standard .ipynb validates; output, attachment and shutdown edit persist; failed import absent; worker exited

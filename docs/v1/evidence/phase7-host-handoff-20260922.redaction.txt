@@ -1,0 +1,1 @@
+PASS: known synthetic provider key absent from 5 final native Host log/state/notebook files.

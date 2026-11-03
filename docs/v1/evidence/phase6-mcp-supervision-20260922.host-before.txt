@@ -1,0 +1,1 @@
+Error: {"consecutive_failures":5,"desired":"RUNNING","generation":0,"last_error":{"code":"CK-HOST-BRIDGE","message":"Runtime transport failed; pending operations may have executed. Refresh state before retrying."},"observed":"ERROR","runtime_capabilities":[],"runtime_version":null}

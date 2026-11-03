@@ -1,0 +1,7 @@
+Using CPython 3.12.14
+Creating virtual environment at: /tmp/cksup-4335-18d754637ba14be7/project/.venv
+Resolved 1 package in 1ms
+Checked in 0.00ms
+kill: (5064): No such process
+[captured-output-smoke] PASS
+[session-supervisor-smoke] PASS

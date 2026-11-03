@@ -1,0 +1,1 @@
+{"identity": "4cc2a583-1bfb-43c2-b9c0-74d7a73b2c1d", "idle_before_mutation": true, "unsafe_interop_permissions_reject_launch": true, "boot_guard_restores_boundary": true}

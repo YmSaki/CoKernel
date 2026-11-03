@@ -1,0 +1,51 @@
+    Checking cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.62s
+   Compiling cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.01s
+     Running unittests src\lib.rs (target\debug\deps\cokernel_host-bb71d361a135777e.exe)
+
+running 1 test
+test named_pipe::tests::named_pipe_round_trip ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\cokernel_host-dddc1122fe2d3c48.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\lifecycle.rs (target\debug\deps\lifecycle-9713d6e6f4f6340f.exe)
+
+running 16 tests
+test desired_state_save_failure_does_not_launch_runtime ... ok
+
+running 1 test
+test desired_state_is_locked_atomic_and_reopened_without_guessing ... ok
+test shutdown_failure_is_not_reported_as_clean_stop ... ok
+test wrong_response_id_invalidates_connection ... ok
+test correlates_out_of_order_replies_and_separates_events_and_stderr ... ok
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.15s
+
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+test host_exit_propagates_runtime_shutdown_failure ... ok
+test refused_stop_and_host_exit_keep_document_connection_available ... ok
+test caller_cancellation_does_not_cancel_or_corrupt_connection ... ok
+test oversized_request_is_rejected_without_losing_the_healthy_connection ... ok
+test unexpected_exit_reconnects_with_a_new_generation_and_visible_evidence ... ok
+test host_survives_client_drop_preserves_explicit_stop_and_resumes_running ... ok
+test request_timeout_is_not_replayed_and_reports_unknown_outcome ... ok
+test stopped_desire_does_not_reconnect_after_refused_stop_then_crash ... ok
+test handshake_mismatch_oversize_and_timeout_fail_closed ... ok
+test recovery_is_bounded_and_version_mismatch_never_loops ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.20s
+
+   Doc-tests cokernel_host
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,58 @@
+[v1-check] Environment
+Python 3.11.9
+cargo 1.91.1 (ea2d97820 2025-10-10)
+uv 0.12.11 (4b53f66b7 2026-09-08 x86_64-pc-windows-msvc)
+[v1-check] WBS ledger consistency
+[wbs] PASS: 206 items; DONE=104, READY_VERIFY=0, IN_PROGRESS=1, TODO=1, BLOCKED=100
+[wbs] This is a ledger structure/count check, not runtime acceptance.
+[v1-check] Local v1 script contract tests
+----------------------------------------------------------------------
+Ran 21 tests in 12.749s
+
+OK
+[v1-check] Protocol fixtures
+OK protocol\fixtures\bridge-hello.request.json
+OK protocol\fixtures\error.response.json
+OK protocol\fixtures\runtime-status.response.json
+OK protocol\fixtures\session-execute.request.json
+OK protocol\fixtures\session-output.event.json
+[v1-check] Source-tree worker smoke (Linux/WSL proof; skips on native Windows)
+[worker-source-smoke] SKIP: AF_UNIX requires Linux/WSL
+[v1-check] Rust format
+[v1-check] Rust check
+    Checking tokio v1.53.1
+    Checking cokernel-bootstrap v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-bootstrap)
+    Checking cokernel-runtime v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-runtime)
+    Checking cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+    Checking tokio-util v0.7.19
+    Checking tokio-stream v0.1.19
+    Checking rmcp v3.4.0
+    Checking cokernel-mcp v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-mcp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.47s
+[v1-check] Rust clippy
+    Checking cokernel-bootstrap v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-bootstrap)
+    Checking cokernel-runtime v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-runtime)
+    Checking cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+    Checking cokernel-mcp v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-mcp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.10s
+[v1-check] Rust tests
+   Compiling tokio v1.53.1
+   Compiling cokernel-runtime v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-runtime)
+   Compiling cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+   Compiling tokio-stream v0.1.19
+   Compiling tokio-util v0.7.19
+   Compiling rmcp v3.4.0
+error: linking with `link.exe` failed: exit code: 1104
+  |
+  = note: "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\bin\\HostX64\\x64\\link.exe" "/NOLOGO" "C:\\Users\\star\\AppData\\Local\\Temp\\rustcF3ja0m\\symbols.o" "<88 object files omitted>" "C:\\programing\\CoKernel\\target\\debug\\deps/{libcokernel_host-cb76f1b3f8ec3f10,libsha2-4a6237c798943218,libcpufeatures-bc9811fdf5b11081,libdigest-3b7ceb8c40398b8a,libblock_buffer-c677203015ed3f68,libcrypto_common-f24de54934c84598,libgeneric_array-a701250a37d43831,libtypenum-e1e65ab963f2d9ab,libbase64-1c0c6493da5e72e5,libtokio-e446fb3321adc121,libsocket2-b1bf58274255ff14,libbytes-1df1a580f3e5faaf,libmio-97aa8fe890f4ef38,libparking_lot-f89e94856bd63a21,libparking_lot_core-486012ea0e2489eb,libsmallvec-47148f6a2d42ac2b,liblock_api-5f3c2748019d06ba,libscopeguard-501eeb4da884ab3a,libpin_project_lite-b64626bd9222e7a4,libcokernel_protocol-2192f428cc84a4b5,libthiserror-a2843dff63bc459e,libserde_json-457dc259719be583,libmemchr-3fa7ce7c7228bdef,libitoa-507d0d641493e905,libzmij-c4654332854e911b,libcokernel_domain-39b02d7b5996afa6,libuuid-865b67b3e7c8d967,libgetrandom-ebb19868323b952b,librand_core-c4569d5311e84149,libcfg_if-3b85540615d1c933,libchrono-f5f69a1029519762,libnum_traits-ad72b30b654bc6b1,libwindows_sys-fbd4f583f03bf936,libwindows_link-96cbc5d04678fdd0,libserde-fd8edafa094b0121,libserde_core-dc9b99b2ec26f0c3,libanyhow-c67a8edf1a8be793}.rlib" "<sysroot>\\lib\\rustlib\\x86_64-pc-windows-msvc\\lib/{libstd-*,libpanic_unwind-*,libcfg_if-*,libwindows_targets-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libunwind-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "kernel32.lib" "kernel32.lib" "kernel32.lib" "ntdll.lib" "userenv.lib" "ws2_32.lib" "dbghelp.lib" "/defaultlib:msvcrt" "/NXCOMPAT" "/OUT:C:\\programing\\CoKernel\\target\\debug\\examples\\background_host_smoke.exe" "/OPT:REF,NOICF" "/DEBUG" "/PDBALTPATH:%_PDB%" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\intrinsic.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\liballoc.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\libcore.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\libstd.natvis"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: LINK : fatal error LNK1104: ファイル 'C:\programing\CoKernel\target\debug\examples\background_host_smoke.exe' を開くことができません。␍
+          
+
+error: could not compile `cokernel-host` (example "background_host_smoke") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+Exception: C:\programing\CoKernel\scripts\v1\check.ps1:6
+Line |
+   6 |          throw "$Step failed with exit code $LASTEXITCODE"
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Rust tests failed with exit code 101

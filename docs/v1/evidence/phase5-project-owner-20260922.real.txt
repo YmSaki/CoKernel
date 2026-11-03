@@ -1,0 +1,6 @@
+   Compiling cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.01s
+     Running `target\debug\examples\wsl_pipe_smoke.exe target/dev-tools/host-wsl.json C:/programing/CoKernel/target/dev-tools/host-project-owner-state`
+{"accepted_execution_survived_pipe_close":true,"all_clients_closed_without_runtime_restart":true,"async_package_completion_without_polling":true,"async_project_creation_without_polling":true,"completion_observed_without_polling":true,"control_responsive_during_inspection":true,"desktop_or_mcp_proof":false,"import_collision_and_invalid_document_rejected":true,"proof":"real-windows-named-pipe-host-wsl-runtime","runtime_snapshot_and_live_events":true,"same_primary_session":true,"saved_outputs":true,"shutdown_flush":true,"windows_chunked_import":true,"worker_pid":2373}
+
+PASS: imported standard .ipynb validates; output, attachment and shutdown edit persist; failed import absent; worker exited

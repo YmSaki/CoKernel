@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/home/ymsaki/.cache/cokernel-v1-dev/repo/scripts/v1/smoke_workload_identity.py", line 248, in <module>
+    if __name__ == "__main__": main()
+  File "/home/ymsaki/.cache/cokernel-v1-dev/repo/scripts/v1/smoke_workload_identity.py", line 191, in main
+    session = bridge.rpc("sessions.ensure_primary", **identity)["session_id"]
+  File "/home/ymsaki/.cache/cokernel-v1-dev/repo/scripts/v1/smoke_notebook_runtime.py", line 92, in rpc
+    return self.receive(self.send(method, **params), expected_error=expected_error)
+  File "/home/ymsaki/.cache/cokernel-v1-dev/repo/scripts/v1/smoke_notebook_runtime.py", line 88, in receive
+    assert response["ok"], response
+AssertionError: {'protocol': 1, 'request_id': '40', 'ok': False, 'error': {'code': 'CK-SESS-REQUEST', 'component': 'session', 'summary': 'worker exited during startup: exit code 1', 'action': 'Refresh Session status and retry when the pending operation has completed', 'detail': None}}

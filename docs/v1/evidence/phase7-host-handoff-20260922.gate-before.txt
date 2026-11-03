@@ -1,0 +1,123 @@
+[v1-check] Environment
+Python 3.11.9
+cargo 1.91.1 (ea2d97820 2025-10-10)
+uv 0.12.11 (4b53f66b7 2026-09-08 x86_64-pc-windows-msvc)
+[v1-check] WBS ledger consistency
+[wbs] PASS: 210 items; DONE=128, READY_VERIFY=1, IN_PROGRESS=0, TODO=0, BLOCKED=81
+[wbs] This is a ledger structure/count check, not runtime acceptance.
+[v1-check] Local v1 script contract tests
+----------------------------------------------------------------------
+Ran 21 tests in 12.217s
+
+OK
+[v1-check] Protocol fixtures
+OK protocol\fixtures\bridge-hello.request.json
+OK protocol\fixtures\error.response.json
+OK protocol\fixtures\runtime-status.response.json
+OK protocol\fixtures\session-execute.request.json
+OK protocol\fixtures\session-output.event.json
+[v1-check] Source-tree worker smoke (Linux/WSL proof; skips on native Windows)
+[worker-source-smoke] SKIP: AF_UNIX requires Linux/WSL
+[v1-check] Rust format
+[v1-check] Rust check
+    Checking cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.02s
+[v1-check] Rust clippy
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.19s
+[v1-check] Rust tests
+   Compiling cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+   Compiling cokernel-runtime v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.43s
+     Running unittests src\lib.rs (target\debug\deps\cokernel_bootstrap-59da8f012c8203a8.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_domain-4770ac381f0f4422.exe)
+
+running 2 tests
+test tests::initial_worker_generation_is_one ... ok
+test tests::domain_ids_round_trip_through_strings ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_host-878d8e5b0d76c964.exe)
+
+running 16 tests
+test import_file::tests::reject_device_network_relative_and_alternate_stream_paths ... ok
+test secrets::tests::bounded_versioned_blob_roundtrip_and_rejection_do_not_echo_secret ... ok
+test autostart::tests::quoted_command_round_trips_through_windows_argument_parser ... ok
+test named_pipe::tests::named_pipe_round_trip ... ok
+test secrets::tests::bounded_fifo_owner_retains_accepted_write_after_reply_disconnection ... ok
+test secrets::tests::failed_backend_mutation_preserves_stored_configuration ... ok
+test pipe_security::tests::descriptor_has_one_protected_allow_ace_for_current_user_only ... ok
+test pipe_security::tests::kernel_acl_denies_a_client_not_named_in_the_dacl ... ok
+test pipe_security::tests::peer_identity_mismatch_is_rejected_and_thread_identity_is_restored ... ok
+test autostart::tests::invalid_and_overlong_launches_do_not_register ... ok
+test autostart::tests::foreign_values_and_malformed_registration_are_not_silently_accepted ... ok
+test import_file::tests::reject_empty_oversized_directory_and_wrong_extension ... ok
+test import_file::tests::stable_handle_blocks_writers_and_hashes_exact_bytes ... ok
+test autostart::tests::registry_round_trip_is_scoped_and_leaves_desired_state_untouched ... ok
+test remote_intent::tests::durable_intent_is_bounded_and_never_inferred_from_configuration ... ok
+test secrets::tests::actual_windows_credential_roundtrip_replacement_isolation_and_clear ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running unittests src\main.rs (target\debug\deps\cokernel_host-ef41e065a54a74f5.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\lifecycle.rs (target\debug\deps\lifecycle-e21cd72d3b5c0e9d.exe)
+
+running 19 tests
+test desired_state_save_failure_does_not_launch_runtime ... ok
+
+running 1 test
+test desired_state_is_locked_atomic_and_reopened_without_guessing ... ok
+test shutdown_failure_is_not_reported_as_clean_stop ... ok
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.14s
+
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+test correlates_out_of_order_replies_and_separates_events_and_stderr ... ok
+test wrong_response_id_invalidates_connection ... ok
+test runtime_events_follow_bridge_generation_and_slow_subscribers_do_not_block_calls ... FAILED
+test host_exit_propagates_runtime_shutdown_failure ... ok
+test refused_stop_and_host_exit_keep_document_connection_available ... ok
+test startup_events_precede_hello_and_preserve_sequence_across_handshake ... ok
+test caller_cancellation_does_not_cancel_or_corrupt_connection ... ok
+test oversized_request_is_rejected_without_losing_the_healthy_connection ... ok
+test startup_event_flood_bad_protocol_and_reordered_sequence_fail_closed ... ok
+test unexpected_exit_reconnects_with_a_new_generation_and_visible_evidence ... ok
+test host_survives_client_drop_preserves_explicit_stop_and_resumes_running ... ok
+test stopped_desire_does_not_reconnect_after_refused_stop_then_crash ... ok
+test request_timeout_is_not_replayed_and_reports_unknown_outcome ... ok
+test handshake_mismatch_oversize_and_timeout_fail_closed ... ok
+test recovery_is_bounded_and_version_mismatch_never_loops ... ok
+
+failures:
+
+---- runtime_events_follow_bridge_generation_and_slow_subscribers_do_not_block_calls stdout ----
+
+thread 'runtime_events_follow_bridge_generation_and_slow_subscribers_do_not_block_calls' (37684) panicked at crates\cokernel-host\tests\lifecycle.rs:454:9:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runtime_events_follow_bridge_generation_and_slow_subscribers_do_not_block_calls
+
+test result: FAILED. 18 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s
+
+error: test failed, to rerun pass `-p cokernel-host --test lifecycle`
+Exception: C:\programing\CoKernel\scripts\v1\check.ps1:6
+Line |
+   6 |          throw "$Step failed with exit code $LASTEXITCODE"
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Rust tests failed with exit code 101

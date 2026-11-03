@@ -1,0 +1,699 @@
+[v1-check] Environment
+Python 3.11.9
+cargo 1.91.1 (ea2d97820 2025-10-10)
+uv 0.12.11 (4b53f66b7 2026-09-08 x86_64-pc-windows-msvc)
+[v1-check] WBS ledger consistency
+[wbs] PASS: 206 items; DONE=103, READY_VERIFY=0, IN_PROGRESS=1, TODO=2, BLOCKED=100
+[wbs] This is a ledger structure/count check, not runtime acceptance.
+[v1-check] Local v1 script contract tests
+----------------------------------------------------------------------
+Ran 21 tests in 12.661s
+
+OK
+[v1-check] Protocol fixtures
+OK protocol\fixtures\bridge-hello.request.json
+OK protocol\fixtures\error.response.json
+OK protocol\fixtures\runtime-status.response.json
+OK protocol\fixtures\session-execute.request.json
+OK protocol\fixtures\session-output.event.json
+[v1-check] Source-tree worker smoke (Linux/WSL proof; skips on native Windows)
+[worker-source-smoke] SKIP: AF_UNIX requires Linux/WSL
+[v1-check] Rust format
+[v1-check] Rust check
+    Checking cokernel-bootstrap v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-bootstrap)
+    Checking cokernel-mcp v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-mcp)
+    Checking cokernel-runtime v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-runtime)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.27s
+[v1-check] Rust clippy
+    Checking cokernel-bootstrap v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-bootstrap)
+    Checking cokernel-mcp v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-mcp)
+    Checking cokernel-runtime v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-runtime)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.32s
+[v1-check] Rust tests
+   Compiling cokernel-runtime v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-runtime)
+   Compiling cokernel-host v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-host)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.95s
+     Running unittests src\lib.rs (target\debug\deps\cokernel_bootstrap-b87348296351d61c.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_domain-c853abd8e67a2655.exe)
+
+running 2 tests
+test tests::initial_worker_generation_is_one ... ok
+test tests::domain_ids_round_trip_through_strings ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_host-9878206bd17ad160.exe)
+
+running 7 tests
+test import_file::tests::reject_device_network_relative_and_alternate_stream_paths ... ok
+test named_pipe::tests::named_pipe_round_trip ... ok
+test pipe_security::tests::descriptor_has_one_protected_allow_ace_for_current_user_only ... ok
+test pipe_security::tests::kernel_acl_denies_a_client_not_named_in_the_dacl ... ok
+test pipe_security::tests::peer_identity_mismatch_is_rejected_and_thread_identity_is_restored ... ok
+test import_file::tests::reject_empty_oversized_directory_and_wrong_extension ... ok
+test import_file::tests::stable_handle_blocks_writers_and_hashes_exact_bytes ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src\main.rs (target\debug\deps\cokernel_host-aa9c37803a89974c.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\lifecycle.rs (target\debug\deps\lifecycle-c6422dd6f174b122.exe)
+
+running 17 tests
+test desired_state_save_failure_does_not_launch_runtime ... ok
+
+running 1 test
+test desired_state_is_locked_atomic_and_reopened_without_guessing ... ok
+test correlates_out_of_order_replies_and_separates_events_and_stderr ... ok
+test wrong_response_id_invalidates_connection ... ok
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.20s
+
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+test shutdown_failure_is_not_reported_as_clean_stop ... ok
+test host_exit_propagates_runtime_shutdown_failure ... ok
+test refused_stop_and_host_exit_keep_document_connection_available ... ok
+test oversized_request_is_rejected_without_losing_the_healthy_connection ... ok
+test caller_cancellation_does_not_cancel_or_corrupt_connection ... ok
+test host_survives_client_drop_preserves_explicit_stop_and_resumes_running ... ok
+test request_timeout_is_not_replayed_and_reports_unknown_outcome ... ok
+test stopped_desire_does_not_reconnect_after_refused_stop_then_crash ... ok
+test unexpected_exit_reconnects_with_a_new_generation_and_visible_evidence ... ok
+test runtime_events_follow_bridge_generation_and_slow_subscribers_do_not_block_calls ... ok
+test handshake_mismatch_oversize_and_timeout_fail_closed ... ok
+test recovery_is_bounded_and_version_mismatch_never_loops ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.49s
+
+     Running tests\pipe.rs (target\debug\deps\pipe-9aa3f3e7d2f03fa4.exe)
+
+running 10 tests
+test duplicate_id_is_confined_to_its_connection ... ok
+test protocol_and_internal_methods_cannot_bypass_host_admission ... ok
+test malformed_and_oversized_clients_do_not_stop_other_clients ... ok
+test cancelled_event_read_requires_a_fresh_connection ... ok
+test ninth_inflight_request_is_rejected_without_cancelling_eight_accepted_requests ... ok
+test current_user_handshake_snapshot_and_control_survive_reconnect ... ok
+test failed_import_cancels_its_transaction_without_forwarding_windows_paths ... ok
+test same_request_id_on_distinct_connections_is_correlated_independently ... ok
+test draining_client_receives_a_burst_without_disconnect_or_response_interleaving ... ok
+test cancelled_rpc_poisons_client_but_accepted_work_outlives_connection ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_mcp-40382c7ac7bf0fae.exe)
+
+running 3 tests
+test tests::safe_read_annotations_serialize_with_expected_hints ... ok
+test tests::streamable_http_server_config_is_available ... ok
+test tests::safe_inspection_schema_is_generated_from_rust_type ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\cokernel_mcp-937c9929e2852525.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_protocol-9cc92540aaa42fde.exe)
+
+running 5 tests
+test methods::tests::method_names_match_v1_contract ... ok
+test methods::tests::project_id_params_are_wire_uuid_strings ... ok
+test tests::frame_prefix_is_big_endian_payload_length ... ok
+test worker::tests::request_round_trip_matches_worker_wire_shape ... ok
+test methods::tests::execution_fixture_uses_authoritative_identity_and_rejects_client_code ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_runtime-7bb3a76816a887f3.exe)
+
+running 25 tests
+test notebook::output::tests::capture_gaps_mismatch_and_missing_terminal_are_rejected ... ok
+test notebook::output::tests::rich_mime_errors_counts_and_truncation_remain_standard_outputs ... ok
+test notebook::output::tests::complete_outputs_replace_only_target_output_and_owned_metadata ... ok
+test worker::tests::worker_events_require_liveness_and_operation_correlation_fields ... ok
+test uv::tests::project_commands_use_explicit_project_root ... ok
+test events::tests::concurrent_publishers_have_one_monotonic_sequence ... ok
+test worker::tests::worker_frame_round_trip_uses_shared_length_prefix_codec ... ok
+test worker::tests::worker_response_envelope_is_unambiguous_and_correlated ... ok
+test worker::tests::worker_execution_finished_contract_is_strict ... ok
+test uv::tests::init_is_bare_and_does_not_join_parent_workspace ... ok
+test failure_store::tests::missing_store_is_empty_but_invalid_directory_is_an_error ... ok
+test events::tests::oversized_observation_is_explicit_and_lagged_receivers_can_resubscribe ... ok
+test worker::tests::worker_cannot_send_runtime_request_frames ... ok
+test project::tests::rejects_project_path_components ... ok
+test bridge_output::tests::bounded_writer_preserves_frames_and_makes_lag_explicit ... ok
+test service::tests::bad_params_and_unknown_methods_are_structured_errors ... ok
+test service::tests::protocol_mismatch_fails_before_dispatch ... ok
+test service::tests::create_list_and_environment_status_share_typed_domain_state ... ok
+test failure_store::tests::evidence_survives_reopen_and_cannot_be_overwritten ... ok
+test failure_store::tests::changed_schema_and_record_identity_are_rejected ... ok
+test project::tests::create_project_initializes_and_syncs_uv_environment ... ok
+test project::tests::remove_from_registry_does_not_delete_project_files ... ok
+test failure_store::tests::oversized_and_corrupt_records_fail_explicitly ... ok
+test project::tests::package_change_increments_generation_but_noop_sync_does_not ... ok
+test failure_store::tests::retention_is_bounded_and_sessions_are_filtered ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running unittests src\main.rs (target\debug\deps\cokernel_runtime-141d305f5d595323.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\deferred_requests.rs (target\debug\deps\deferred_requests-b9221bc8a46b53ba.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\notebook_model.rs (target\debug\deps\notebook_model-32b9309ffdf0da79.exe)
+
+running 7 tests
+test legacy_ids_are_generated_once_and_existing_ids_preserved ... ok
+test insert_move_delete_preserve_stable_ids_and_validate_indices ... ok
+test edit_batch_is_atomic_and_retains_untouched_json ... ok
+test malformed_shape_versions_cells_outputs_and_ids_are_rejected ... ok
+test round_trip_keeps_metadata_attachments_sources_and_all_outputs ... ok
+test malformed_json_duplicate_keys_missing_ids_and_bounds_are_rejected ... ok
+test large_output_round_trips_and_count_limits_are_enforced ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests\notebook_service.rs (target\debug\deps\notebook_service-93694130111355ed.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\package_operations.rs (target\debug\deps\package_operations-523def689ca9b50b.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\session_fake_worker.rs (target\debug\deps\session_fake_worker-206ffd5e240f621d.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_bootstrap
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_domain
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_host
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_mcp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_runtime
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[v1-check] Worker sync
+Resolved 23 packages in 0.49ms
+Checked 20 packages in 1ms
+[v1-check] Worker version
+1.0.0a0
+[v1-check] Worker tests
+........................................................................ [ 42%]
+........................................................................ [ 84%]
+..................sssssss.s                                              [100%]
+163 passed, 8 skipped in 1.96s
+[v1-check] Worker protocol subprocess smoke (Linux/WSL proof; skips on native Windows)
+[worker-protocol-smoke] SKIP: Unix domain socket runtime runs in Linux/WSL
+[v1-check] uv Project + worker overlay spike
+Using CPython 3.12.14
+Creating virtual environment at: C:\Users\star\AppData\Local\Temp\cokernel-uv-overlay-rmk10xeh\.venv
+Resolved 2 packages in 50ms
+Installed 1 package in 36ms
+ + humanize==4.10.0
+UV_OVERLAY_OK
++ uv sync --project C:\Users\star\AppData\Local\Temp\cokernel-uv-overlay-rmk10xeh
++ uv run --project C:\Users\star\AppData\Local\Temp\cokernel-uv-overlay-rmk10xeh --with-editable C:\programing\CoKernel\worker -- python -c import humanize, IPython, cokernel_worker; assert humanize.intcomma(12345) == '12,345'; print('UV_OVERLAY_OK')
+[overlay-spike] PASS
+[v1-check] Worker SIGINT survival spike (Linux/WSL proof; skips on native Windows)
+[interrupt-spike] SKIP: POSIX signal proof runs in Linux/WSL
+[v1-check] Runtime Project + uv smoke
+runtime Project smoke: PASS
+[v1-check] WSL production-path gate
+SOURCE IDENTITY PASS: 123 files
+[v1-check] Worker/protocol gate
+[v1-check-worker] WBS ledger consistency
+[wbs] PASS: 206 items; DONE=103, READY_VERIFY=0, IN_PROGRESS=1, TODO=2, BLOCKED=100
+[wbs] This is a ledger structure/count check, not runtime acceptance.
+[v1-check-worker] Local v1 script contract tests
+----------------------------------------------------------------------
+Ran 21 tests in 0.001s
+
+OK (skipped=2)
+[v1-check-worker] Protocol fixtures
+OK protocol/fixtures/bridge-hello.request.json
+OK protocol/fixtures/error.response.json
+OK protocol/fixtures/runtime-status.response.json
+OK protocol/fixtures/session-execute.request.json
+OK protocol/fixtures/session-output.event.json
+[v1-check-worker] Source-tree worker AF_UNIX smoke
+[worker-source-smoke] PASS
+[v1-check-worker] Worker sync
+Resolved 23 packages in 1ms
+   Building cokernel-worker @ file:///home/ymsaki/.cache/cokernel-v1-dev/repo/worker
+      Built cokernel-worker @ file:///home/ymsaki/.cache/cokernel-v1-dev/repo/worker
+Prepared 1 package in 258ms
+Uninstalled 1 package in 0.60ms
+Installed 1 package in 0.37ms
+ ~ cokernel-worker==1.0.0a0 (from file:///home/ymsaki/.cache/cokernel-v1-dev/repo/worker)
+[v1-check-worker] Worker version
+1.0.0a0
+[v1-check-worker] Worker tests
+........................................................................ [ 42%]
+........................................................................ [ 84%]
+...........................                                              [100%]
+171 passed in 3.14s
+[v1-check-worker] Worker protocol subprocess smoke (uv environment)
+[worker-protocol-smoke] PASS
+[v1-check-worker] uv Project + worker overlay spike
+Using CPython 3.12.14
+Creating virtual environment at: /tmp/cokernel-uv-overlay-g51lhv8r/.venv
+Resolved 2 packages in 45ms
+Installed 1 package in 15ms
+ + humanize==4.10.0
+Installed 17 packages in 223ms
+UV_OVERLAY_OK
++ uv sync --project /tmp/cokernel-uv-overlay-g51lhv8r
++ uv run --project /tmp/cokernel-uv-overlay-g51lhv8r --with-editable /home/ymsaki/.cache/cokernel-v1-dev/repo/worker -- python -c import humanize, IPython, cokernel_worker; assert humanize.intcomma(12345) == '12,345'; print('UV_OVERLAY_OK')
+[overlay-spike] PASS
+[v1-check-worker] Worker SIGINT survival spike
+[interrupt-spike] PASS
+[v1-check-worker] PASS
+[v1-check] Rust/runtime gate
+[v1-check-rust] Toolchain
+  rustc 1.88.0 (6b00bc388 2025-06-23)
+  cargo 1.88.0 (873a06493 2025-05-10)
+  rustfmt 1.8.0-stable (6b00bc3880 2025-06-23)
+  uv 0.12.11 (x86_64-unknown-linux-gnu)
+  Python 3.12.14
+[v1-check-rust] Rust format
+[v1-check-rust] Rust check
+    Checking cokernel-runtime v1.0.0-alpha.0 (/home/ymsaki/.cache/cokernel-v1-dev/repo/crates/cokernel-runtime)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.70s
+[v1-check-rust] Rust clippy
+    Checking cokernel-runtime v1.0.0-alpha.0 (/home/ymsaki/.cache/cokernel-v1-dev/repo/crates/cokernel-runtime)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.10s
+[v1-check-rust] Rust tests
+   Compiling cokernel-runtime v1.0.0-alpha.0 (/home/ymsaki/.cache/cokernel-v1-dev/repo/crates/cokernel-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.55s
+     Running unittests src/lib.rs (target/debug/deps/cokernel_bootstrap-9f7029bbb94e20ff)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/cokernel_domain-cc93ab688b10f5de)
+
+running 2 tests
+test tests::domain_ids_round_trip_through_strings ... ok
+test tests::initial_worker_generation_is_one ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/cokernel_host-211e6b2f6bdfa40d)
+
+running 1 test
+test state::tests::released_host_lock_does_not_wait_for_an_inherited_descriptor ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/cokernel_host-4ac5dd1045941917)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/lifecycle.rs (target/debug/deps/lifecycle-d8dfab56b594c3d9)
+
+running 17 tests
+
+running 1 test
+test desired_state_save_failure_does_not_launch_runtime ... ok
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s
+
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+test correlates_out_of_order_replies_and_separates_events_and_stderr ... ok
+test shutdown_failure_is_not_reported_as_clean_stop ... ok
+test desired_state_is_locked_atomic_and_reopened_without_guessing ... ok
+test host_exit_propagates_runtime_shutdown_failure ... ok
+test wrong_response_id_invalidates_connection ... ok
+test refused_stop_and_host_exit_keep_document_connection_available ... ok
+test oversized_request_is_rejected_without_losing_the_healthy_connection ... ok
+test runtime_events_follow_bridge_generation_and_slow_subscribers_do_not_block_calls ... ok
+test unexpected_exit_reconnects_with_a_new_generation_and_visible_evidence ... ok
+test caller_cancellation_does_not_cancel_or_corrupt_connection ... ok
+test host_survives_client_drop_preserves_explicit_stop_and_resumes_running ... ok
+test handshake_mismatch_oversize_and_timeout_fail_closed ... ok
+test stopped_desire_does_not_reconnect_after_refused_stop_then_crash ... ok
+test request_timeout_is_not_replayed_and_reports_unknown_outcome ... ok
+test recovery_is_bounded_and_version_mismatch_never_loops ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+     Running tests/pipe.rs (target/debug/deps/pipe-24db9adda71a13e5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/cokernel_mcp-4da60e77b11d46bb)
+
+running 3 tests
+test tests::streamable_http_server_config_is_available ... ok
+test tests::safe_inspection_schema_is_generated_from_rust_type ... ok
+test tests::safe_read_annotations_serialize_with_expected_hints ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/cokernel_mcp-83a7cb2ff73e9dd6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/cokernel_protocol-aa1f66f30ed50423)
+
+running 5 tests
+test methods::tests::project_id_params_are_wire_uuid_strings ... ok
+test methods::tests::method_names_match_v1_contract ... ok
+test worker::tests::request_round_trip_matches_worker_wire_shape ... ok
+test tests::frame_prefix_is_big_endian_payload_length ... ok
+test methods::tests::execution_fixture_uses_authoritative_identity_and_rejects_client_code ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/cokernel_runtime-e82420ff2b6c372d)
+
+running 96 tests
+test failure_store::tests::missing_store_is_empty_but_invalid_directory_is_an_error ... ok
+test notebook::import::tests::declared_size_hash_and_reserved_storage_are_bounded ... ok
+test events::tests::concurrent_publishers_have_one_monotonic_sequence ... ok
+test bridge_output::tests::bounded_writer_preserves_frames_and_makes_lag_explicit ... ok
+test events::tests::oversized_observation_is_explicit_and_lagged_receivers_can_resubscribe ... ok
+test notebook::output::tests::capture_gaps_mismatch_and_missing_terminal_are_rejected ... ok
+test notebook::output::tests::complete_outputs_replace_only_target_output_and_owned_metadata ... ok
+test notebook::import::tests::invalid_chunks_hashes_and_incomplete_uploads_cancel_without_files ... ok
+test notebook::import::tests::path_escape_and_parent_swap_during_upload_are_rejected ... ok
+test notebook::output::tests::rich_mime_errors_counts_and_truncation_remain_standard_outputs ... ok
+test bridge_input::tests::reads_fragmented_bytes_and_eof_without_losing_data ... ok
+test notebook::import::tests::owner_expiry_cancellation_limits_and_collision_are_enforced ... ok
+test bridge_input::tests::pending_input_does_not_keep_executor_alive_while_peer_is_open ... ok
+test failure_store::tests::symlink_records_are_rejected_and_permissions_are_private ... ok
+test notebook::import::tests::ordered_chunks_preserve_notebook_and_publish_only_at_finish ... ok
+test failure_store::tests::changed_schema_and_record_identity_are_rejected ... ok
+test failure_store::tests::evidence_survives_reopen_and_cannot_be_overwritten ... ok
+test notebook::storage::tests::traversal_symlinks_hardlinks_and_fifo_are_rejected ... ok
+test project::tests::rejects_project_path_components ... ok
+test service::tests::bad_params_and_unknown_methods_are_structured_errors ... ok
+test notebook::storage::tests::failed_partial_write_preserves_original_and_cleans_temporary ... ok
+test service::tests::protocol_mismatch_fails_before_dispatch ... ok
+test session::control::tests::burst_does_not_need_a_consumer_and_stop_has_priority ... ok
+test session::control::tests::exited_actor_rejects_every_control_kind ... ok
+test project::tests::create_project_initializes_and_syncs_uv_environment ... ok
+test session::failure_evidence_tests::appended_failure_detail_stays_within_diagnostic_tail_bound ... ok
+test session::failure_evidence_tests::cgroup_change_or_counter_reset_does_not_invent_oom_causality ... ok
+test session::failure_evidence_tests::correlates_same_cgroup_against_session_start_baseline ... ok
+test session::failure_evidence_tests::failure_detail_is_unicode_safe_and_bounded ... ok
+test session::failure_evidence_tests::failure_triggers_are_structured_from_session_errors ... ok
+test session::failure_evidence_tests::parses_cgroup_v2_memory_event_counters ... ok
+test session::failure_evidence_tests::parses_proc_kib_fields_as_bytes ... ok
+test session::failure_evidence_tests::recent_session_event_tail_is_bounded_and_truncates_detail ... ok
+test session::handshake_tests::handshake_reader_does_not_echo_unexpected_response_payload ... ok
+test failure_store::tests::oversized_and_corrupt_records_fail_explicitly ... ok
+test session::handshake_tests::handshake_rejects_duplicate_capabilities_and_incoherent_output_limits ... ok
+test session::handshake_tests::handshake_reader_ignores_heartbeat_before_response ... ok
+test session::handshake_tests::handshake_rejects_oversized_worker_metadata ... ok
+test session::handshake_tests::handshake_requires_capabilities_and_consistent_heartbeat ... ok
+test session::inspection_contract_tests::inspection_contract_rejects_empty_and_oversized_metadata ... ok
+test notebook::service::tests::io_failure_keeps_edits_dirty_and_retry_saves_same_revision ... ok
+test session::inspection_contract_tests::inspection_get_contract_distinguishes_supported_none_from_missing_value ... ok
+test session::inspection_contract_tests::inspection_get_contract_rejects_malformed_unsupported_value ... ok
+test session::inspection_contract_tests::inspection_get_contract_rejects_supported_reason_and_wrong_name ... ok
+test session::inspection_contract_tests::inspection_list_contract_accepts_unique_bounded_metadata ... ok
+test session::inspection_contract_tests::inspection_list_contract_rejects_duplicate_names ... ok
+test session::observation_tests::global_stream_carries_domain_identity_but_not_private_worker_responses_or_heartbeats ... ok
+test session::request_frame_tests::execute_request_preflight_accepts_small_frame ... ok
+test session::inspection_contract_tests::inspection_list_contract_rejects_too_many_entries ... ok
+test session::request_frame_tests::inspection_request_preflight_accepts_small_frame ... ok
+test service::tests::create_list_and_environment_status_share_typed_domain_state ... ok
+test session::supervisor_peer_tests::ready_pid_must_match_authenticated_unix_peer ... ok
+test session::supervisor_peer_tests::socket_path_cleanup_removes_bound_socket_name ... ok
+test session::supervisor_peer_tests::socket_peer_may_be_launcher_after_exec ... ok
+test session::supervisor_peer_tests::socket_peer_must_descend_from_spawned_launcher ... ok
+test session::tests::byte_tail_keeps_only_recent_bytes ... ok
+test session::tests::cancelling_pending_inspections_unblocks_waiters ... ok
+test session::tests::cancelling_pending_requests_closes_queue_and_finishes_each_operation ... ok
+test session::control::tests::stale_is_sticky_and_repeated_interrupts_coalesce_until_consumed ... ok
+test session::inspection_contract_tests::inspection_contract_rejects_oversized_serialized_result ... ok
+test session::tests::failure_cell_id_is_unicode_safe_and_bounded ... ok
+test session::tests::failure_record_captures_worker_identity_and_cell_context ... ok
+test session::tests::heartbeat_expiry_is_fail_closed ... ok
+test session::tests::inspection_result_shapes_match_worker_contract ... ok
+test session::tests::ready_event_requires_positive_heartbeat_contract ... ok
+test session::tests::supervisor_termination_is_not_misclassified_as_process_signal ... ok
+test session::tests::worker_frame_evidence_excludes_heartbeat_and_output_content ... ok
+test session::tests::worker_frame_identity_is_strict_after_ready ... ok
+test session::transaction_tests::execute_frames_must_match_active_operation ... ok
+test notebook::storage::tests::external_change_during_staging_and_create_collision_are_preserved ... ok
+test notebook::service::tests::older_completion_cannot_replace_a_newer_result_for_the_same_source ... ok
+test session::transaction_tests::execute_lifecycle_rejects_output_before_start_sequence_gaps_and_bad_output_count ... ok
+test session::transaction_tests::execute_lifecycle_rejects_mismatched_operation_and_truncation_accounting ... ok
+test session::transaction_tests::execute_lifecycle_rejects_response_before_finished_and_terminal_mismatch ... ok
+test session::transaction_tests::execute_lifecycle_requires_ordered_outputs_and_matching_terminal_response ... ok
+test session::transaction_tests::idle_accepts_only_background_worker_events ... ok
+test uv::process::tests::exited_parent_does_not_leave_output_reader_waiting_for_descendant ... ok
+test session::transaction_tests::inspection_accepts_only_matching_response_or_background_events ... ok
+test uv::tests::init_is_bare_and_does_not_join_parent_workspace ... ok
+test uv::tests::project_commands_use_explicit_project_root ... ok
+test worker::tests::worker_cannot_send_runtime_request_frames ... ok
+test worker::tests::worker_events_require_liveness_and_operation_correlation_fields ... ok
+test worker::tests::worker_execution_finished_contract_is_strict ... ok
+test worker::tests::worker_frame_round_trip_uses_shared_length_prefix_codec ... ok
+test worker::tests::worker_response_envelope_is_unambiguous_and_correlated ... ok
+test notebook::service::tests::directory_sync_failure_is_visible_and_retry_uses_installed_identity ... ok
+test uv::process::tests::unbounded_output_is_rejected_and_collector_memory_is_bounded ... ok
+test project::tests::remove_from_registry_does_not_delete_project_files ... ok
+test project::tests::package_change_increments_generation_but_noop_sync_does_not ... ok
+test uv::process::tests::timeout_reaps_child_and_descendant_holding_output_open ... ok
+test session::request_frame_tests::execute_request_preflight_rejects_oversized_frame ... ok
+test session::tests::execution_capture_event_count_is_bounded_even_for_tiny_outputs ... ok
+test session::request_frame_tests::inspection_request_preflight_rejects_oversized_frame ... ok
+test notebook::queue::tests::capacity_rejection_and_dropped_reply_do_not_erase_accepted_document_jobs ... ok
+test session::tests::execution_capture_overflow_is_explicit_and_discards_partial_frames ... ok
+test failure_store::tests::retention_is_bounded_and_sessions_are_filtered ... ok
+
+test result: ok. 96 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+
+     Running unittests src/main.rs (target/debug/deps/cokernel_runtime-0aff8054b7504d85)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deferred_requests.rs (target/debug/deps/deferred_requests-0be05b860bf4dd28)
+
+running 15 tests
+test endpoint_owner_stop_rejects_unadmitted_mutation_and_closed_handle ... ok
+test endpoint_bounds_queued_and_unread_replies_and_recovers_after_consumption ... ok
+test endpoint_failed_shutdown_preserves_documents_and_accepts_repair ... ok
+test endpoint_human_and_ai_edits_share_revision_authority_and_admission_order ... ok
+test endpoint_owner_stop_joins_pending_worker_cleanup ... ok
+test pending_capacity_reserves_control_and_shutdown_cancels_startup ... ok
+test endpoint_clients_correlate_duplicate_ids_and_share_primary_after_disconnect ... ok
+test wrong_project_and_invalid_inspection_parameters_do_not_reserve_startup ... ok
+test blocked_start_coalesces_rejects_mutation_and_allows_another_notebook_to_start ... ok
+test stalled_document_owner_preserves_control_and_orders_stop_against_preparation ... ok
+test endpoint_rejects_oversized_direct_requests_before_admission ... ok
+test stop_during_restart_cancels_replacement_and_does_not_revive_worker ... ok
+test cancelled_middle_preparation_cannot_let_later_execution_overtake_first ... ok
+test control_burst_and_stale_notification_do_not_wait_for_the_actor ... ok
+test stalled_document_shutdown_refuses_without_aborting_the_accepted_edit ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.12s
+
+     Running tests/notebook_model.rs (target/debug/deps/notebook_model-4b47a95961df7dd3)
+
+running 7 tests
+test legacy_ids_are_generated_once_and_existing_ids_preserved ... ok
+test insert_move_delete_preserve_stable_ids_and_validate_indices ... ok
+test edit_batch_is_atomic_and_retains_untouched_json ... ok
+test malformed_shape_versions_cells_outputs_and_ids_are_rejected ... ok
+test round_trip_keeps_metadata_attachments_sources_and_all_outputs ... ok
+test malformed_json_duplicate_keys_missing_ids_and_bounds_are_rejected ... ok
+test large_output_round_trips_and_count_limits_are_enforced ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/notebook_service.rs (target/debug/deps/notebook_service-76b918400adb4d18)
+
+running 6 tests
+test external_change_blocks_save_preserves_dirty_edits_and_requires_explicit_reload ... ok
+test legacy_open_marks_dirty_without_rewriting_or_choosing_imported_environment ... ok
+test identical_bytes_replaced_by_another_inode_are_still_an_external_change ... ok
+test two_callers_cannot_overwrite_same_revision_or_partially_apply_invalid_batch ... ok
+test project_ownership_and_symlink_replacement_do_not_expose_or_overwrite_other_project ... ok
+test create_open_list_edit_save_round_trip_and_identity ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/package_operations.rs (target/debug/deps/package_operations-04caf88608ce1e5b)
+
+running 8 tests
+test malformed_options_and_symlink_escape_are_rejected_before_launch ... ok
+test registry_commit_failure_keeps_environment_uncertain_in_memory ... ok
+test failed_project_admission_keeps_repairable_identity_without_launching_uv ... ok
+test cancelled_project_creation_retains_files_and_sync_resumes_same_identity ... ok
+test failed_or_panicked_uv_reconciles_generation_and_releases_reservation ... ok
+test register_is_async_reserves_existing_identity_and_shares_mutation_capacity ... ok
+test slow_packages_preserve_responsive_rpc_project_exclusion_and_parallelism ... ok
+test retained_operation_history_is_bounded_and_latest_remains_queryable ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.90s
+
+     Running tests/session_fake_worker.rs (target/debug/deps/session_fake_worker-1273bfa68883e3ad)
+
+running 31 tests
+test cooperative_stop_reaches_stopped_and_clears_queue_depth ... ok
+test crash_after_group_leader_exits_still_terminates_descendants ... ok
+test captured_worker_crash_resolves_receipt_as_failure ... ok
+test crashed_primary_restarts_explicitly_with_same_logical_session ... ok
+test failure_store_error_is_observable_and_does_not_prevent_cleanup ... ok
+test environment_stale_marks_only_matching_live_project_and_does_not_replace_primary ... ok
+test crash_evidence_survives_without_subscribers_and_after_restart ... ok
+test document_admission_rejects_wrong_identity_revision_and_cell_without_execution ... ok
+test explicit_restart_preserves_logical_session_and_adopts_environment_generation ... ok
+test forced_worker_exit_correlates_failure_and_other_session_survives ... ok
+test rejected_startup_terminates_descendants ... ok
+test interrupt_finishes_active_operation_and_same_worker_survives ... ok
+test captured_outputs_survive_broadcast_lag_and_document_save ... ok
+test startup_rejects_ready_pid_that_disagrees_with_unix_peer_credentials ... ok
+test runtime_shutdown_reports_document_conflict_after_stopping_session ... ok
+test startup_rejects_worker_missing_required_handshake_capability ... ok
+test document_runtime_queues_shared_revision_and_keeps_persistence_after_caller_drop ... ok
+test stop_and_restart_terminate_descendants_without_harming_other_session ... ok
+test crash_during_execution_fails_active_and_cancels_queued_operation ... ok
+test environment_change_during_execution_becomes_stale_after_completion_and_remains_usable ... ok
+test restart_during_execution_cancels_old_work_and_replaces_worker_generation ... ok
+test runtime_shutdown_stops_workers_settles_captures_and_flushes_dirty_documents ... ok
+test wrong_project_cannot_reuse_or_restart_an_existing_primary_session ... ok
+test stop_during_execution_cancels_active_and_queued_operations ... ok
+test interrupt_before_worker_start_waits_for_execution_acknowledgement ... ok
+test heartbeat_timeout_crashes_only_the_stalled_session_with_failure_evidence ... ok
+test human_and_mcp_execution_requests_complete_in_fifo_order ... ok
+test unexpected_idle_transaction_frame_fails_closed_as_worker_protocol_crash ... ok
+test unrelated_edit_does_not_conflict_but_source_aba_does ... ok
+test replacement_reload_and_external_changes_reject_old_results ... ok
+test independent_sessions_execute_concurrently ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+
+   Doc-tests cokernel_bootstrap
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_domain
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_host
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_mcp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_runtime
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[v1-check-rust] Runtime Project + uv smoke
+runtime Project smoke: PASS
+[v1-check-rust] Session Supervisor canonical smoke
+Using CPython 3.12.14
+Creating virtual environment at: /tmp/cksup-8052-18d7646c54a633d7/project/.venv
+Resolved 1 package in 0.81ms
+Checked in 0.00ms
+kill: (8337): No such process
+[captured-output-smoke] PASS
+[session-supervisor-smoke] PASS
+[v1-check-rust] Session safe-inspection smoke
+Using CPython 3.12.14
+Creating virtual environment at: /tmp/ckinsp-8400-18d7646df9f9819a/project/.venv
+Resolved 1 package in 0.78ms
+Checked in 0.00ms
+[session-inspection-smoke] PASS
+[v1-check-rust] Notebook Runtime RPC/import/execute/persist smoke
+[notebook-runtime-smoke] PASS (nbformat 5.11.1; framed RPC, uv Project, real worker, persistence, close/reopen, stale environment, large-document transport)
+[v1-check-rust] Asynchronous package/control RPC smoke
+[async-packages-smoke] PASS: real uv; responsive interrupt/status; shared memory survives; stale generation; completion without polling; partial-frame read survives completion; explicit cancellation; EOF cancels/reaps uv and reconciles registry
+[v1-check-rust] Asynchronous Project setup/recovery RPC smoke
+[async-projects-smoke] PASS: actual uv create/register; responsive unrelated Session; cancellation preserves files; sync resumes initialization; stable identity on re-register; EOF/restart retains incomplete setup and repairs it
+[v1-check-rust] Concurrent Session startup/inspection/control RPC smoke
+[session-rpc-smoke] PASS: actual uv/IPython; shared startup; independent notebook startup; bounded pending inspections; responsive interrupt/status; correlated out-of-order replies; same-Project notebooks share environment but isolate namespaces and execute concurrently; restart/stop race; EOF reaps starting and active workers
+[v1-check-rust] PASS
+[v1-check] PASS
+SOURCE IDENTITY PASS: 123 files
+[v1-check] PASS

@@ -1,0 +1,351 @@
+[v1-check] Environment
+Python 3.11.9
+cargo 1.91.1 (ea2d97820 2025-10-10)
+uv 0.12.11 (4b53f66b7 2026-09-08 x86_64-pc-windows-msvc)
+[v1-check] WBS ledger consistency
+[wbs] PASS: 210 items; DONE=129, READY_VERIFY=0, IN_PROGRESS=1, TODO=0, BLOCKED=80
+[wbs] This is a ledger structure/count check, not runtime acceptance.
+[v1-check] Local v1 script contract tests
+----------------------------------------------------------------------
+Ran 21 tests in 11.852s
+
+OK
+[v1-check] Protocol fixtures
+OK protocol\fixtures\bridge-hello.request.json
+OK protocol\fixtures\error.response.json
+OK protocol\fixtures\runtime-status.response.json
+OK protocol\fixtures\session-execute.request.json
+OK protocol\fixtures\session-output.event.json
+[v1-check] Source-tree worker smoke (Linux/WSL proof; skips on native Windows)
+[worker-source-smoke] SKIP: AF_UNIX requires Linux/WSL
+[v1-check] Rust format
+[v1-check] Rust check
+    Checking cokernel-runtime v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-runtime)
+    Checking cokernel-mcp v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-mcp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.56s
+[v1-check] Rust clippy
+    Checking cokernel-runtime v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-runtime)
+    Checking cokernel-mcp v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-mcp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.65s
+[v1-check] Rust tests
+   Compiling cokernel-runtime v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-runtime)
+   Compiling cokernel-mcp v1.0.0-alpha.0 (C:\programing\CoKernel\crates\cokernel-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.41s
+     Running unittests src\lib.rs (target\debug\deps\cokernel_bootstrap-59da8f012c8203a8.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_domain-4770ac381f0f4422.exe)
+
+running 2 tests
+test tests::domain_ids_round_trip_through_strings ... ok
+test tests::initial_worker_generation_is_one ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_host-878d8e5b0d76c964.exe)
+
+running 16 tests
+test import_file::tests::reject_device_network_relative_and_alternate_stream_paths ... ok
+test secrets::tests::bounded_versioned_blob_roundtrip_and_rejection_do_not_echo_secret ... ok
+test named_pipe::tests::named_pipe_round_trip ... ok
+test autostart::tests::quoted_command_round_trips_through_windows_argument_parser ... ok
+test secrets::tests::bounded_fifo_owner_retains_accepted_write_after_reply_disconnection ... ok
+test secrets::tests::failed_backend_mutation_preserves_stored_configuration ... ok
+test pipe_security::tests::descriptor_has_one_protected_allow_ace_for_current_user_only ... ok
+test pipe_security::tests::kernel_acl_denies_a_client_not_named_in_the_dacl ... ok
+test pipe_security::tests::peer_identity_mismatch_is_rejected_and_thread_identity_is_restored ... ok
+test autostart::tests::foreign_values_and_malformed_registration_are_not_silently_accepted ... ok
+test autostart::tests::invalid_and_overlong_launches_do_not_register ... ok
+test import_file::tests::reject_empty_oversized_directory_and_wrong_extension ... ok
+test autostart::tests::registry_round_trip_is_scoped_and_leaves_desired_state_untouched ... ok
+test import_file::tests::stable_handle_blocks_writers_and_hashes_exact_bytes ... ok
+test remote_intent::tests::durable_intent_is_bounded_and_never_inferred_from_configuration ... ok
+test secrets::tests::actual_windows_credential_roundtrip_replacement_isolation_and_clear ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running unittests src\main.rs (target\debug\deps\cokernel_host-ef41e065a54a74f5.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\lifecycle.rs (target\debug\deps\lifecycle-e21cd72d3b5c0e9d.exe)
+
+running 19 tests
+test desired_state_save_failure_does_not_launch_runtime ... ok
+
+running 1 test
+test desired_state_is_locked_atomic_and_reopened_without_guessing ... ok
+test correlates_out_of_order_replies_and_separates_events_and_stderr ... ok
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.19s
+
+test bridge_launch_strips_host_credentials_and_wslenv ... ok
+test shutdown_failure_is_not_reported_as_clean_stop ... ok
+test wrong_response_id_invalidates_connection ... ok
+test refused_stop_and_host_exit_keep_document_connection_available ... ok
+test host_exit_propagates_runtime_shutdown_failure ... ok
+test oversized_request_is_rejected_without_losing_the_healthy_connection ... ok
+test caller_cancellation_does_not_cancel_or_corrupt_connection ... ok
+test startup_events_precede_hello_and_preserve_sequence_across_handshake ... ok
+test unexpected_exit_reconnects_with_a_new_generation_and_visible_evidence ... ok
+test stopped_desire_does_not_reconnect_after_refused_stop_then_crash ... ok
+test startup_event_flood_bad_protocol_and_reordered_sequence_fail_closed ... ok
+test request_timeout_is_not_replayed_and_reports_unknown_outcome ... ok
+test runtime_events_follow_bridge_generation_and_slow_subscribers_do_not_block_calls ... ok
+test host_survives_client_drop_preserves_explicit_stop_and_resumes_running ... ok
+test handshake_mismatch_oversize_and_timeout_fail_closed ... ok
+test recovery_is_bounded_and_version_mismatch_never_loops ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+
+     Running tests\pipe.rs (target\debug\deps\pipe-dc6041e15ceaa719.exe)
+
+running 17 tests
+test autostart_rejects_command_injection_and_requires_trusted_launch_binding ... ok
+test duplicate_id_is_confined_to_its_connection ... ok
+test protocol_and_internal_methods_cannot_bypass_host_admission ... ok
+test malformed_and_oversized_clients_do_not_stop_other_clients ... ok
+test cancelled_event_read_requires_a_fresh_connection ... ok
+test resources_are_available_when_runtime_is_stopped_and_reject_client_paths ... ok
+test tunnel_credentials_stay_in_windows_store_and_never_echo_over_pipe ... ok
+test same_request_id_on_distinct_connections_is_correlated_independently ... ok
+test failed_import_cancels_its_transaction_without_forwarding_windows_paths ... ok
+test draining_client_receives_a_burst_without_disconnect_or_response_interleaving ... ok
+test ninth_inflight_request_is_rejected_without_cancelling_eight_accepted_requests ... ok
+test current_user_handshake_snapshot_and_control_survive_reconnect ... ok
+test cancelled_rpc_poisons_client_but_accepted_work_outlives_connection ... ok
+test unavailable_linux_metrics_do_not_hide_host_data_or_block_runtime_control ... ok
+test remote_clear_preserves_credential_until_cleanup_is_confirmed_and_local_control_stays_responsive ... ok
+test remote_rejects_false_connected_observations_and_explicit_reconnect_recovers ... ok
+test remote_intent_handoff_rotation_and_host_runtime_recovery_share_one_owner ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.12s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_mcp-c11d6c8a2a24cc68.exe)
+
+running 6 tests
+test tests::streamable_http_server_config_is_available ... ok
+test tests::safe_read_annotations_serialize_with_expected_hints ... ok
+test tests::safe_inspection_schema_is_generated_from_validated_contract ... ok
+test contracts::tests::expressions_keywords_unknown_fields_and_invalid_ids_fail_before_runtime ... ok
+test contracts::tests::minimum_tools_and_exact_annotations ... ok
+test contracts::tests::registered_contract_matches_reviewed_snapshot ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\cokernel_mcp-024dc0a209bb40b1.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\local_http.rs (target\debug\deps\local_http-03939d93ed48cf2d.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_metrics-eb4e85f9b9d819c7.exe)
+
+running 5 tests
+test tests::cpu_uses_deltas_and_rejects_reset_zero_and_invalid_idle ... ok
+test gpu::tests::nvidia_csv_preserves_unknown_values_and_validates_units_and_bounds ... ok
+test tests::last_owner_drop_stops_collection ... ok
+test tests::slow_collector_does_not_block_snapshots_or_multiply_work_and_shutdown_joins_it ... ok
+
+running 1 test
+test gpu::tests::diagnostic_does_not_inherit_product_secrets_or_python_injection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.05s
+
+test gpu::tests::diagnostic_does_not_inherit_product_secrets_or_python_injection ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_protocol-aaf4a541096af528.exe)
+
+running 5 tests
+test methods::tests::method_names_match_v1_contract ... ok
+test methods::tests::project_id_params_are_wire_uuid_strings ... ok
+test tests::frame_prefix_is_big_endian_payload_length ... ok
+test worker::tests::request_round_trip_matches_worker_wire_shape ... ok
+test methods::tests::execution_fixture_uses_authoritative_identity_and_rejects_client_code ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\cokernel_runtime-0c97086d533d6925.exe)
+
+running 26 tests
+test uv::tests::init_is_bare_and_does_not_join_parent_workspace ... ok
+test project::tests::rejects_project_path_components ... ok
+test notebook::output::tests::rich_mime_errors_counts_and_truncation_remain_standard_outputs ... ok
+test worker::tests::worker_cannot_send_runtime_request_frames ... ok
+test worker::tests::worker_events_require_liveness_and_operation_correlation_fields ... ok
+test workload::tests::workload_environment_removes_injection_and_uses_project_locations ... ok
+test uv::tests::project_commands_use_explicit_project_root ... ok
+test notebook::output::tests::capture_gaps_mismatch_and_missing_terminal_are_rejected ... ok
+test worker::tests::worker_frame_round_trip_uses_shared_length_prefix_codec ... ok
+test worker::tests::worker_response_envelope_is_unambiguous_and_correlated ... ok
+test events::tests::oversized_observation_is_explicit_and_lagged_receivers_can_resubscribe ... ok
+test worker::tests::worker_execution_finished_contract_is_strict ... ok
+test notebook::output::tests::complete_outputs_replace_only_target_output_and_owned_metadata ... ok
+test events::tests::concurrent_publishers_have_one_monotonic_sequence ... ok
+test bridge_output::tests::bounded_writer_preserves_frames_and_makes_lag_explicit ... ok
+test service::tests::bad_params_and_unknown_methods_are_structured_errors ... ok
+test service::tests::protocol_mismatch_fails_before_dispatch ... ok
+test failure_store::tests::missing_store_is_empty_but_invalid_directory_is_an_error ... ok
+test service::tests::create_list_and_environment_status_share_typed_domain_state ... ok
+test failure_store::tests::changed_schema_and_record_identity_are_rejected ... ok
+test project::tests::create_project_initializes_and_syncs_uv_environment ... ok
+test failure_store::tests::evidence_survives_reopen_and_cannot_be_overwritten ... ok
+test project::tests::remove_from_registry_does_not_delete_project_files ... ok
+test failure_store::tests::oversized_and_corrupt_records_fail_explicitly ... ok
+test project::tests::package_change_increments_generation_but_noop_sync_does_not ... ok
+test failure_store::tests::retention_is_bounded_and_sessions_are_filtered ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+
+     Running unittests src\main.rs (target\debug\deps\cokernel_runtime-d0a2411af86d79b1.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\deferred_requests.rs (target\debug\deps\deferred_requests-43b9267be9b71d1e.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\notebook_model.rs (target\debug\deps\notebook_model-53a428ecff7e2c6e.exe)
+
+running 7 tests
+test insert_move_delete_preserve_stable_ids_and_validate_indices ... ok
+test legacy_ids_are_generated_once_and_existing_ids_preserved ... ok
+test edit_batch_is_atomic_and_retains_untouched_json ... ok
+test round_trip_keeps_metadata_attachments_sources_and_all_outputs ... ok
+test malformed_shape_versions_cells_outputs_and_ids_are_rejected ... ok
+test malformed_json_duplicate_keys_missing_ids_and_bounds_are_rejected ... ok
+test large_output_round_trips_and_count_limits_are_enforced ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests\notebook_service.rs (target\debug\deps\notebook_service-cd36f21fcd15b85c.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\package_operations.rs (target\debug\deps\package_operations-01d6d54e7aa43f94.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\session_fake_worker.rs (target\debug\deps\session_fake_worker-42958a49d4d732ab.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_bootstrap
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_domain
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_host
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_mcp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_metrics
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cokernel_runtime
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[v1-check] Worker sync
+Resolved 23 packages in 0.52ms
+Checked 20 packages in 1ms
+[v1-check] Worker version
+1.0.0a0
+[v1-check] Worker tests
+........................................................................ [ 41%]
+........................................................................ [ 82%]
+.....................sssssss.s                                           [100%]
+166 passed, 8 skipped in 1.94s
+[v1-check] Worker protocol subprocess smoke (Linux/WSL proof; skips on native Windows)
+[worker-protocol-smoke] SKIP: Unix domain socket runtime runs in Linux/WSL
+[v1-check] uv Project + worker overlay spike
+Using CPython 3.12.14
+Creating virtual environment at: C:\Users\star\AppData\Local\Temp\cokernel-uv-overlay-124v80mm\.venv
+Resolved 2 packages in 51ms
+Installed 1 package in 38ms
+ + humanize==4.10.0
+UV_OVERLAY_OK
++ uv sync --project C:\Users\star\AppData\Local\Temp\cokernel-uv-overlay-124v80mm
++ uv run --project C:\Users\star\AppData\Local\Temp\cokernel-uv-overlay-124v80mm --with-editable C:\programing\CoKernel\worker -- python -c import humanize, IPython, cokernel_worker; assert humanize.intcomma(12345) == '12,345'; print('UV_OVERLAY_OK')
+[overlay-spike] PASS
+[v1-check] Worker SIGINT survival spike (Linux/WSL proof; skips on native Windows)
+[interrupt-spike] SKIP: POSIX signal proof runs in Linux/WSL
+[v1-check] Runtime Project + uv smoke
+Exception in thread Thread-2 (_readerthread):
+Traceback (most recent call last):
+  File "C:\Users\star\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\star\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\star\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 1599, in _readerthread
+    buffer.append(fh.read())
+                  ^^^^^^^^^
+UnicodeDecodeError: 'cp932' codec can't decode byte 0x87 in position 30: illegal multibyte sequence
+Traceback (most recent call last):
+  File "C:\programing\CoKernel\scripts\v1\smoke_runtime_project.py", line 117, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "C:\programing\CoKernel\scripts\v1\smoke_runtime_project.py", line 68, in main
+    created = run_runtime(["project", "create", "demo"], env)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\programing\CoKernel\scripts\v1\smoke_runtime_project.py", line 27, in run_runtime
+    completed = subprocess.run(
+                ^^^^^^^^^^^^^^^
+  File "C:\Users\star\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['cargo', 'run', '--quiet', '-p', 'cokernel-runtime', '--', 'project', 'create', 'demo']' returned non-zero exit status 1.
+Exception: C:\programing\CoKernel\scripts\v1\check.ps1:6
+Line |
+   6 |          throw "$Step failed with exit code $LASTEXITCODE"
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Runtime Project smoke failed with exit code 1
