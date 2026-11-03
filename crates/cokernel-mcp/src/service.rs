@@ -50,7 +50,7 @@ impl ServerHandler for CoKernelService {
         let params = if contract.name == "get_runtime_status" {
             json!({"host_product_version":env!("CARGO_PKG_VERSION"),"supported_protocols":[1]})
         } else {
-            Value::Object(args)
+            runtime_params(contract.name, args)
         };
         let method = contract.method;
         let mut response = match self.runtime.call(method, params).await {
@@ -105,5 +105,36 @@ fn bounded_result(value: Value, error: bool) -> CallToolResponse {
         .into()
     } else {
         result.into()
+    }
+}
+
+/// Translate narrow authoring tools into the existing revisioned document API.
+fn runtime_params(name: &str, mut args: serde_json::Map<String, Value>) -> Value {
+    let edit = match name {
+        "insert_code_cell" => Some(
+            json!({"op":"insert_cell","index":args.remove("index"),"cell":{"cell_type":"code","id":args.remove("cell_id"),"source":args.remove("source"),"metadata":{},"outputs":[],"execution_count":null}}),
+        ),
+        "set_cell_source" => Some(
+            json!({"op":"set_cell_source","cell_id":args.remove("cell_id"),"source":args.remove("source")}),
+        ),
+        _ => None,
+    };
+    if let Some(edit) = edit {
+        args.insert("edits".into(), json!([edit]));
+    }
+    Value::Object(args)
+}
+#[cfg(test)]
+mod authoring_tests {
+    use super::*;
+    #[test]
+    fn edits_preserve_revision_and_never_supply_execution_source() {
+        let args = json!({"project_id":"p","notebook_id":"n","expected_revision":3,"index":0,"cell_id":"cell-a","source":"x = 123"});
+        let p = runtime_params("insert_code_cell", args.as_object().unwrap().clone());
+        assert_eq!(p["expected_revision"], 3);
+        assert_eq!(p["edits"][0]["cell"]["source"], "x = 123");
+        assert!(p.get("source").is_none());
+        assert!(p.get("index").is_none());
+        assert_eq!(p["edits"][0]["cell"]["execution_count"], Value::Null);
     }
 }

@@ -16,6 +16,7 @@ def main():
     parser.add_argument("--tunnel", required=True, type=Path)
     parser.add_argument("--ca-bundle", required=True, type=Path,
                         help="Pinned public Ubuntu ca-certificates bundle; checked by Rust image builder")
+    parser.add_argument("--profile", choices=("debug", "release"), default="debug")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     def clean(info):
@@ -27,7 +28,7 @@ def main():
         return info
     with args.output.open("xb") as file, tarfile.open(fileobj=file, mode="w", dereference=False) as out:
         for name in ("cokernel-runtime", "cokernel-mcp", "cokernel-bootstrap"):
-            out.add(root / "target/debug" / name, f"opt/cokernel/bin/{name}", filter=clean)
+            out.add(root / "target" / args.profile / name, f"opt/cokernel/bin/{name}", filter=clean)
         out.add(args.uv, "opt/cokernel/bin/uv", filter=clean)
         out.add(args.tunnel, "opt/cokernel/bin/tunnel-client", filter=clean)
         out.add(args.ca_bundle, "opt/cokernel/certs/ca-certificates.crt", filter=clean)

@@ -405,10 +405,9 @@ impl NotebookService {
         for (cell, generation) in &mut generations {
             if !touched.contains(cell.as_str())
                 && before.get(cell.as_str()) == after.get(cell.as_str())
+                && let Some(old) = document.source_generations.get(cell)
             {
-                if let Some(old) = document.source_generations.get(cell) {
-                    *generation = *old;
-                }
+                *generation = *old;
             }
         }
         document.source_generations = generations;

@@ -476,13 +476,13 @@ fn expect_success(operation: ObservedOperation, expected_text: Option<&str>) -> 
     if operation.status != OperationStatus::Succeeded {
         bail!("operation failed with status {:?}", operation.status);
     }
-    if let Some(expected) = expected_text {
-        if operation.text_plain.as_deref() != Some(expected) {
-            bail!(
-                "unexpected execute_result: expected {expected:?}, got {:?}",
-                operation.text_plain
-            );
-        }
+    if let Some(expected) = expected_text
+        && operation.text_plain.as_deref() != Some(expected)
+    {
+        bail!(
+            "unexpected execute_result: expected {expected:?}, got {:?}",
+            operation.text_plain
+        );
     }
     Ok(())
 }

@@ -1,0 +1,95 @@
+name: Release candidate
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v1.*']
+    branches: ['release/alpha-installer']
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.13.4'
+      - name: Verify runtime and worker
+        run: bash scripts/v1/check.sh
+      - name: Assemble verified Linux payload
+        run: bash packaging/build-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-runtime
+          path: target/release-stage/
+  windows:
+    needs: linux
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.33.0'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-runtime
+          path: target/release-stage/
+      - name: Build frontend
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile; if ($LASTEXITCODE) { exit $LASTEXITCODE }; pnpm build
+      - name: Windows tests
+        run: cargo test --locked -p cokernel-host -p cokernel-bootstrap -p cokernel-desktop
+      - name: Build Windows application
+        run: cargo build --locked --release -p cokernel-desktop -p cokernel-host -p cokernel-bootstrap
+      - name: Download authenticated WebView2 bootstrapper
+        shell: pwsh
+        run: |
+          $file = 'target/release-stage/MicrosoftEdgeWebview2Setup.exe'
+          Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $file
+          $signature = Get-AuthenticodeSignature $file
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation(,|$)') { throw 'Invalid Microsoft signature' }
+          Get-FileHash $file -Algorithm SHA256 | ConvertTo-Json | Set-Content target/release-stage/webview2-sha256.json
+      - name: Package installer
+        shell: pwsh
+        run: |
+          foreach ($name in @('cokernel-desktop','cokernel-host','cokernel-bootstrap')) {
+            Copy-Item "target/release/$name.exe" target/release-stage/
+          }
+          $errors = $null; $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path packaging/setup.ps1), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { throw ($errors | Out-String) }
+          & 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe' "/DStage=$((Resolve-Path target/release-stage).Path)" packaging/CoKernel.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $file = 'packaging/output/CoKernelSetup.exe'
+          $digest = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$digest  CoKernelSetup.exe" | Set-Content packaging/output/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CoKernel-Windows-installer
+          path: packaging/output/
+  release:
+    if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/release/alpha-installer'
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: CoKernel-Windows-installer
+          path: release/
+      - name: Create draft for real-machine acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.0-alpha.0-candidate.{0}', github.run_number) }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          gh release create "$RELEASE_TAG" release/* --target "$RELEASE_SHA" --draft --prerelease --title "CoKernel $RELEASE_TAG" --notes 'Release candidate. Windows install/reboot and actual GPU/ChatGPT acceptance must pass before publication. The installer preserves existing WSL distributions and refuses unverified runtime migrations.'

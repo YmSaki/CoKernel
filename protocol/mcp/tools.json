@@ -18,7 +18,7 @@
   },
   {
     "name": "list_notebooks",
-    "description": "List notebook paths and identities of currently open documents. Closed paths have no live document ID; open them in Desktop first.",
+    "description": "List notebook paths and identities of currently open documents. Closed paths have no live document ID; use open_notebook first.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -488,6 +488,276 @@
       "title": "get_operation",
       "readOnlyHint": true,
       "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "create_project",
+    "description": "Create a uv Project. Returns an operation receipt; poll get_operation. Does not overwrite existing Projects.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 128,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "create_project",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "create_notebook",
+    "description": "Create an empty .ipynb at a Project-relative path; existing files are never overwritten. Returns document identity/revision.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "relative_path": {
+          "maxLength": 1024,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "relative_path"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "create_notebook",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "open_notebook",
+    "description": "Open an existing .ipynb in its Project. Does not execute code or start a Session; returns document identity/revision.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "relative_path": {
+          "maxLength": 1024,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "relative_path"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "open_notebook",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "insert_code_cell",
+    "description": "Insert a Python code cell at a zero-based index, using the observed revision and a new unique cell ID. Changes the open document; call save_notebook with the returned revision to persist. Does not execute code.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cell_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "index": {
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "notebook_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "source": {
+          "maxLength": 16384,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "notebook_id",
+        "expected_revision",
+        "index",
+        "cell_id",
+        "source"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "insert_code_cell",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "set_cell_source",
+    "description": "Replace one cell source at the observed revision. Call save_notebook to persist. Does not execute code. Read current content before editing; conflicts require re-reading.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cell_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "notebook_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "source": {
+          "maxLength": 16384,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "notebook_id",
+        "expected_revision",
+        "cell_id",
+        "source"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "set_cell_source",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "add_packages",
+    "description": "Add dependencies using uv. Package builds can execute arbitrary code and access the network. Returns an operation receipt; poll get_operation. Existing Sessions retain memory and become environment-stale; restart explicitly when ready.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "packages": {
+          "items": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array"
+        },
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "packages"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "add_packages",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "save_notebook",
+    "description": "Atomically persist the open notebook at the expected revision. External file changes fail closed. Save edited cells before executing.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "notebook_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        },
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "notebook_id",
+        "expected_revision"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "save_notebook",
+      "readOnlyHint": false,
+      "destructiveHint": true,
       "idempotentHint": true,
       "openWorldHint": false
     }

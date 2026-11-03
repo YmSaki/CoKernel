@@ -147,10 +147,9 @@ impl Monitor {
                 *previous = state.clone();
                 true
             }
-        }) {
-            if let Ok(value) = serde_json::to_value(state) {
-                self.events.publish("tunnel.state_changed", value);
-            }
+        }) && let Ok(value) = serde_json::to_value(state)
+        {
+            self.events.publish("tunnel.state_changed", value);
         }
     }
     pub fn failed(&self, code: &'static str) {

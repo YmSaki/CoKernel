@@ -9,6 +9,8 @@ enum Kind {
     Identifier,
     Number(u64),
     Bool,
+    Text(usize),
+    Packages,
 }
 #[derive(Clone)]
 struct Field {
@@ -102,6 +104,8 @@ impl Contract {
                 Kind::Identifier=>json!({"type":"string","minLength":1,"maxLength":256,"description":"One Python identifier, not a keyword or expression. Worker validates again."}),
                 Kind::Number(max)=>json!({"type":"integer","minimum":if f.name=="limit" {1} else {0},"maximum":max}),
                 Kind::Bool=>json!({"type":"boolean"}),
+                Kind::Text(max)=>json!({"type":"string","maxLength":max}),
+                Kind::Packages=>json!({"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","minLength":1,"maxLength":512}}),
             };
             if let Some(default)=&f.default {s["default"]=default.clone();}
             (f.name.into(),s)
@@ -166,6 +170,21 @@ impl Contract {
                     .as_u64()
                     .is_some_and(|n| n <= max && (field.name != "limit" || n > 0)),
                 Kind::Bool => value.is_boolean(),
+                Kind::Text(max) => value
+                    .as_str()
+                    .is_some_and(|s| s.len() <= max && !s.contains('\0')),
+                Kind::Packages => value.as_array().is_some_and(|a| {
+                    !a.is_empty()
+                        && a.len() <= 32
+                        && a.iter().all(|v| {
+                            v.as_str().is_some_and(|s| {
+                                !s.is_empty()
+                                    && s.len() <= 512
+                                    && !s.starts_with('-')
+                                    && !s.chars().any(char::is_control)
+                            })
+                        })
+                }),
             };
             if !valid {
                 return Err("Invalid argument type, identifier or bound");
@@ -215,7 +234,7 @@ pub fn all() -> Vec<Contract> {
     add(
         "list_notebooks",
         "notebooks.list",
-        "List notebook paths and identities of currently open documents. Closed paths have no live document ID; open them in Desktop first.",
+        "List notebook paths and identities of currently open documents. Closed paths have no live document ID; use open_notebook first.",
         fields,
         read,
     );
@@ -327,6 +346,83 @@ pub fn all() -> Vec<Contract> {
         fields,
         read,
     );
+    add(
+        "create_project",
+        "projects.create",
+        "Create a uv Project. Returns an operation receipt; poll get_operation. Does not overwrite existing Projects.",
+        vec![Field::required("name", Text(128))],
+        (false, false, false, true),
+    );
+    for (name, method, description) in [
+        (
+            "create_notebook",
+            "notebooks.create",
+            "Create an empty .ipynb at a Project-relative path; existing files are never overwritten. Returns document identity/revision.",
+        ),
+        (
+            "open_notebook",
+            "notebooks.open",
+            "Open an existing .ipynb in its Project. Does not execute code or start a Session; returns document identity/revision.",
+        ),
+    ] {
+        let mut fields = project();
+        fields.push(Field::required("relative_path", Text(1024)));
+        add(
+            name,
+            method,
+            description,
+            fields,
+            (false, false, name == "open_notebook", false),
+        );
+    }
+    let mut fields = notebook();
+    fields.extend([
+        Field::required("expected_revision", Number(9_007_199_254_740_991)),
+        Field::required("index", Number(10_000)),
+        Field::required("cell_id", Cell),
+        Field::required("source", Text(16_384)),
+    ]);
+    add(
+        "insert_code_cell",
+        "notebooks.apply_edits",
+        "Insert a Python code cell at a zero-based index, using the observed revision and a new unique cell ID. Changes the open document; call save_notebook with the returned revision to persist. Does not execute code.",
+        fields,
+        (false, false, false, false),
+    );
+    let mut fields = notebook();
+    fields.extend([
+        Field::required("expected_revision", Number(9_007_199_254_740_991)),
+        Field::required("cell_id", Cell),
+        Field::required("source", Text(16_384)),
+    ]);
+    add(
+        "set_cell_source",
+        "notebooks.apply_edits",
+        "Replace one cell source at the observed revision. Call save_notebook to persist. Does not execute code. Read current content before editing; conflicts require re-reading.",
+        fields,
+        (false, true, false, false),
+    );
+    let mut fields = project();
+    fields.push(Field::required("packages", Packages));
+    add(
+        "add_packages",
+        "packages.add",
+        "Add dependencies using uv. Package builds can execute arbitrary code and access the network. Returns an operation receipt; poll get_operation. Existing Sessions retain memory and become environment-stale; restart explicitly when ready.",
+        fields,
+        (false, true, false, true),
+    );
+    let mut fields = notebook();
+    fields.push(Field::required(
+        "expected_revision",
+        Number(9_007_199_254_740_991),
+    ));
+    add(
+        "save_notebook",
+        "notebooks.save",
+        "Atomically persist the open notebook at the expected revision. External file changes fail closed. Save edited cells before executing.",
+        fields,
+        (false, true, true, false),
+    );
     tools
 }
 
@@ -343,33 +439,82 @@ mod tests {
     #[test]
     fn minimum_tools_and_exact_annotations() {
         let tools = all();
-        assert_eq!(tools.len(), 15);
+        assert_eq!(tools.len(), 22);
         for tool in tools {
             let hints = tool.tool().annotations.unwrap();
+            let expected = match tool.name {
+                "execute_cell" | "add_packages" => (false, true, false, true),
+                "create_project" => (false, false, false, true),
+                "create_notebook" | "insert_code_cell" => (false, false, false, false),
+                "set_cell_source" => (false, true, false, false),
+                "open_notebook" => (false, false, true, false),
+                "save_notebook" => (false, true, true, false),
+                _ => tool.hints,
+            };
             assert_eq!(
-                hints.read_only_hint,
-                Some(!matches!(
-                    tool.name,
-                    "ensure_session"
-                        | "execute_cell"
-                        | "interrupt_session"
-                        | "restart_session"
-                        | "stop_session"
-                ))
+                (
+                    hints.read_only_hint,
+                    hints.destructive_hint,
+                    hints.idempotent_hint,
+                    hints.open_world_hint
+                ),
+                (
+                    Some(expected.0),
+                    Some(expected.1),
+                    Some(expected.2),
+                    Some(expected.3)
+                ),
+                "{}",
+                tool.name
             );
-            assert_eq!(
-                hints.destructive_hint,
-                Some(matches!(
-                    tool.name,
-                    "execute_cell" | "interrupt_session" | "restart_session" | "stop_session"
-                ))
-            );
-            assert_eq!(
-                hints.idempotent_hint,
-                Some(!matches!(tool.name, "execute_cell" | "restart_session"))
-            );
-            assert_eq!(hints.open_world_hint, Some(tool.name == "execute_cell"));
         }
+    }
+    #[test]
+    fn authoring_rejects_oversized_source_missing_revision_and_package_flags() {
+        let id = uuid::Uuid::new_v4().to_string();
+        let contracts = all();
+        let edit = contracts
+            .iter()
+            .find(|c| c.name == "set_cell_source")
+            .unwrap();
+        let good = json!({"project_id":id,"notebook_id":id,"expected_revision":1,"cell_id":"cell","source":"値 = 1\n"});
+        assert!(edit.validate(good.as_object().unwrap().clone()).is_ok());
+        let mut oversized = good.clone();
+        oversized["source"] = json!("x".repeat(16385));
+        assert!(
+            edit.validate(oversized.as_object().unwrap().clone())
+                .is_err()
+        );
+        let mut missing = good.as_object().unwrap().clone();
+        missing.remove("expected_revision");
+        assert!(edit.validate(missing).is_err());
+        let add = contracts.iter().find(|c| c.name == "add_packages").unwrap();
+        for packages in [
+            json!([]),
+            json!(["--index-url"]),
+            json!(["torch\n--help"]),
+            json!([null]),
+            json!(vec!["x"; 33]),
+        ] {
+            assert!(
+                add.validate(
+                    json!({"project_id":id,"packages":packages})
+                        .as_object()
+                        .unwrap()
+                        .clone()
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            add.validate(
+                json!({"project_id":id,"packages":["numpy>=2"]})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            )
+            .is_ok()
+        );
     }
     #[test]
     fn expressions_keywords_unknown_fields_and_invalid_ids_fail_before_runtime() {

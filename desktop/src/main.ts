@@ -171,4 +171,20 @@ async function tick() {
   } catch (error) { connection.textContent = 'Desktop接続エラー'; notice.textContent = errorText(error); }
   finally { window.setTimeout(() => { void tick(); }, 1000); }
 }
+const setup = el('section', '', 'panel');
+setup.append(el('h2', 'AIに接続する'), el('p', 'Tunnel IDと実行用APIキーを保存すると接続を開始します。キーはWindowsの専用画面へ入力します。'));
+const setupStatus = el('p'); setupStatus.setAttribute('role','status');
+let setupPending=false;
+const configure=button('APIキー・接続設定',()=>{
+  if(setupPending || !connected) return;
+  setupPending=true; configure.disabled=true;
+  void invoke<{cancelled?:boolean}>('configure_remote').then(result=>{
+    setupStatus.textContent=result.cancelled ? '設定をキャンセルしました。' : '設定を保存し、接続を開始しました。Remote AIの状態を確認してください。';
+    void refresh();
+  }).catch((error:unknown)=>{setupStatus.textContent=errorText(error);})
+  .finally(()=>{setupPending=false;configure.disabled=false;});
+});
+setup.append(configure,button('接続を再開',()=>{void call('remote_access.start').then(()=>refresh()).catch((error:unknown)=>{setupStatus.textContent=errorText(error);});}),button('AI接続を停止',()=>{void call('remote_access.stop').then(()=>refresh()).catch((error:unknown)=>{setupStatus.textContent=errorText(error);});}),setupStatus);
+setup.append(el('p','ChatGPT側でこのトンネルをコネクタとして追加してください。接続後はAIがProject作成、依存パッケージ追加、ノートブック作成・実行を行えます。','muted'));
+content.insertBefore(setup,projects);
 void tick();

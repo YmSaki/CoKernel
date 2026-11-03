@@ -180,10 +180,10 @@ impl Fixture {
     async fn blocked_pid(&self) -> i32 {
         tokio::time::timeout(Duration::from_secs(3), async {
             loop {
-                if let Ok(pid) = fs::read_to_string(self.root.join("projects/blocked/pid")) {
-                    if let Ok(pid) = pid.parse() {
-                        return pid;
-                    }
+                if let Ok(pid) = fs::read_to_string(self.root.join("projects/blocked/pid"))
+                    && let Ok(pid) = pid.parse()
+                {
+                    return pid;
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }

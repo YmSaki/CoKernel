@@ -20,9 +20,51 @@ pub fn host_observation(client: State<'_, DesktopClient>) -> Observation {
     client.observation()
 }
 
+/// Credentials never pass through WebView arguments, results or frontend state.
+#[tauri::command]
+pub async fn configure_remote() -> Result<serde_json::Value, String> {
+    use cokernel_host::{
+        ipc_pipe::{PipeClient, default_name},
+        remote_setup::prompt_credentials,
+    };
+    static BUSY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _guard = BUSY
+        .try_lock()
+        .map_err(|_| "接続設定画面は既に開いています。")?;
+    let mut client = PipeClient::connect(&default_name().map_err(|_| "Hostを確認できません。")?)
+        .await
+        .map_err(|_| "Hostに接続できません。")?;
+    let credentials = tokio::task::spawn_blocking(prompt_credentials)
+        .await
+        .map_err(|_| "設定画面を開けません。")?
+        .map_err(|_| "設定を読み取れません。Tunnel IDとキーを確認してください。")?;
+    let Some(credentials) = credentials else {
+        return Ok(serde_json::json!({"cancelled":true}));
+    };
+    client
+        .configure_remote(&credentials)
+        .await
+        .map_err(|_| "保存結果が不明です。設定状態を確認してください。")?;
+    drop(credentials);
+    let started = client
+        .call("remote_access.start", serde_json::json!({}))
+        .await
+        .map_err(|_| "保存後の接続結果が不明です。接続状態を確認してください。")?;
+    if !started.ok {
+        return Err(
+            "設定を保存しましたが、接続開始に失敗しました。状態を確認してください。".into(),
+        );
+    }
+    Ok(serde_json::json!({"saved":true,"connection_requested":true}))
+}
+
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![host_call, host_observation])
+        .invoke_handler(tauri::generate_handler![
+            host_call,
+            host_observation,
+            configure_remote
+        ])
         .setup(|app| {
             let client = tauri::async_runtime::block_on(async { DesktopClient::start() })?;
             app.manage(client);

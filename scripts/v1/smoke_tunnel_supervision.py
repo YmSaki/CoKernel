@@ -139,7 +139,7 @@ def main():
                 initialized = remote("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
                     "clientInfo": {"name": "local-tunnel-proof", "version": "1"}})
                 assert initialized["serverInfo"]["name"]
-                assert len(remote("tools/list", {})["tools"]) == 15
+                assert len(remote("tools/list", {})["tools"]) == 22
 
                 created = bridge.rpc("projects.create", name="tunnel-shared")
                 project = wait_package(bridge, created["project_id"], created)["project"]["project_id"]

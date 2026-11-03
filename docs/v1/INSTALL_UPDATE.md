@@ -117,8 +117,8 @@ includes known Python/uv/worker/tunnel tools; it never copies a user's whole hom
 Hash receipts establish development integrity, not signed release provenance.
 
 The development payload must also supply the public CA bundle from Ubuntu
-`ca-certificates 20260601~24.04.1`, SHA-256
-`9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd`.
+`ca-certificates 20260816ubuntu0.24.04.1`, SHA-256
+`64e7c24b0536b525fb19b145768bd5e6e12ced0df3db837c34553ea789acd143`.
 The builder verifies this independent pin and installs a root-owned 0644 copy at
 `/etc/ssl/certs/ca-certificates.crt` and `/etc/ssl/cert.pem` before boot (the latter
 is bundled Python/OpenSSL's default file). Finalization checks both copies.

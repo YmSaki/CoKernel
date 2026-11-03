@@ -112,6 +112,37 @@ async fn main() -> Result<()> {
             };
             println!("{}", serde_json::to_string(&status)?);
         }
+        #[cfg(windows)]
+        Some(operation @ ("check" | "start")) => {
+            if args.next().is_some() {
+                bail!("unexpected Host control argument");
+            }
+            use cokernel_host::ipc_pipe::{PipeClient, default_name};
+            let mut client = PipeClient::connect(&default_name()?).await?;
+            let result = client
+                .call(
+                    if operation == "start" {
+                        "runtime.start"
+                    } else {
+                        "runtime.get_status"
+                    },
+                    serde_json::json!({}),
+                )
+                .await?;
+            if !result.ok
+                || (operation == "check"
+                    && result
+                        .result
+                        .as_ref()
+                        .is_none_or(|v| v["observed"] != "HEALTHY"))
+            {
+                bail!("Host has not reported a healthy runtime");
+            }
+            println!(
+                "{}",
+                serde_json::json!({"accepted":true,"operation":operation})
+            );
+        }
         Some("--version") | Some("version") => {
             println!("cokernel-host {}", env!("CARGO_PKG_VERSION"))
         }
@@ -185,7 +216,7 @@ async fn main() -> Result<()> {
             pipe.shutdown().await?;
         }
         _ => bail!(
-            "usage: cokernel-host version | serve <wsl-config.json> <absolute-state-directory> [--start|--stop|--background] | autostart <status|enable|disable> <absolute-config> <absolute-state-directory> | remote <configure|status|start|stop|restart|clear> (Windows)"
+            "usage: cokernel-host version | check | start | serve <wsl-config.json> <absolute-state-directory> [--start|--stop|--background] | autostart <status|enable|disable> <absolute-config> <absolute-state-directory> | remote <configure|status|start|stop|restart|clear> (Windows)"
         ),
     }
     Ok(())

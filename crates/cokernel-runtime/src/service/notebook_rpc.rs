@@ -230,42 +230,41 @@ impl<R: UvRunner + 'static> RuntimeService<R> {
         let method = request.method.clone();
         let event_project = request.params.get("project_id").cloned();
         let mut response = self.dispatch(request);
-        if response.ok && method == methods::name::BRIDGE_HELLO {
-            if let Some(capabilities) = response
+        if response.ok
+            && method == methods::name::BRIDGE_HELLO
+            && let Some(capabilities) = response
                 .result
                 .as_mut()
                 .and_then(|v| v["capabilities"].as_array_mut())
-            {
-                capabilities.extend([
-                    json!("notebooks"),
-                    json!("sessions"),
-                    json!("notebook-import"),
-                    json!("operation-status"),
-                    json!("runtime-events"),
-                    json!("runtime-snapshot"),
-                    json!("sanitized-diagnostics"),
-                    json!("async-packages"),
-                    json!("async-projects"),
-                    json!("concurrent-session-rpc"),
-                    json!("owned-document-io"),
-                    json!("linux-metrics"),
-                ]);
-            }
+        {
+            capabilities.extend([
+                json!("notebooks"),
+                json!("sessions"),
+                json!("notebook-import"),
+                json!("operation-status"),
+                json!("runtime-events"),
+                json!("runtime-snapshot"),
+                json!("sanitized-diagnostics"),
+                json!("async-packages"),
+                json!("async-projects"),
+                json!("concurrent-session-rpc"),
+                json!("owned-document-io"),
+                json!("linux-metrics"),
+            ]);
         }
-        if let Some(events) = self.events() {
-            if response.ok
-                && matches!(
-                    method.as_str(),
-                    methods::name::PROJECTS_CREATE
-                        | methods::name::PROJECTS_REGISTER
-                        | methods::name::PROJECTS_REMOVE_FROM_REGISTRY
-                )
-            {
-                events.publish(
-                    "project.changed",
-                    json!({"project_id":event_project,"method":method,"result":response.result}),
-                );
-            }
+        if let Some(events) = self.events()
+            && response.ok
+            && matches!(
+                method.as_str(),
+                methods::name::PROJECTS_CREATE
+                    | methods::name::PROJECTS_REGISTER
+                    | methods::name::PROJECTS_REMOVE_FROM_REGISTRY
+            )
+        {
+            events.publish(
+                "project.changed",
+                json!({"project_id":event_project,"method":method,"result":response.result}),
+            );
         }
         response
     }
