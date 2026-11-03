@@ -7,8 +7,7 @@ prepare the runtime. WSL feature enablement alone asks for elevation; when a
 reboot is needed Setup resumes after sign-in. Runtime import, Host, credentials
 and user data remain under the original user identity. Setup verifies the image,
 checks NVIDIA access, waits for Host HEALTHY, enables Host login startup, and
-opens Desktop. In Desktop choose **AIに接続する**, enter the tunnel ID/key and
-MCP bearer through the native credential dialog, then connect the corresponding
+opens Desktop. In Desktop choose **AIに接続する**, enter the tunnel ID and runtime API key through the native credential dialog, then connect the corresponding
 AI connector. Never enter these secrets into a notebook or a chat message.
 
 AI authoring flow: `create_project` → poll `get_operation` → `create_notebook`

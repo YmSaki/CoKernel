@@ -22,6 +22,7 @@ function button(label: string, action: () => void, className = ''): HTMLButtonEl
   const node = el('button', label, className); node.type = 'button'; node.addEventListener('click', action); return node;
 }
 function errorText(error: unknown): string {
+  if (typeof error === 'string') return error;
   if (error && typeof error === 'object') {
     const e = error as { code?: string; summary?: string; action?: string };
     return [e.code, e.summary, e.action].filter(Boolean).join(' · ') || '応答を読み取れませんでした。';
@@ -34,7 +35,7 @@ sidebar.append(el('div', 'CoKernel', 'brand'), el('p', 'Python workspace', 'mute
 const content = el('main'); const header = el('header');
 const title = el('h1', 'Projects'); const connection = el('span', 'Hostへ接続中', 'badge');
 const notice = el('div', '', 'notice'); notice.setAttribute('role', 'status');
-header.append(title, connection, button('更新', () => { void refresh(); }, 'secondary'));
+header.append(title, connection, button('Runtimeを起動', () => { void call('runtime.start').then(() => refresh()).catch((error: unknown) => { notice.textContent = errorText(error); }); }, 'secondary'), button('更新', () => { void refresh(); }, 'secondary'));
 const home = el('section', '', 'summary'); const projects = el('section'); const detail = el('section');
 const formSection = el('section', '', 'panel');
 const form = el('form');

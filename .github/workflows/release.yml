@@ -17,6 +17,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           version: '0.13.4'
+      - name: Prepare worker Python for source and canonical gates
+        run: |
+          uv sync --locked --project worker --dev
+          echo "$PWD/worker/.venv/bin" >> "$GITHUB_PATH"
       - name: Verify runtime and worker
         run: bash scripts/v1/check.sh
       - name: Assemble verified Linux payload
