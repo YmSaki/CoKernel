@@ -1153,8 +1153,10 @@ five seconds to write. Reply waiting is capped at 120 seconds. IDs are nonempty,
 bounded to 128 bytes and contain no control characters. A permitted method goes
 through the same RuntimeHandle as Human stdio requests, with origin fixed to MCP.
 The allowlist contains domain reads, primary Session lifecycle/execution/inspection,
-operation status and cached Linux metrics; it excludes whole-Runtime shutdown,
-Project/environment mutation and document mutation. Transport loss releases only
+operation status and cached Linux metrics. The release authoring increment also
+admits `projects.create`, `packages.add/sync`, and `notebooks.create/open/apply_edits/save`.
+It excludes whole-Runtime shutdown, credential/tunnel configuration, Project
+removal and arbitrary document import/filesystem operations. Transport loss releases only
 the reply/connection, never cancels or replays accepted work. Existing domain
 Project ownership, revision and per-Notebook primary/FIFO checks remain authoritative.
 
@@ -1196,7 +1198,15 @@ accepted by execute/ensure. Remote clients never choose execution origin.
 
 All fourteen minimum tools in MCP_TUNNEL section 5 are registered, plus the
 read-only `get_operation(project_id, operation_id)` for asynchronous execution
-and document-persistence status. Every scoped tool takes `project_id`; Session
+and document-persistence status. Eight authoring tools bring the total to 23:
+`create_project`, `create_notebook`, `open_notebook`, `insert_code_cell`,
+`set_cell_source`, `save_notebook`, `add_packages`, and `sync_environment`. Edits are translated into
+the existing document edit operations and require `expected_revision`; source
+is limited to 16 KiB UTF-8, package requests to 32 bounded strings without option
+prefixes or control characters. Creation/package operations return receipts to
+poll; save confirms atomic persistence of the supplied revision. Existing live
+Sessions survive package mutation and require explicit restart to adopt it.
+Every scoped tool takes `project_id`; Session
 get/interrupt/stop/inspection additionally takes `session_id`; ensure/restart
 takes `notebook_id`; execute takes both plus `cell_id` and `expected_revision`.
 Restart explicitly loses volatile memory. `get_resources` reports cached Linux
@@ -1213,7 +1223,8 @@ nonnegative JSON integers no greater than 2^53-1. All tool objects are closed.
 `list_notebooks` returns paginated paths (offset default 0, limit default 32,
 maximum 128) and `open_documents` for those paths in the same Project. Existing
 open documents provide stable IDs/revisions. Closed paths are not silently
-opened or assigned new live identities by a read-only tool; Desktop opens them.
+opened or assigned new live identities by a read-only tool; Desktop or the
+explicit mutating `open_notebook` tool opens them.
 
 `read_notebook` maps to shared `notebooks.read_cells`, executed by the document
 owner. It requires Project/Notebook IDs and supports optional expected_revision,

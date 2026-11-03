@@ -144,9 +144,15 @@ Exact fields follow the MCP SDK/spec version used during implementation, but sem
 | stop_session | no | yes (memory loss) | yes by final state | no |
 | get_runtime_status | yes | no | yes | no |
 | get_resources | yes | no | yes | no |
-| add_package | no | yes/changes environment | no | yes (network/package index) |
+| create_project | no | no | no | yes (uv preparation) |
+| create_notebook | no | no | no | no |
+| open_notebook | no | no | yes | no |
+| insert_code_cell | no | no | no | no |
+| set_cell_source | no | yes | no | no |
+| save_notebook | no | yes | yes | no |
+| add_packages | no | yes/changes environment | no | yes (network/package index) |
+| sync_environment | no | yes/changes environment | no | yes (download/build hooks) |
 | remove_package | no | yes | no | no/limited |
-| sync_environment | no | yes/changes environment | no | yes (may download) |
 
 The implementation should map these concepts to the exact MCP annotation model and regression-test the registered surface.
 
@@ -355,7 +361,7 @@ The Phase 6 service uses `cokernel-mcp serve` and the optional private Runtime
 Unix API described in INTERFACE_CONTRACTS sections 29-30. It registers all fourteen
 minimum tools plus read-only `get_operation` for execution/persistence completion.
 The release increment adds `create_project`, `create_notebook`, `open_notebook`,
-`insert_code_cell`, `set_cell_source`, `save_notebook` and `add_packages` (22 total).
+`insert_code_cell`, `set_cell_source`, `save_notebook`, `add_packages`, and `sync_environment` (23 total).
 AI can author a notebook without a Desktop-created document. Edits require an
 exact revision, run through Notebook Document Service, and must be saved explicitly
 before execution. `execute_cell` still accepts only an existing cell ID, never

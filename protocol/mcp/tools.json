@@ -724,6 +724,32 @@
     }
   },
   {
+    "name": "sync_environment",
+    "description": "Repair or synchronize the Project uv environment, including an interrupted initial setup. May download packages and execute build hooks. Poll get_operation until terminal; live Sessions retain memory and require explicit restart to adopt the environment.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "type": "object"
+    },
+    "annotations": {
+      "title": "sync_environment",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
     "name": "save_notebook",
     "description": "Atomically persist the open notebook at the expected revision. External file changes fail closed. Save edited cells before executing.",
     "inputSchema": {

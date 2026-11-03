@@ -411,6 +411,13 @@ pub fn all() -> Vec<Contract> {
         fields,
         (false, true, false, true),
     );
+    add(
+        "sync_environment",
+        "packages.sync",
+        "Repair or synchronize the Project uv environment, including an interrupted initial setup. May download packages and execute build hooks. Poll get_operation until terminal; live Sessions retain memory and require explicit restart to adopt the environment.",
+        project(),
+        (false, true, false, true),
+    );
     let mut fields = notebook();
     fields.push(Field::required(
         "expected_revision",
@@ -439,11 +446,11 @@ mod tests {
     #[test]
     fn minimum_tools_and_exact_annotations() {
         let tools = all();
-        assert_eq!(tools.len(), 22);
+        assert_eq!(tools.len(), 23);
         for tool in tools {
             let hints = tool.tool().annotations.unwrap();
             let expected = match tool.name {
-                "execute_cell" | "add_packages" => (false, true, false, true),
+                "execute_cell" | "add_packages" | "sync_environment" => (false, true, false, true),
                 "create_project" => (false, false, false, true),
                 "create_notebook" | "insert_code_cell" => (false, false, false, false),
                 "set_cell_source" => (false, true, false, false),

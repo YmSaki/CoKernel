@@ -206,13 +206,13 @@ async fn sdk_interoperates_and_auth_origin_limits_restart_preserve_runtime() {
     );
     let sdk = ().serve(transport).await.unwrap();
     let tools = sdk.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 22);
+    assert_eq!(tools.len(), 23);
     for tool in tools {
         assert_eq!(
             tool.annotations.unwrap().open_world_hint,
             Some(matches!(
                 tool.name.as_ref(),
-                "execute_cell" | "create_project" | "add_packages"
+                "execute_cell" | "create_project" | "add_packages" | "sync_environment"
             ))
         );
         assert_eq!(

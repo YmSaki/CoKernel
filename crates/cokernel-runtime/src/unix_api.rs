@@ -166,6 +166,7 @@ fn permitted(method: &str) -> bool {
             | "projects.get"
             | "projects.create"
             | "packages.add"
+            | "packages.sync"
             | "notebooks.create"
             | "notebooks.open"
             | "notebooks.apply_edits"

@@ -16,7 +16,9 @@ AI authoring flow: `create_project` → poll `get_operation` → `create_noteboo
 revision; refresh after execution because persisted outputs change the revision.
 `open_notebook` resumes an existing file; its primary Session retains variables
 until an explicit restart/stop or a process failure. `add_packages` uses Project
-uv and does not silently restart live Sessions. There is no Jupyter server.
+uv and does not silently restart live Sessions. If initial setup or dependency preparation fails, use `sync_environment` and
+poll its operation to repair the same Project without manual Linux commands.
+There is no Jupyter server.
 
 ## Build and provenance
 
