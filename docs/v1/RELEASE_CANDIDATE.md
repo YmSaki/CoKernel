@@ -63,3 +63,9 @@ Desktop TypeScript/Vite production build passed; a complete pinned release WSL
 image was generated. Socket-based integration is unavailable on this host because
 socket creation is denied (EPERM); it is not counted as a passing gate. Native
 Windows, GPU and connector acceptance remain separate evidence requirements.
+
+## Candidate build evidence
+
+See [candidate.7 verification and artifacts](evidence/release-candidate-20261104.md)
+for the exact tested commit, successful Linux/Windows jobs, installer/image hashes
+and the installed-system acceptance that remains open.
