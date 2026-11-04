@@ -45,5 +45,47 @@ try {
     $script:registration=[pscustomobject]@{DistributionName='Other';BasePath=(Join-Path $runtime 'distro')}
     Reject { Get-OwnedRuntime $legacy } 'Missing registration was accepted for update.'
     Assert (-not (Get-OwnedRuntime $legacy -AllowMissing).Registered) 'Interrupted full removal could not be resumed.'
+    # Execute the production recovery functions with fake process/registry boundaries.
+    # All journal and intent writes below use the real filesystem implementation.
+    $tokens=$null; $parseErrors=$null
+    $ast=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'setup.ps1'),[ref]$tokens,[ref]$parseErrors)
+    Assert ($parseErrors.Count -eq 0) 'Setup parser errors.'
+    foreach ($functionAst in $ast.FindAll({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst]}, $false)) {
+        . ([scriptblock]::Create($functionAst.Extent.Text))
+    }
+    $root=$legacy; $state=Join-Path $root 'host'; $journal=Join-Path $root 'maintenance.json'
+    $installedPath=Join-Path $root 'installed.json'; $AppRoot=Join-Path $testRoot 'app'; $hostExe='fixture-host'; $wsl='fixture-wsl'; $run='fixture-registry'
+    New-Item -ItemType Directory $AppRoot,$state | Out-Null
+    $config=Join-Path $runtime 'host-wsl.json'
+    $script:registration=[pscustomobject]@{DistributionName=$distro;BasePath=(Join-Path $runtime 'distro')}
+    Write-Record $config @{distribution=$distro;linux_user='cokernel-control';runtime_path='/opt/cokernel/launch'}
+    function Stop-Product { param($AppRoot,$ControlExe) }
+    function Invoke-Native { param($Exe,$Arguments) }
+    function Remove-ItemProperty { param($Path,$Name) }
+    $script:failRecovery=$true; $script:recoveryActions=@()
+    function Invoke-Maintenance {
+        param($Distro,$Action,$Identity)
+        $script:recoveryActions += $Action
+        if ($script:failRecovery) { throw 'Injected recovery interruption' }
+    }
+    $newIdentity=[guid]::NewGuid().ToString()
+    Write-Record (Join-Path $runtime 'provisioned.json') @{identity=$newIdentity;phase='provisioned'}
+    Assert ((Get-OwnedRuntime $root).Identity -eq $newIdentity) 'Updated image identity must not change registered distro ownership.'
+    $recoveryRecord=@{ schema=1; identity=$identity.ToString(); staged=$true; committed=$false; installed=$null; desired='{"schema":1,"desired":"RUNNING"}'; 'remote-access'='{"schema":1,"enabled":true}'; autostart=$null }
+    Write-Record $journal $recoveryRecord
+    Reject { Recover-Update } 'Injected recovery failure was hidden.'
+    Assert (Test-Path $journal) 'Failed recovery discarded its journal.'
+    $script:failRecovery=$false
+    Recover-Update
+    Assert (-not (Test-Path $journal)) 'Successful recovery left an active journal.'
+    Assert ((Read-Record (Join-Path $runtime 'provisioned.json')).identity -eq $identity.ToString()) 'Rollback did not restore image identity.'
+    Assert ((Read-Record (Join-Path $state 'desired.json')).desired -eq 'RUNNING') 'Runtime intent was lost.'
+    Assert ((Read-Record (Join-Path $state 'remote-access.json')).enabled) 'Remote intent was lost.'
+    Write-Record (Join-Path $runtime 'provisioned.json') @{identity=$newIdentity;phase='provisioned'}
+    $recoveryRecord.committed=$true
+    Write-Record $journal $recoveryRecord
+    Recover-Update
+    Assert ($script:recoveryActions[-1] -eq 'commit') 'Committed update was rolled back.'
+    Assert ((Read-Record (Join-Path $runtime 'provisioned.json')).identity -eq $newIdentity) 'Committed identity was reverted.'
     Write-Host 'Lifecycle ownership, retained-data discovery and journal tests passed.'
 } finally { $env:LOCALAPPDATA=$originalLocal; Remove-Item $testRoot -Recurse -Force }

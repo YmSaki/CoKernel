@@ -4,6 +4,9 @@ on:
   push:
     tags: ['v1.*']
     branches: ['release/alpha-installer']
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -135,4 +138,15 @@ jobs:
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.0-alpha.0-candidate.8' }}
           RELEASE_SHA: ${{ github.sha }}
         run: |
-          gh release create "$RELEASE_TAG" release/* --target "$RELEASE_SHA" --draft --prerelease --title "CoKernel $RELEASE_TAG" --notes 'Release candidate. Windows install/reboot and actual GPU/ChatGPT acceptance must pass before publication. Candidate.8 adds in-place runtime updates, candidate.7 data/settings retention, recovery journals and preserve-data/full-removal uninstall modes. Real-machine install/update/uninstall and GPU acceptance remain required.'
+                    if [[ "$GITHUB_REF" == refs/heads/* ]]; then
+            current=$(gh api "repos/$GH_REPO/git/ref/heads/release/alpha-installer" --jq .object.sha)
+            if [[ "$current" != "$RELEASE_SHA" ]]; then echo 'Superseded build; no release mutation.'; exit 0; fi
+          fi
+          notes='Candidate.8: install, in-place update preserving candidate.7 data/settings, recovery journal, and preserve-data/full-removal uninstall. Automated lifecycle and native checks passed. Actual Windows install/reboot/update/uninstall and GPU/ChatGPT acceptance remain required. Unsigned candidate.'
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            [[ "$draft" == true ]] || { echo 'Refusing to replace a published release'; exit 1; }
+            gh release edit "$RELEASE_TAG" --target "$RELEASE_SHA" --title "CoKernel $RELEASE_TAG" --notes "$notes"
+            gh release upload "$RELEASE_TAG" release/* --clobber
+          else
+            gh release create "$RELEASE_TAG" release/* --target "$RELEASE_SHA" --draft --prerelease --title "CoKernel $RELEASE_TAG" --notes "$notes"
+          fi

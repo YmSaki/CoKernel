@@ -53,7 +53,13 @@ function Recover-Update {
         else { Remove-Item -LiteralPath $installedPath -Force -ErrorAction SilentlyContinue }
     }
     Restore-Intent $record
-    if ($record.committed -and $record.autostart) { Invoke-Native $hostExe @('autostart','enable',$config,$state) }
+    if ($record.committed -and $record.autostart) {
+        $currentInstall = Read-Record $installedPath
+        $currentHost = Join-Path $currentInstall.app_directory 'cokernel-host.exe'
+        Assert-PlainPath $currentHost
+        if (-not $currentHost.StartsWith($AppRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid committed application path.' }
+        Invoke-Native $currentHost @('autostart','enable',$config,$state)
+    }
     elseif ($record.autostart) { New-ItemProperty -Path $run -Name CoKernelHost -Value $record.autostart -PropertyType String -Force | Out-Null }
     else { Remove-ItemProperty -Path $run -Name CoKernelHost -ErrorAction SilentlyContinue }
     if (-not $record.committed) {
@@ -93,7 +99,9 @@ try {
                 }
                 Write-Record $journal $record
             }
+            $preservedIntent = @{ desired=(Read-Optional (Join-Path $state 'desired.json')); 'remote-access'=(Read-Optional (Join-Path $state 'remote-access.json')) }
             Stop-Product $AppRoot $hostExe
+            if ($Mode -eq 'Preserve') { Restore-Intent $preservedIntent }
             Remove-ItemProperty -Path $run -Name CoKernelHost -ErrorAction SilentlyContinue
             if ($owned.Registered) { Invoke-Native $wsl @('--terminate',$owned.Config.distribution) }
             if ($Mode -eq 'Remove') {
