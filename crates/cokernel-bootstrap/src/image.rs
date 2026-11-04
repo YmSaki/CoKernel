@@ -252,6 +252,10 @@ fn compose<W: std::io::Write, R: Read, P: Read>(
         let mut header = entry.header().clone();
         header.set_uid(0);
         header.set_gid(0);
+        // Extractors may prefer textual account names over numeric IDs.
+        // Clear inherited root/root names before assigning the control GID.
+        header.set_username("")?;
+        header.set_groupname("")?;
         header.set_mode(if kind.is_dir() || header.mode()? & 0o111 != 0 {
             0o755
         } else {
@@ -451,7 +455,17 @@ mod tests {
         }
         let mut payload = Builder::new(Vec::new());
         for path in REQUIRED {
-            append(&mut payload, path, b"payload", 0o777, 999, 999).unwrap();
+            let mut header = Header::new_gnu();
+            header.set_size(7);
+            header.set_mode(0o777);
+            header.set_uid(999);
+            header.set_gid(999);
+            header.set_username("root").unwrap();
+            header.set_groupname("root").unwrap();
+            header.set_cksum();
+            payload
+                .append_data(&mut header, path, &b"payload"[..])
+                .unwrap();
         }
         if link_child {
             let mut h = Header::new_gnu();
@@ -509,6 +523,8 @@ mod tests {
             }
             if name == REQUIRED[0] {
                 assert_eq!(e.header().gid().unwrap(), CONTROL);
+                assert_eq!(e.header().username().unwrap().unwrap_or_default(), "");
+                assert_eq!(e.header().groupname().unwrap().unwrap_or_default(), "");
                 assert_eq!(e.header().mode().unwrap(), 0o750);
             }
             if name == "var/lib/cokernel/projects" {

@@ -16,7 +16,7 @@ image = Path(sys.argv[1]).resolve()
 script = Path(__file__).with_name('runtime-maintenance.sh').read_bytes()
 with tempfile.TemporaryDirectory(prefix='cokernel-image-test-') as directory:
     root = Path(directory)
-    subprocess.run(['tar', '-xpf', str(image), '-C', str(root)], check=True)
+    subprocess.run(['tar', '--numeric-owner', '-xpf', str(image), '-C', str(root)], check=True)
     (root / 'run/WSL').mkdir(parents=True, exist_ok=True)
     (root / 'run/WSL').chmod(0o700)
     (root / 'proc/self').mkdir(parents=True, exist_ok=True)
@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix='cokernel-image-test-') as directory:
     def stage():
         run('prepare', old['identity'])
         staged = root / 'opt/.cokernel-maintenance/new'
-        subprocess.run(['tar', '-xpf', str(image), '-C', str(staged), 'opt/cokernel', 'etc/cokernel-validation.json', 'etc/ssl/certs/ca-certificates.crt', 'etc/ssl/cert.pem'], check=True)
+        subprocess.run(['tar', '--numeric-owner', '-xpf', str(image), '-C', str(staged), 'opt/cokernel', 'etc/cokernel-validation.json', 'etc/ssl/certs/ca-certificates.crt', 'etc/ssl/cert.pem'], check=True)
         manifest = json.loads((staged / 'etc/cokernel-validation.json').read_text())
         manifest['identity'] = str(uuid.uuid4())
         worker = next(path for path in manifest['files'] if path.startswith('opt/cokernel/worker/') and path.endswith('.py'))

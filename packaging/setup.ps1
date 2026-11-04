@@ -170,7 +170,7 @@ try {
                 $record.staged = $true
                 Write-Record $journal $record
                 Invoke-Maintenance $owned.Config.distribution 'prepare' $owned.Identity
-                Send-WslInput $owned.Config.distribution @('/bin/tar','-xpf','-','-C','/opt/.cokernel-maintenance/new','opt/cokernel','etc/cokernel-validation.json','etc/ssl/certs/ca-certificates.crt','etc/ssl/cert.pem') $image
+                Send-WslInput $owned.Config.distribution @('/bin/tar','--numeric-owner','-xpf','-','-C','/opt/.cokernel-maintenance/new','opt/cokernel','etc/cokernel-validation.json','etc/ssl/certs/ca-certificates.crt','etc/ssl/cert.pem') $image
                 Invoke-Maintenance $owned.Config.distribution 'apply' ([string]$receipt.identity)
             }
         } else {

@@ -42,7 +42,12 @@ try {
     Remove-Item (Join-Path $runtime 'host-wsl.json')
     Remove-Item (Join-Path $runtime 'provisioned.json')
     Assert ((Get-OwnedRuntime $legacy).Config.distribution -eq $distro) 'Interrupted import could not be identified for explicit removal.'
+    $script:registration.DistributionName='CoKernel'
+    Assert ((Get-OwnedRuntime $legacy).Config.distribution -eq 'CoKernel') 'Fresh product import under a retained legacy root was misidentified.'
+    $script:registration.DistributionName=$distro
     $script:registration=[pscustomobject]@{DistributionName='Other';BasePath=(Join-Path $runtime 'distro')}
+    Reject { Get-OwnedRuntime $legacy -AllowMissing } 'A foreign distro at the product path was accepted for removal.'
+    $script:registration.BasePath=Join-Path $testRoot 'unrelated-distro'
     Reject { Get-OwnedRuntime $legacy } 'Missing registration was accepted for update.'
     Assert (-not (Get-OwnedRuntime $legacy -AllowMissing).Registered) 'Interrupted full removal could not be resumed.'
     # Execute the production recovery functions with fake process/registry boundaries.

@@ -43,21 +43,25 @@ function Get-OwnedRuntime([string]$Root, [switch]$AllowMissing) {
     if (-not (Test-Path $receiptPath)) { $receiptPath = Join-Path $runtime 'prepared.json' }
     $receipt = Read-Record $receiptPath
     $identity = ([guid]$receipt.identity).ToString()
-    if (Test-Path $configPath) { $config = Read-Record $configPath }
-    else {
-        $name = 'CoKernel'
-        if ((Split-Path $Root -Leaf) -eq 'CoKernelV1') { $name = "CoKernelV1-Validation-$(([guid]$identity).ToString('N'))" }
-        $config = [pscustomobject]@{ distribution=$name; linux_user='cokernel-control'; runtime_path='/opt/cokernel/launch' }
-    }
     $original = Read-Record (Join-Path $runtime 'prepared.json')
     $allowed = @('CoKernel', "CoKernelV1-Validation-$(([guid]$original.identity).ToString('N'))")
+    $registrations = @(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' -ErrorAction SilentlyContinue | ForEach-Object { Get-ItemProperty $_.PSPath })
+    $expected = [IO.Path]::GetFullPath((Join-Path $runtime 'distro')).TrimEnd('\')
+    $atPath = @($registrations | Where-Object { ([string]$_.BasePath).Replace('\\?\','').TrimEnd('\') -ieq $expected })
+    if (Test-Path $configPath) { $config = Read-Record $configPath }
+    else {
+        # A partial product install may use CoKernel even in a retained legacy
+        # Windows root. Discover by registered path, never by directory spelling.
+        $name = 'CoKernel'
+        if ($atPath.Count -eq 1) { $name = $atPath[0].DistributionName }
+        $config = [pscustomobject]@{ distribution=$name; linux_user='cokernel-control'; runtime_path='/opt/cokernel/launch' }
+    }
     if ($config.distribution -notin $allowed -or $config.linux_user -ne 'cokernel-control' -or $config.runtime_path -ne '/opt/cokernel/launch') {
         throw 'CK-SETUP-OWNERSHIP: Unrecognized runtime configuration.'
     }
-    $entries = @(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' -ErrorAction SilentlyContinue | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object DistributionName -eq $config.distribution)
-    $expected = [IO.Path]::GetFullPath((Join-Path $runtime 'distro')).TrimEnd('\')
-    if ($entries.Count -eq 0 -and $AllowMissing) { return @{ Config=$config; Identity=$identity; ConfigPath=$configPath; Registered=$false } }
-    if ($entries.Count -ne 1 -or ([string]$entries[0].BasePath).Replace('\\?\','').TrimEnd('\') -ine $expected) {
+    $entries = @($registrations | Where-Object DistributionName -eq $config.distribution)
+    if ($entries.Count -eq 0 -and $atPath.Count -eq 0 -and $AllowMissing) { return @{ Config=$config; Identity=$identity; ConfigPath=$configPath; Registered=$false } }
+    if ($entries.Count -ne 1 -or $atPath.Count -ne 1 -or $atPath[0].DistributionName -ne $config.distribution -or ([string]$entries[0].BasePath).Replace('\\?\','').TrimEnd('\') -ine $expected) {
         throw 'CK-SETUP-OWNERSHIP: WSL registration does not point to this product directory.'
     }
     return @{ Config = $config; Identity = $identity; ConfigPath = $configPath; Registered=$true }
