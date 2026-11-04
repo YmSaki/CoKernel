@@ -21,13 +21,18 @@ $wsl = Join-Path $env:SystemRoot 'System32\wsl.exe'
 $runOnce = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
 $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 function Read-Optional([string]$Path) {
-    if (Test-Path $Path) { return [IO.File]::ReadAllText($Path) }
+    Assert-PlainPath $Path
+    if (Test-Path $Path) {
+        if ((Get-Item -LiteralPath $Path).Length -gt 65536) { throw 'CK-SETUP-LIMIT: Intent metadata too large.' }
+        return [IO.File]::ReadAllText($Path)
+    }
     return $null
 }
 function Restore-Intent($record) {
     New-Item -ItemType Directory -Force $state | Out-Null
     foreach ($name in @('desired','remote-access')) {
         $path = Join-Path $state "$name.json"
+        Assert-PlainPath $path
         $value = $record.$name
         if ($null -eq $value) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
         else { [IO.File]::WriteAllText($path, $value, (New-Object Text.UTF8Encoding($false))) }
