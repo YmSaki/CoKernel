@@ -85,11 +85,11 @@ begin
     'Yes: permanently delete managed WSL, notebooks, packages, caches and saved credentials.' + #13#10 +
     'No: remove the application and keep all compute data for reinstall.' + #13#10 +
     'Cancel: do nothing.' + #13#10 +
-    'Both removal modes stop running computations. Save edited notebooks first.', mbConfirmation, MB_YESNOCANCEL);
+    'Both removal modes stop running computations. Save edited notebooks first.', mbConfirmation, MB_YESNOCANCEL or MB_DEFBUTTON2);
   if Choice = IDCANCEL then exit;
   Mode := 'Preserve';
   if Choice = IDYES then begin
-    if MsgBox('Permanently erase all CoKernel notebooks and compute data? This cannot be undone.', mbConfirmation, MB_YESNO) <> IDYES then exit;
+    if MsgBox('Permanently erase all CoKernel notebooks and compute data? This cannot be undone.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) <> IDYES then exit;
     Mode := 'Remove';
   end;
   Result := RunMaintenance(ExpandConstant('{app}\{#Bin}\setup.ps1'), Mode, Code) and (Code = 0);
