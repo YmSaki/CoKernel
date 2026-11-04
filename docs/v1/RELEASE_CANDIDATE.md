@@ -38,12 +38,15 @@ hash included in the payload. Its installation follows Microsoft's documented
 ## Current boundaries and required acceptance
 
 - Windows 11 x64 with NVIDIA driver and internet access is the initial target.
-- This candidate only supports fresh installation. Existing managed runtimes are
-  refused before overwriting application files. Runtime migration, repair of a
-  partial import, and data/credential removal are not implemented by this package.
-- Uninstall preserves the WSL distribution, notebooks and credentials. Stop
-  sessions and close Host before uninstalling. The preserved runtime prevents
-  accidentally treating reinstall as a fresh migration.
+- Candidate.8 supports fresh installation, candidate.7-to-candidate.8 in-place
+  product updates, retained-data reinstall, and preserve-data/full-removal uninstall.
+  Read [the lifecycle contract](INSTALL_UPDATE.md#20-candidate8-lifecycle-contract).
+- Updates stop active computations only after interactive acceptance. Saved
+  notebooks, uv environments/caches and connection settings remain in place.
+  Incomplete imports remain fail-closed; explicit full removal can identify a
+  registered partial import through its prepared receipt and registered BasePath.
+- Default uninstall preserves compute data and credentials. Full removal requires
+  a second destructive confirmation and does not uninstall WSL or NVIDIA drivers.
 - Installer signing is not configured. SHA256SUMS identifies the artifact, but
   does not substitute for Authenticode publisher identity.
 - A build or cross-target check does not prove WSL installation, reboot resume,

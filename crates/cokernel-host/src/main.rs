@@ -86,6 +86,15 @@ async fn main() -> Result<()> {
             }
         }
         #[cfg(windows)]
+        Some("clear-credentials") => {
+            use cokernel_host::secrets::{SecretStore, WindowsSecretStore};
+            let state = std::path::PathBuf::from(args.next().context("state directory required")?);
+            if args.next().is_some() || !state.is_absolute() {
+                bail!("one absolute state directory required");
+            }
+            WindowsSecretStore::for_state(&state)?.clear()?;
+        }
+        #[cfg(windows)]
         Some("autostart") => {
             let operation = args
                 .next()
@@ -113,7 +122,7 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::to_string(&status)?);
         }
         #[cfg(windows)]
-        Some(operation @ ("check" | "start")) => {
+        Some(operation @ ("check" | "start" | "stop")) => {
             if args.next().is_some() {
                 bail!("unexpected Host control argument");
             }
@@ -121,10 +130,10 @@ async fn main() -> Result<()> {
             let mut client = PipeClient::connect(&default_name()?).await?;
             let result = client
                 .call(
-                    if operation == "start" {
-                        "runtime.start"
-                    } else {
-                        "runtime.get_status"
+                    match operation {
+                        "start" => "runtime.start",
+                        "stop" => "runtime.stop",
+                        _ => "runtime.get_status",
                     },
                     serde_json::json!({}),
                 )
@@ -207,7 +216,7 @@ async fn main() -> Result<()> {
             pipe.shutdown().await?;
         }
         _ => bail!(
-            "usage: cokernel-host version | check | start | serve <wsl-config.json> <absolute-state-directory> [--start|--stop] [--background] | autostart <status|enable|disable> <absolute-config> <absolute-state-directory> | remote <configure|status|start|stop|restart|clear> (Windows)"
+            "usage: cokernel-host version | check | start | stop | clear-credentials <absolute-state-directory> | serve <wsl-config.json> <absolute-state-directory> [--start|--stop] [--background] | autostart <status|enable|disable> <absolute-config> <absolute-state-directory> | remote <configure|status|start|stop|restart|clear> (Windows)"
         ),
     }
     Ok(())

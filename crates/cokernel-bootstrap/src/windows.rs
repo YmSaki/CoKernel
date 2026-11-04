@@ -98,6 +98,18 @@ fn state(directory: &Path, identity: uuid::Uuid, phase: &str) -> Result<()> {
     Ok(())
 }
 pub async fn import(image: &Path, destination: &Path) -> Result<serde_json::Value> {
+    import_named(image, destination, false).await
+}
+
+pub async fn import_product(image: &Path, destination: &Path) -> Result<serde_json::Value> {
+    import_named(image, destination, true).await
+}
+
+async fn import_named(
+    image: &Path,
+    destination: &Path,
+    product: bool,
+) -> Result<serde_json::Value> {
     ensure!(
         image.is_absolute() && destination.is_absolute(),
         "CK-SETUP-PATH: absolute paths required"
@@ -120,7 +132,11 @@ pub async fn import(image: &Path, destination: &Path) -> Result<serde_json::Valu
             && receipt.image_sha256 == hash_file(&mut file)?,
         "CK-SETUP-HASH: image receipt mismatch"
     );
-    let name = format!("CoKernelV1-Validation-{}", receipt.identity.simple());
+    let name = if product {
+        crate::PRODUCT_DISTRO_NAME.to_owned()
+    } else {
+        format!("CoKernelV1-Validation-{}", receipt.identity.simple())
+    };
     let listed = wsl(vec!["--list".into(), "--quiet".into()]).await?;
     ensure!(
         !listed

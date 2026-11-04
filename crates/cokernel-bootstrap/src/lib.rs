@@ -3,7 +3,7 @@
 //! Dedicated validation image/import primitives precede #34 installer UX.
 //! Destructive legacy reset remains behind explicit authorization and tests.
 
-pub const PRODUCT_DISTRO_NAME: &str = "CoKernelV1";
+pub const PRODUCT_DISTRO_NAME: &str = "CoKernel";
 
 pub mod image;
 #[cfg(target_os = "linux")]
