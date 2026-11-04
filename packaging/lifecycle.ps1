@@ -17,9 +17,13 @@ function Assert-PlainPath([string]$Path) {
     }
 }
 function Write-Record([string]$Path, $Value) {
+    Assert-PlainPath $Path
     $temp = "$Path.new"
+    Assert-PlainPath $temp
     $json = $Value | ConvertTo-Json -Depth 12
-    [IO.File]::WriteAllText($temp, $json, (New-Object Text.UTF8Encoding($false)))
+    $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($json)
+    $file = [IO.File]::Open($temp, 'Create', 'Write', 'None')
+    try { $file.Write($bytes, 0, $bytes.Length); $file.Flush($true) } finally { $file.Dispose() }
     if (Test-Path $Path) { [IO.File]::Replace($temp, $Path, [NullString]::Value) } else { [IO.File]::Move($temp, $Path) }
 }
 function Read-Record([string]$Path) {
@@ -96,4 +100,17 @@ function Send-WslInput([string]$Distro, [string[]]$Command, [string]$InputFile) 
 }
 function Invoke-Maintenance([string]$Distro, [string]$Action, [string]$Identity) {
     Send-WslInput $Distro @('/bin/sh','-s','--',$Action,$Identity) (Join-Path $PSScriptRoot 'runtime-maintenance.sh')
+}
+
+function Assert-PlainTree([string]$Root) {
+    Assert-PlainPath $Root
+    $pending = New-Object 'Collections.Generic.Stack[string]'
+    $pending.Push($Root)
+    while ($pending.Count) {
+        $directory = New-Object IO.DirectoryInfo($pending.Pop())
+        foreach ($entry in $directory.EnumerateFileSystemInfos()) {
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'CK-SETUP-PATH: Remove linked entries before deleting product data.' }
+            if ($entry.Attributes -band [IO.FileAttributes]::Directory) { $pending.Push($entry.FullName) }
+        }
+    }
 }

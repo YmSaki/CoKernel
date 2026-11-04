@@ -87,6 +87,7 @@ try {
     if ($Mode -in @('Prepare','Remove','Preserve')) {
         if (-not $MaintenanceAccepted) { throw 'Maintenance requires explicit acceptance of Session termination.' }
         if (Test-Path $journal) { Recover-Update }
+        if ($Mode -eq 'Remove') { Assert-PlainTree $root }
         if ((Test-Path $config) -or ($Mode -eq 'Remove' -and (Test-Path (Join-Path $runtime 'prepared.json')))) {
             $owned = Get-OwnedRuntime $root -AllowMissing:($Mode -eq 'Remove')
             if ($Mode -eq 'Prepare') {
