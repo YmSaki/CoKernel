@@ -69,6 +69,8 @@ Windows, GPU and connector acceptance remain separate evidence requirements.
 
 ## Candidate build evidence
 
-See [candidate.7 verification and artifacts](evidence/release-candidate-20261104.md)
-for the exact tested commit, successful Linux/Windows jobs, installer/image hashes
-and the installed-system acceptance that remains open.
+See [candidate.8 lifecycle verification and artifacts](evidence/candidate-8-lifecycle-20261104.md)
+for the exact tested code commit, successful Linux/Windows/release jobs, downloaded
+installer verification, and installed-system acceptance that remains open.
+[Candidate.7 evidence](evidence/release-candidate-20261104.md) is historical and
+is not counted as candidate.8 acceptance.
