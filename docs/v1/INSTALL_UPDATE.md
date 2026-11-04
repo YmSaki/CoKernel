@@ -418,5 +418,8 @@ Verification: `packaging/test-lifecycle.ps1` covers root selection, candidate.7
 ownership, foreign-distro refusal, interrupted-import identification and atomic
 journal replacement. `packaging/test-runtime-maintenance.py` executes real
 filesystem switches and injects failures at six boundaries to verify rollback
-and notebook preservation. These fixtures do not substitute for actual Windows
+and notebook preservation. `packaging/test-image-lifecycle.py` additionally runs the shipped Linux bootstrap
+in a disposable root chroot, changes a manifested worker payload, verifies
+capability finalization, rollback and commit while retaining Project files.
+These fixtures do not substitute for actual Windows
 installation, reboot, update, uninstall and GPU acceptance.

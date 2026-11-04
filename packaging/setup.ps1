@@ -213,7 +213,7 @@ try {
 } catch {
     Write-Host $_.Exception.Message -ForegroundColor Red
     if ($Mode -eq 'Install' -and (Test-Path $journal)) {
-        try { Recover-Update; Write-Host 'Previous runtime restored. Run the installer to retry.' }
+        try { Recover-Update; Write-Host 'Maintenance recovery completed. Run the installer to retry.' }
         catch { Write-Host "Recovery incomplete: $($_.Exception.Message). Keep setup.log and run the installer again." }
     }
     exit 1
