@@ -2,7 +2,7 @@
   #error Stage must point to the assembled release directory
 #endif
 #ifndef Version
-  #define Version "1.0.0-alpha.0-candidate.8"
+  #define Version "1.0.0-alpha.0-candidate.9"
 #endif
 #define Bin "versions\\" + Version
 [Setup]
@@ -39,11 +39,14 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\RunOnce"; ValueNa
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\RunOnce"; ValueName: "CoKernelV1Setup"; Flags: uninsdeletevalue
 [Code]
 var MaintenanceApproved: Boolean;
-function RunMaintenance(Script, Mode: String; var Code: Integer): Boolean;
+function RunMaintenance(Script, Mode: String; Accepted: Boolean; var Code: Integer): Boolean;
+var Args: String;
 begin
+  Args := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -Mode ' + Mode +
+    ' -AppRoot "' + ExpandConstant('{app}') + '"';
+  if Accepted then Args := Args + ' -MaintenanceAccepted';
   Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -Mode ' + Mode +
-    ' -AppRoot "' + ExpandConstant('{app}') + '" -MaintenanceAccepted',
+    Args,
     '', SW_SHOW, ewWaitUntilTerminated, Code);
 end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -54,21 +57,28 @@ begin
     Result := 'Interactive installation is required to confirm Session termination.';
     exit;
   end;
-  if not MaintenanceApproved then
-    MaintenanceApproved := MsgBox('Install or update CoKernel? Save edited notebooks first. Running computations will stop and variables held in memory will be lost. Saved notebooks, packages and connection settings will be preserved.', mbConfirmation, MB_YESNO) = IDYES;
-  if not MaintenanceApproved then begin Result := 'Installation deferred. No application files changed.'; exit; end;
+  MaintenanceApproved := False;
   ExtractTemporaryFile('setup.ps1');
   ExtractTemporaryFile('lifecycle.ps1');
   ExtractTemporaryFile('runtime-maintenance.sh');
   ExtractTemporaryFile('cokernel-host.exe');
-  if not RunMaintenance(ExpandConstant('{tmp}\setup.ps1'), 'Prepare', Code) or (Code <> 0) then
+  if not RunMaintenance(ExpandConstant('{tmp}\setup.ps1'), 'Prepare', False, Code) then begin
+    Result := 'Could not inspect installation state.';
+    exit;
+  end;
+  if Code = 10 then begin
+    MaintenanceApproved := MsgBox('CoKernel data was found. Continue maintenance? Save edited notebooks first. Running computations will stop and variables held in memory will be lost. Saved notebooks, packages and connection settings will be preserved.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+    if not MaintenanceApproved then begin Result := 'Maintenance deferred.'; exit; end;
+    if not RunMaintenance(ExpandConstant('{tmp}\setup.ps1'), 'Prepare', True, Code) then Code := 1;
+  end;
+  if Code <> 0 then
     Result := 'Preparation failed. Existing data was retained. See CoKernel setup.log; retry after resolving the reported error.';
 end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var Code: Integer;
 begin
   if CurStep = ssPostInstall then begin
-    if not RunMaintenance(ExpandConstant('{app}\{#Bin}\setup.ps1'), 'Install', Code) then
+    if not RunMaintenance(ExpandConstant('{app}\{#Bin}\setup.ps1'), 'Install', MaintenanceApproved, Code) then
       RaiseException('Could not launch CoKernel runtime setup.');
     if Code = 3010 then
       MsgBox('Restart Windows. CoKernel setup will resume after sign-in.', mbInformation, MB_OK)
@@ -92,6 +102,6 @@ begin
     if MsgBox('Permanently erase all CoKernel notebooks and compute data? This cannot be undone.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) <> IDYES then exit;
     Mode := 'Remove';
   end;
-  Result := RunMaintenance(ExpandConstant('{app}\{#Bin}\setup.ps1'), Mode, Code) and (Code = 0);
+  Result := RunMaintenance(ExpandConstant('{app}\{#Bin}\setup.ps1'), Mode, True, Code) and (Code = 0);
   if not Result then MsgBox('Removal failed. Application files have been kept. See setup.log before retrying.', mbError, MB_OK);
 end;

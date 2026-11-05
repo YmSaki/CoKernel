@@ -66,6 +66,19 @@ function Get-OwnedRuntime([string]$Root, [switch]$AllowMissing) {
     }
     return @{ Config = $config; Identity = $identity; ConfigPath = $configPath; Registered=$true }
 }
+function Get-PrepareTransition([string]$Root) {
+    $config = Join-Path $Root 'runtime/host-wsl.json'
+    if (Test-Path -LiteralPath $config -PathType Leaf) {
+        $null = Get-OwnedRuntime $Root
+        if (Test-Path -LiteralPath (Join-Path $Root 'maintenance.json')) { return 'Recover' }
+        return 'Maintain'
+    }
+    # A failed preflight may leave only its transcript and lock behind.
+    $entries = @(Get-ChildItem -LiteralPath $Root -Force -ErrorAction Stop |
+        Where-Object { $_.PSIsContainer -or $_.Name -notin @('setup.log','maintenance.lock') })
+    if ($entries.Count) { throw 'CK-SETUP-INCOMPLETE: Unrecognized or incomplete CoKernel data. Inspect setup.log before repair.' }
+    return 'Fresh'
+}
 function Stop-Product([string]$AppRoot, [string]$ControlExe) {
     Assert-PlainPath $AppRoot
     foreach ($name in @('cokernel-host','cokernel-desktop')) {

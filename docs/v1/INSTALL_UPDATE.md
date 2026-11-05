@@ -423,3 +423,14 @@ in a disposable root chroot, changes a manifested worker payload, verifies
 capability finalization, rollback and commit while retaining Project files.
 These fixtures do not substitute for actual Windows
 installation, reboot, update, uninstall and GPU acceptance.
+
+## Candidate.9 installation confirmation
+
+Prepare decides under the maintenance lock before stopping processes or
+recovering a journal. A fresh root (including an earlier setup log or lock file)
+continues directly to installation. A verified configured runtime, including
+retained data after uninstall, requires confirmation. An interrupted update of
+an owned runtime requires confirmation before recovery. Cancel leaves the runtime
+and journal untouched. Partial, ambiguous and foreign installations stop with a
+diagnostic. Fresh installation rechecks state before provisioning; RunOnce
+preserves whether maintenance was explicitly accepted across reboot.

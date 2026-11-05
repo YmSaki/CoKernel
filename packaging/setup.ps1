@@ -90,6 +90,12 @@ Start-Transcript -Path (Join-Path $root 'setup.log') -Append | Out-Null
 $removeRoot = $false
 try {
     if ($Mode -in @('Prepare','Remove','Preserve')) {
+        if ($Mode -eq 'Prepare') {
+            $transition = Get-PrepareTransition $root
+            if ($transition -eq 'Fresh') { exit 0 }
+            # Inno retries under a new lock after the user makes a choice.
+            if (-not $MaintenanceAccepted) { exit 10 }
+        }
         if (-not $MaintenanceAccepted) { throw 'Maintenance requires explicit acceptance of Session termination.' }
         if (Test-Path $journal) { Recover-Update }
         if ($Mode -eq 'Remove') { Assert-PlainTree $root }
@@ -126,6 +132,9 @@ try {
             foreach ($name in @('CoKernelSetup','CoKernelV1Setup')) { Remove-ItemProperty -Path $runOnce -Name $name -ErrorAction SilentlyContinue }
         }
     } else {
+        if (-not $MaintenanceAccepted -and (Get-PrepareTransition $root) -ne 'Fresh') {
+            throw 'Installation state changed. Run the installer again to review maintenance.'
+        }
         if ([Environment]::OSVersion.Version.Build -lt 22000 -or [IntPtr]::Size -ne 8) { throw 'CoKernel requires Windows 11 x64.' }
     # Microsoft documents these two locations for 64-bit Evergreen installations.
     $webviewKeys = @(
@@ -150,6 +159,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         # Only feature enablement is elevated. Import/Host/credentials stay with the original user.
         $resumeCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" -Resume' -f $PSCommandPath
+        if ($MaintenanceAccepted) { $resumeCommand += ' -MaintenanceAccepted' }
         New-Item -Path $runOnce -Force | Out-Null
         New-ItemProperty -Path $runOnce -Name CoKernelSetup -Value $resumeCommand -PropertyType String -Force | Out-Null
         $enabled = Start-Process -FilePath $wsl -ArgumentList '--install --no-distribution' -Verb RunAs -Wait -PassThru
@@ -201,7 +211,7 @@ try {
             Write-Record (Join-Path $runtime 'provisioned.json') @{ identity=$receipt.identity; phase='provisioned' }
             Restore-Intent $record
             if ($record.autostart) { Invoke-Native $hostExe @('autostart','enable',$config,$state) }
-            Write-Record $installedPath @{ schema=1; version='1.0.0-alpha.0-candidate.8'; image_identity=$receipt.identity; app_directory=$PSScriptRoot }
+            Write-Record $installedPath @{ schema=1; version='1.0.0-alpha.0-candidate.9'; image_identity=$receipt.identity; app_directory=$PSScriptRoot }
             $record.committed = $true
             Write-Record $journal $record
             if ($record.staged) { Invoke-Maintenance $owned.Config.distribution 'commit' ([string]$receipt.identity) }
@@ -210,14 +220,14 @@ try {
         } else {
             Invoke-Native $hostExe @('autostart','enable',$config,$state)
         }
-        Write-Record $installedPath @{ schema=1; version='1.0.0-alpha.0-candidate.8'; image_identity=$receipt.identity; app_directory=$PSScriptRoot }
+        Write-Record $installedPath @{ schema=1; version='1.0.0-alpha.0-candidate.9'; image_identity=$receipt.identity; app_directory=$PSScriptRoot }
         foreach ($name in @('CoKernelSetup','CoKernelV1Setup')) { Remove-ItemProperty -Path $runOnce -Name $name -ErrorAction SilentlyContinue }
         Start-Process -FilePath (Join-Path $PSScriptRoot 'cokernel-desktop.exe') | Out-Null
         Write-Host 'CoKernel setup completed.'
     }
 } catch {
     Write-Host $_.Exception.Message -ForegroundColor Red
-    if ($Mode -eq 'Install' -and (Test-Path $journal)) {
+    if ($Mode -eq 'Install' -and $MaintenanceAccepted -and (Test-Path $journal)) {
         try { Recover-Update; Write-Host 'Maintenance recovery completed. Run the installer to retry.' }
         catch { Write-Host "Recovery incomplete: $($_.Exception.Message). Keep setup.log and run the installer again." }
     }

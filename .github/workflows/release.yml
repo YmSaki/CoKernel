@@ -84,7 +84,9 @@ jobs:
         shell: powershell
         run: ./packaging/test-lifecycle.ps1
       - name: Build Windows application
-        run: cargo build --locked --release -p cokernel-desktop -p cokernel-host -p cokernel-bootstrap
+        run: cargo build --locked --release --features cokernel-desktop/custom-protocol -p cokernel-desktop -p cokernel-host -p cokernel-bootstrap
+      - name: Open packaged Desktop without a development server
+        run: node packaging/test-desktop-startup.mjs
       - name: Download authenticated WebView2 bootstrapper
         shell: pwsh
         run: |
@@ -137,14 +139,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.0-alpha.0-candidate.8' }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.0-alpha.0-candidate.9' }}
           RELEASE_SHA: ${{ github.sha }}
         run: |
           if [[ "$GITHUB_REF" == refs/heads/* ]]; then
             current=$(gh api "repos/$GH_REPO/git/ref/heads/release/alpha-installer" --jq .object.sha)
             if [[ "$current" != "$RELEASE_SHA" ]]; then echo 'Superseded build; no release mutation.'; exit 0; fi
           fi
-          notes='Candidate.8: install, in-place update preserving candidate.7 data/settings, recovery journal, and preserve-data/full-removal uninstall. Automated lifecycle and native checks passed. Actual Windows install/reboot/update/uninstall and GPU/ChatGPT acceptance remain required. Unsigned candidate.'
+          notes='Candidate.9: the Windows Desktop loads its bundled Projects screen offline; fresh installations skip the Session termination prompt. Existing verified data requires maintenance consent. Ambiguous or incomplete installations stop for diagnosis. Automated lifecycle and native checks passed. Actual Windows install/reboot/update/uninstall and GPU/ChatGPT acceptance remain required. Unsigned candidate.'
           if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
             [[ "$draft" == true ]] || { echo 'Refusing to replace a published release'; exit 1; }
             gh release edit "$RELEASE_TAG" --target "$RELEASE_SHA" --title "CoKernel $RELEASE_TAG" --notes "$notes"

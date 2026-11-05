@@ -11,6 +11,22 @@ try {
     $legacy=Join-Path $testRoot 'CoKernelV1'
     New-Item -ItemType Directory $legacy | Out-Null
     Assert ((Get-ProductRoot) -eq $legacy) 'Candidate.7 must retain credential-bound state directory.'
+    Assert ((Get-PrepareTransition $legacy) -eq 'Fresh') 'Empty root must not prompt.'
+    New-Item -ItemType File (Join-Path $legacy 'setup.log') | Out-Null
+    Assert ((Get-PrepareTransition $legacy) -eq 'Fresh') 'A transcript is not compute data.'
+    New-Item -ItemType Directory (Join-Path $legacy 'runtime') | Out-Null
+    Reject { Get-PrepareTransition $legacy } 'Partial import must not be classified as fresh.'
+    Remove-Item (Join-Path $legacy 'runtime')
+    if ($env:OS -eq 'Windows_NT') {
+        $scriptPath = Join-Path $PSScriptRoot 'setup.ps1'
+        $testApp = Join-Path $testRoot 'app'
+        & powershell.exe -NoProfile -File $scriptPath -Mode Prepare -AppRoot $testApp
+        Assert ($LASTEXITCODE -eq 0) 'Fresh Prepare must proceed without maintenance consent.'
+        New-Item -ItemType Directory (Join-Path $legacy 'runtime') | Out-Null
+        & powershell.exe -NoProfile -File $scriptPath -Mode Prepare -AppRoot $testApp
+        Assert ($LASTEXITCODE -eq 1) 'Incomplete Prepare must block instead of requesting consent.'
+        Remove-Item (Join-Path $legacy 'runtime')
+    }
     $modern=Join-Path $testRoot 'CoKernel'
     New-Item -ItemType Directory $modern | Out-Null
     Reject { Get-ProductRoot } 'Ambiguous installations must fail closed.'
@@ -32,6 +48,10 @@ try {
     $script:registration=[pscustomobject]@{DistributionName=$distro;BasePath=(Join-Path $runtime 'distro')}
     function Get-ChildItem { param($Path) if ($Path -like 'HKCU:*') { [pscustomobject]@{PSPath='fixture'} } else { Microsoft.PowerShell.Management\Get-ChildItem $Path } }
     function Get-ItemProperty { param($Path) $script:registration }
+    Assert ((Get-PrepareTransition $legacy) -eq 'Maintain') 'Owned retained runtime needs consent.'
+    Write-Record (Join-Path $legacy 'maintenance.json') @{schema=1}
+    Assert ((Get-PrepareTransition $legacy) -eq 'Recover') 'Pending recovery needs consent.'
+    Remove-Item (Join-Path $legacy 'maintenance.json')
     $owned=Get-OwnedRuntime $legacy
     Assert ($owned.Identity -eq $identity.ToString()) 'Owned candidate.7 was rejected.'
     $script:registration.BasePath=Join-Path $testRoot 'unrelated-distro'
