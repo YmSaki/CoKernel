@@ -934,15 +934,16 @@ async fn duplicate_id_is_confined_to_its_connection() {
     )
     .await
     .unwrap();
-    assert!(
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            read_json::<_, serde_json::Value>(&mut pipe)
-        )
-        .await
-        .unwrap()
-        .is_err()
-    );
+    // State notifications already queued before disconnect are legal. A reply
+    // to the duplicate request, or a connection that stays open, is not.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while let Ok(frame) = read_json::<_, serde_json::Value>(&mut pipe).await {
+            serde_json::from_value::<cokernel_protocol::EventEnvelope>(frame)
+                .expect("duplicate request received a non-event frame");
+        }
+    })
+    .await
+    .expect("duplicate request did not close its connection");
     let mut good = PipeClient::connect(&fixture.name).await.unwrap();
     assert!(good.call("runtime.get_status", json!({})).await.unwrap().ok);
     drop(good);
