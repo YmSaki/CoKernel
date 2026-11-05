@@ -9,11 +9,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 const exe = resolve('target/release/cokernel-desktop.exe');
 const profile = await mkdtemp(join(tmpdir(), 'cokernel-webview-'));
 const port = 19427;
-const app = spawn(exe, [], { env: { ...process.env,
+const app = spawn(exe, [], { stdio: 'inherit', env: { ...process.env,
   WEBVIEW2_USER_DATA_FOLDER: profile,
   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=' + port,
 } });
 let pageUrl = '';
+let inspectorStatus = '';
 async function rendered(wsUrl) {
   const socket = new WebSocket(wsUrl);
   try {
@@ -34,7 +35,7 @@ try {
   while (Date.now() < deadline) {
     if (app.exitCode !== null) throw Error('Desktop exited: ' + app.exitCode);
     const targets = await fetch('http://127.0.0.1:' + port + '/json/list', {signal: AbortSignal.timeout(1500)})
-      .then(r => r.json()).catch(() => []);
+      .then(r => r.json()).then(items => { inspectorStatus = JSON.stringify(items.map(t => ({ type: t.type, url: t.url }))); return items; }).catch(error => { inspectorStatus = String(error.cause ?? error); return []; });
     for (const target of targets.filter(t => t.type === 'page')) {
       pageUrl = target.url;
       if (/^https?:\/\/tauri\.localhost(?:\/|$)/.test(pageUrl) && await rendered(target.webSocketDebuggerUrl)) {
@@ -46,5 +47,5 @@ try {
     if (process.exitCode === 0) break;
     await delay(300);
   }
-  if (process.exitCode !== 0) throw Error('Bundled Projects UI did not render. Last URL: ' + pageUrl);
+  if (process.exitCode !== 0) throw Error('Bundled Projects UI did not render. Last URL: ' + pageUrl + '; inspector: ' + inspectorStatus);
 } finally { app.kill(); }

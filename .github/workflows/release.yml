@@ -85,8 +85,6 @@ jobs:
         run: ./packaging/test-lifecycle.ps1
       - name: Build Windows application
         run: cargo build --locked --release --features cokernel-desktop/custom-protocol -p cokernel-desktop -p cokernel-host -p cokernel-bootstrap
-      - name: Open packaged Desktop without a development server
-        run: node packaging/test-desktop-startup.mjs
       - name: Download authenticated WebView2 bootstrapper
         shell: pwsh
         run: |
@@ -95,6 +93,20 @@ jobs:
           $signature = Get-AuthenticodeSignature $file
           if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation(,|$)') { throw 'Invalid Microsoft signature' }
           Get-FileHash $file -Algorithm SHA256 | ConvertTo-Json | Set-Content target/release-stage/webview2-sha256.json
+      - name: Provision WebView2 on the Windows test machine
+        shell: pwsh
+        run: |
+          $installer = Resolve-Path 'target/release-stage/MicrosoftEdgeWebview2Setup.exe'
+          $keys = @('HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}')
+          function Get-WebViewVersion { foreach ($key in $keys) { Get-ItemPropertyValue -Path $key -Name pv -ErrorAction SilentlyContinue } }
+          if (-not (Get-WebViewVersion)) {
+            $p = Start-Process -FilePath $installer -ArgumentList '/silent /install' -Wait -PassThru
+            if ($p.ExitCode) { throw "WebView setup failed ($($p.ExitCode))" }
+          }
+          if (-not (Get-WebViewVersion)) { throw 'WebView2 missing after provisioning.' }
+          Write-Host "WebView2 version: $(Get-WebViewVersion)"
+      - name: Open packaged Desktop without a development server
+        run: node packaging/test-desktop-startup.mjs
       - name: Package installer
         shell: pwsh
         run: |
