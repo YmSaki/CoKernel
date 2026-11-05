@@ -106,7 +106,8 @@ jobs:
           if (-not (Get-WebViewVersion)) { throw 'WebView2 missing after provisioning.' }
           Write-Host "WebView2 version: $(Get-WebViewVersion)"
       - name: Open packaged Desktop without a development server
-        run: node packaging/test-desktop-startup.mjs
+        shell: powershell
+        run: ./packaging/test-desktop-startup.ps1
       - name: Package installer
         shell: pwsh
         run: |
