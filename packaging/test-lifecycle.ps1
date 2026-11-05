@@ -114,3 +114,6 @@ try {
     Assert ((Read-Record (Join-Path $runtime 'provisioned.json')).identity -eq $newIdentity) 'Committed identity was reverted.'
     Write-Host 'Lifecycle ownership, retained-data discovery and journal tests passed.'
 } finally { $env:LOCALAPPDATA=$originalLocal; Remove-Item $testRoot -Recurse -Force }
+
+# Failure-path assertions intentionally run a child that exits with 1.
+exit 0
