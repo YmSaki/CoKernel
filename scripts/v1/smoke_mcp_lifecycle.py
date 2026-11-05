@@ -60,6 +60,34 @@ def exercise_tools(rpc, bridge, project, document, session, worker):
         assert result["isError"] is False, result
         return json.loads(result["content"][0]["text"])
 
+    # Authoring from MCP only: no Desktop-created Project/document/cell prerequisite.
+    created=tool("create_project",name="ai-authored")
+    ai_project=created["project_id"]
+    for _ in range(1200):
+        receipt=tool("get_operation",project_id=ai_project,operation_id=created["operation_id"])
+        if receipt["result"]["state"] in ("SUCCEEDED","FAILED"): break
+        time.sleep(0.05)
+    assert receipt["result"]["state"]=="SUCCEEDED",receipt
+    repair=tool("sync_environment",project_id=ai_project)
+    assert wait_package(bridge,ai_project,repair)["project"]["project_id"]==ai_project
+    doc=tool("create_notebook",project_id=ai_project,relative_path="ai.ipynb")["document"]
+    ai={"project_id":ai_project,"notebook_id":doc["notebook_id"]}
+    edited=tool("insert_code_cell",**ai,expected_revision=doc["revision"],index=0,cell_id="ai-cell",source="ai_value = 321\nai_value + 1")
+    revision=edited["document"]["revision"]
+    tool("set_cell_source",**ai,expected_revision=revision-1,cell_id="ai-cell",source="raise Exception()",error="CK-NB-CONFLICT")
+    updated=tool("set_cell_source",**ai,expected_revision=revision,cell_id="ai-cell",source="ai_value = 321\nai_value + 2")
+    revision=updated["document"]["revision"]
+    tool("save_notebook",**ai,expected_revision=revision)
+    live_ai=tool("ensure_session",**ai)
+    op=tool("execute_cell",**ai,session_id=live_ai["session_id"],expected_revision=revision,cell_id="ai-cell")
+    completed=wait_operation(bridge,ai_project,op["operation_id"])
+    assert completed["execution_status"]=="SUCCEEDED" and completed["state"]=="PERSISTED",completed
+    assert tool("get_variable",project_id=ai_project,session_id=live_ai["session_id"],name="ai_value")["value"]==321
+    assert tool("open_notebook",project_id=ai_project,relative_path="ai.ipynb")["document"]["notebook_id"]==doc["notebook_id"]
+    tool("create_notebook",project_id=ai_project,relative_path="../escape.ipynb",error="CK-NB-")
+    tool("add_packages",project_id=ai_project,packages=["--help"],error="CK-MCP-PARAMS")
+    tool("stop_session",project_id=ai_project,session_id=live_ai["session_id"])
+
     notebook=document["notebook_id"]
     identity={"project_id":project,"notebook_id":notebook}
     live={"project_id":project,"session_id":session}
@@ -224,7 +252,7 @@ def main():
                 error.close()
             initialized = rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "lifecycle-proof", "version": "1"}})
             assert initialized["protocolVersion"] == "2025-11-25"
-            assert {tool["name"] for tool in rpc("tools/list")["tools"]} == {"list_projects", "list_notebooks", "read_notebook", "list_sessions", "get_session", "ensure_session", "execute_cell", "interrupt_session", "restart_session", "stop_session", "list_variables", "get_variable", "get_runtime_status", "get_resources", "get_operation"}
+            assert {tool["name"] for tool in rpc("tools/list")["tools"]} == {"list_projects", "list_notebooks", "read_notebook", "list_sessions", "get_session", "ensure_session", "execute_cell", "interrupt_session", "restart_session", "stop_session", "list_variables", "get_variable", "get_runtime_status", "get_resources", "get_operation", "create_project", "create_notebook", "open_notebook", "insert_code_cell", "set_cell_source", "add_packages", "save_notebook", "sync_environment"}
             for tool in ["list_projects", "get_runtime_status"]:
                 result = rpc("tools/call", {"name": tool, "arguments": {}})
                 assert result["isError"] is False
@@ -274,7 +302,7 @@ def main():
             if child is not None:
                 stop_mcp(child, stderr, crash=True)
             bridge.finish()
-    print("[mcp-lifecycle-smoke] PASS: 15 actual HTTP tools; Human value 123456789 read by MCP in same primary/worker; Human/MCP FIFO; authoritative cell/revision; Project ownership; hostile inspection; bounded responses; interrupt/restart/stop; MCP SIGKILL/restart preserves live worker; bearer absent from args/environment/logs; owned cleanup. Desktop/Codex/Web ChatGPT and managed isolation remain pending.")
+    print("[mcp-lifecycle-smoke] PASS: 23 actual HTTP tools; Human value 123456789 read by MCP in same primary/worker; Human/MCP FIFO; authoritative cell/revision; Project ownership; hostile inspection; bounded responses; interrupt/restart/stop; MCP SIGKILL/restart preserves live worker; bearer absent from args/environment/logs; owned cleanup. Desktop/Codex/Web ChatGPT and managed isolation remain pending.")
 
 
 if __name__ == "__main__":

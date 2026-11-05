@@ -2,7 +2,7 @@
 
 **Projects, notebooks, local GPU compute, and AI sharing one execution state.**
 
-> Branch status: v1 architecture/specification complete; implementation starts from `docs/v1/IMPLEMENTATION_ORDER.md`.
+> Branch status: release candidate implementation. See [`docs/v1/RELEASE_CANDIDATE.md`](docs/v1/RELEASE_CANDIDATE.md) for installation, verified behavior, and remaining real-machine acceptance.
 
 CoKernel v1 is a Windows application that turns an NVIDIA GPU PC into a managed Linux compute environment.
 
@@ -24,17 +24,21 @@ Windows CoKernel
 - CoKernel supervises Session failures and shows available exit/OOM/GPU/runtime evidence.
 - Remote AI access is provided through CoKernel MCP + a managed secure outbound tunnel.
 
-The normal user workflow is:
+The primary AI workflow is:
 
-```text
-Install CoKernel
- -> Create/Open Project
- -> Add packages
- -> Create/Import/Open .ipynb
- -> Run cells
- -> Inspect results/resources
- -> Optionally let AI join the same Session
-```
+1. Download `CoKernelSetup.exe` from the candidate Release and install it.
+2. Allow Setup to prepare the GPU runtime; restart Windows if requested.
+3. In Desktop, choose **AIに接続する** and save the Tunnel ID/runtime API key.
+4. Select that tunnel in your AI connector settings.
+5. Ask the AI to create a Project/notebook, add dependencies with uv, and execute cells.
+
+The AI can create, open, edit, save and run notebooks through 23 MCP tools.
+Notebook edits use revision checks; separate notebooks have separate persistent
+Python namespaces. Closing Desktop leaves the Host and Sessions running.
+
+This first-install candidate preserves existing WSL distributions and refuses
+unverified in-place runtime migration. Actual Windows/GPU/AI acceptance is
+tracked separately from component tests; a candidate is not a stable-release claim.
 
 WSL administration, process supervision, package cache details, MCP transport, and tunnel lifecycle are product-managed implementation details.
 

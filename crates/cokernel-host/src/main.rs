@@ -86,6 +86,15 @@ async fn main() -> Result<()> {
             }
         }
         #[cfg(windows)]
+        Some("clear-credentials") => {
+            use cokernel_host::secrets::{SecretStore, WindowsSecretStore};
+            let state = std::path::PathBuf::from(args.next().context("state directory required")?);
+            if args.next().is_some() || !state.is_absolute() {
+                bail!("one absolute state directory required");
+            }
+            WindowsSecretStore::for_state(&state)?.clear()?;
+        }
+        #[cfg(windows)]
         Some("autostart") => {
             let operation = args
                 .next()
@@ -112,6 +121,37 @@ async fn main() -> Result<()> {
             };
             println!("{}", serde_json::to_string(&status)?);
         }
+        #[cfg(windows)]
+        Some(operation @ ("check" | "start" | "stop")) => {
+            if args.next().is_some() {
+                bail!("unexpected Host control argument");
+            }
+            use cokernel_host::ipc_pipe::{PipeClient, default_name};
+            let mut client = PipeClient::connect(&default_name()?).await?;
+            let result = client
+                .call(
+                    match operation {
+                        "start" => "runtime.start",
+                        "stop" => "runtime.stop",
+                        _ => "runtime.get_status",
+                    },
+                    serde_json::json!({}),
+                )
+                .await?;
+            if !result.ok
+                || (operation == "check"
+                    && result
+                        .result
+                        .as_ref()
+                        .is_none_or(|v| v["observed"] != "HEALTHY"))
+            {
+                bail!("Host has not reported a healthy runtime");
+            }
+            println!(
+                "{}",
+                serde_json::json!({"accepted":true,"operation":operation})
+            );
+        }
         Some("--version") | Some("version") => {
             println!("cokernel-host {}", env!("CARGO_PKG_VERSION"))
         }
@@ -124,16 +164,7 @@ async fn main() -> Result<()> {
                 args.next()
                     .context("serve requires an absolute Host state directory")?,
             );
-            let (initial, background) = match args.next().as_deref() {
-                None => (None, false),
-                Some("--start") => (Some(DesiredState::Running), false),
-                Some("--stop") => (Some(DesiredState::Stopped), false),
-                Some("--background") => (None, true),
-                Some(_) => bail!("expected --start, --stop or --background"),
-            };
-            if args.next().is_some() {
-                bail!("unexpected Host argument");
-            }
+            let (initial, background) = launch_flags(args)?;
             #[cfg(windows)]
             let startup = cokernel_host::autostart::AutostartTarget::new(
                 std::env::current_exe()?,
@@ -185,8 +216,44 @@ async fn main() -> Result<()> {
             pipe.shutdown().await?;
         }
         _ => bail!(
-            "usage: cokernel-host version | serve <wsl-config.json> <absolute-state-directory> [--start|--stop|--background] | autostart <status|enable|disable> <absolute-config> <absolute-state-directory> | remote <configure|status|start|stop|restart|clear> (Windows)"
+            "usage: cokernel-host version | check | start | stop | clear-credentials <absolute-state-directory> | serve <wsl-config.json> <absolute-state-directory> [--start|--stop] [--background] | autostart <status|enable|disable> <absolute-config> <absolute-state-directory> | remote <configure|status|start|stop|restart|clear> (Windows)"
         ),
     }
     Ok(())
+}
+
+// Background controls console attachment; desired state is independent.
+fn launch_flags(args: impl Iterator<Item = String>) -> Result<(Option<DesiredState>, bool)> {
+    let mut initial = None;
+    let mut background = false;
+    for arg in args {
+        match arg.as_str() {
+            "--start" if initial.is_none() => initial = Some(DesiredState::Running),
+            "--stop" if initial.is_none() => initial = Some(DesiredState::Stopped),
+            "--background" if !background => background = true,
+            _ => bail!("expected at most one of --start/--stop and one --background flag"),
+        }
+    }
+    Ok((initial, background))
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+    #[test]
+    fn detached_setup_can_start_runtime_and_login_preserves_existing_intent() {
+        let (desired, background) =
+            launch_flags(["--start", "--background"].into_iter().map(str::to_owned)).unwrap();
+        assert!(matches!(desired, Some(DesiredState::Running)) && background);
+        let (desired, background) =
+            launch_flags(["--background"].into_iter().map(str::to_owned)).unwrap();
+        assert!(desired.is_none() && background);
+        for flags in [
+            vec!["--start", "--stop"],
+            vec!["--background", "--background"],
+            vec!["--start", "unexpected"],
+        ] {
+            assert!(launch_flags(flags.into_iter().map(str::to_owned)).is_err());
+        }
+    }
 }

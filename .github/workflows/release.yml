@@ -1,0 +1,169 @@
+name: Release candidate
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v1.*']
+    branches: ['release/alpha-installer']
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.13.4'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+          key: linux-rust-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: linux-rust-${{ hashFiles('Cargo.lock') }}-
+      - name: Prepare worker Python for source and canonical gates
+        run: |
+          uv sync --locked --project worker --dev
+          echo "$PWD/worker/.venv/bin" >> "$GITHUB_PATH"
+      - name: Verify runtime and worker
+        run: bash scripts/v1/check.sh
+      - name: Verify update interruption and rollback
+        run: python3 packaging/test-runtime-maintenance.py
+      - name: Assemble verified Linux payload
+        run: bash packaging/build-linux.sh
+      - name: Verify packaged-image update and rollback
+        run: sudo python3 packaging/test-image-lifecycle.py target/release-stage/runtime.tar
+      - name: Verify pinned tunnel integration
+        run: python3 scripts/v1/smoke_tunnel_supervision.py target/release-inputs/tunnel/tunnel-client
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-runtime
+          path: target/release-stage/
+  windows:
+    needs: linux
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.33.0'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-runtime
+          path: target/release-stage/
+      - name: Build frontend
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile; if ($LASTEXITCODE) { exit $LASTEXITCODE }; pnpm build
+      - uses: actions/cache/restore@v4
+        id: windows-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+            target/release
+          key: windows-rust-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: windows-rust-${{ hashFiles('Cargo.lock') }}-
+      - name: Warm the Windows process-test interpreter
+        run: python -c "import json, hashlib, os, pathlib, struct, sys, time; print(sys.version)"
+      - name: Windows tests
+        # Tests exercise concurrency internally; avoid racing unrelated cold Python starts.
+        run: cargo test --locked -p cokernel-host -p cokernel-bootstrap -p cokernel-desktop -- --test-threads=1
+      - name: Verify lifecycle ownership and retained-data discovery
+        shell: powershell
+        run: ./packaging/test-lifecycle.ps1
+      - name: Build Windows application
+        run: cargo build --locked --release --features cokernel-desktop/custom-protocol -p cokernel-desktop -p cokernel-host -p cokernel-bootstrap
+      - name: Download authenticated WebView2 bootstrapper
+        shell: pwsh
+        run: |
+          $file = 'target/release-stage/MicrosoftEdgeWebview2Setup.exe'
+          Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $file
+          $signature = Get-AuthenticodeSignature $file
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation(,|$)') { throw 'Invalid Microsoft signature' }
+          Get-FileHash $file -Algorithm SHA256 | ConvertTo-Json | Set-Content target/release-stage/webview2-sha256.json
+      - name: Provision WebView2 on the Windows test machine
+        shell: pwsh
+        run: |
+          $installer = Resolve-Path 'target/release-stage/MicrosoftEdgeWebview2Setup.exe'
+          $keys = @('HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}')
+          function Get-WebViewVersion { foreach ($key in $keys) { Get-ItemPropertyValue -Path $key -Name pv -ErrorAction SilentlyContinue } }
+          if (-not (Get-WebViewVersion)) {
+            $p = Start-Process -FilePath $installer -ArgumentList '/silent /install' -Wait -PassThru
+            if ($p.ExitCode) { throw "WebView setup failed ($($p.ExitCode))" }
+          }
+          if (-not (Get-WebViewVersion)) { throw 'WebView2 missing after provisioning.' }
+          Write-Host "WebView2 version: $(Get-WebViewVersion)"
+      - name: Open packaged Desktop without a development server
+        shell: powershell
+        run: ./packaging/test-desktop-startup.ps1
+      - name: Package installer
+        shell: pwsh
+        run: |
+          foreach ($name in @('cokernel-desktop','cokernel-host','cokernel-bootstrap')) {
+            Copy-Item "target/release/$name.exe" target/release-stage/
+          }
+          $errors = $null; $tokens = $null
+          Get-ChildItem packaging/*.ps1 | ForEach-Object {
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { throw ($errors | Out-String) }
+          }
+          & 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe' "/DStage=$((Resolve-Path target/release-stage).Path)" packaging/CoKernel.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $file = 'packaging/output/CoKernelSetup.exe'
+          $digest = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$digest  CoKernelSetup.exe" | Set-Content packaging/output/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CoKernel-Windows-installer
+          path: packaging/output/
+      - uses: actions/cache/save@v4
+        if: always() && steps.windows-cache.outputs.cache-primary-key != '' && steps.windows-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+            target/release
+          key: ${{ steps.windows-cache.outputs.cache-primary-key }}
+  release:
+    if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/release/alpha-installer'
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: CoKernel-Windows-installer
+          path: release/
+      - name: Create draft for real-machine acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.0-alpha.0-candidate.9' }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/heads/* ]]; then
+            current=$(gh api "repos/$GH_REPO/git/ref/heads/release/alpha-installer" --jq .object.sha)
+            if [[ "$current" != "$RELEASE_SHA" ]]; then echo 'Superseded build; no release mutation.'; exit 0; fi
+          fi
+          notes='Candidate.9: the Windows Desktop loads its bundled Projects screen offline; fresh installations skip the Session termination prompt. Existing verified data requires maintenance consent. Ambiguous or incomplete installations stop for diagnosis. Automated lifecycle and native checks passed. Actual Windows install/reboot/update/uninstall and GPU/ChatGPT acceptance remain required. Unsigned candidate.'
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            [[ "$draft" == true ]] || { echo 'Refusing to replace a published release'; exit 1; }
+            gh release edit "$RELEASE_TAG" --target "$RELEASE_SHA" --title "CoKernel $RELEASE_TAG" --notes "$notes"
+            gh release upload "$RELEASE_TAG" release/* --clobber
+          else
+            gh release create "$RELEASE_TAG" release/* --target "$RELEASE_SHA" --draft --prerelease --title "CoKernel $RELEASE_TAG" --notes "$notes"
+          fi

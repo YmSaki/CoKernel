@@ -82,13 +82,13 @@ impl<R: UvRunner + 'static> RuntimeService<R> {
                 self.ensure_package_idle(p.project_id)?;
                 self.ensure_no_starting_sessions(p.project_id)?;
                 self.ensure_no_document_requests(p.project_id)?;
-                if let Some(runtime) = &self.notebooks {
-                    if runtime.sessions.list().await.iter().any(|s| {
+                if let Some(runtime) = &self.notebooks
+                    && runtime.sessions.list().await.iter().any(|s| {
                         s.project_id == p.project_id
                             && !matches!(s.state, SessionState::Stopped | SessionState::Crashed)
-                    }) {
-                        return Err(DomainError { code:"CK-PROJ-IN-USE".into(), component:"project".into(), summary:"Project still has live Sessions".into(), action:"Stop its Sessions explicitly before removing the Project from the registry".into(), detail:None });
-                    }
+                    })
+                {
+                    return Err(DomainError { code:"CK-PROJ-IN-USE".into(), component:"project".into(), summary:"Project still has live Sessions".into(), action:"Stop its Sessions explicitly before removing the Project from the registry".into(), detail:None });
                 }
                 self.packages.preparing.insert(
                     id.clone(),
@@ -306,10 +306,10 @@ impl<R: UvRunner + 'static> RuntimeService<R> {
             } => {
                 let result =
                     result.and_then(|plan| self.start_environment_plan(&method, kind, plan));
-                if result.is_err() {
-                    if let Some(events) = self.events() {
-                        events.publish("project.refresh_required", json!({"method":method}));
-                    }
+                if result.is_err()
+                    && let Some(events) = self.events()
+                {
+                    events.publish("project.refresh_required", json!({"method":method}));
                 }
                 Some(result)
             }

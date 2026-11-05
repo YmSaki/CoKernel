@@ -22,6 +22,7 @@ function button(label: string, action: () => void, className = ''): HTMLButtonEl
   const node = el('button', label, className); node.type = 'button'; node.addEventListener('click', action); return node;
 }
 function errorText(error: unknown): string {
+  if (typeof error === 'string') return error;
   if (error && typeof error === 'object') {
     const e = error as { code?: string; summary?: string; action?: string };
     return [e.code, e.summary, e.action].filter(Boolean).join(' · ') || '応答を読み取れませんでした。';
@@ -34,7 +35,7 @@ sidebar.append(el('div', 'CoKernel', 'brand'), el('p', 'Python workspace', 'mute
 const content = el('main'); const header = el('header');
 const title = el('h1', 'Projects'); const connection = el('span', 'Hostへ接続中', 'badge');
 const notice = el('div', '', 'notice'); notice.setAttribute('role', 'status');
-header.append(title, connection, button('更新', () => { void refresh(); }, 'secondary'));
+header.append(title, connection, button('Runtimeを起動', () => { void call('runtime.start').then(() => refresh()).catch((error: unknown) => { notice.textContent = errorText(error); }); }, 'secondary'), button('更新', () => { void refresh(); }, 'secondary'));
 const home = el('section', '', 'summary'); const projects = el('section'); const detail = el('section');
 const formSection = el('section', '', 'panel');
 const form = el('form');
@@ -119,7 +120,7 @@ async function refresh() {
   if (refreshBusy) return;
   refreshBusy = true;
   try {
-    const results = await Promise.allSettled([call<HostStatus>('runtime.get_status'), call<Project[]>('projects.list'), call<{ state: string }>('remote_access.get_status')]);
+    const results = await Promise.allSettled([call<HostStatus>('runtime.get_status'), call<Project[]>('projects.list'), call<{ state: string }>('remote_access.get_status'), call<{configured: boolean; tunnel_id: string | null}>('remote_access.get_configuration')]);
     home.replaceChildren(); const errors: string[] = [];
     results.forEach((result, index) => {
       if (result.status === 'rejected') { errors.push(errorText(result.reason)); return; }
@@ -127,7 +128,8 @@ async function refresh() {
         const status = result.value as HostStatus;
         const card = el('article', '', 'stat'); card.append(el('span', 'Runtime', 'muted'), el('strong', status.observed), el('small', status.runtime_version ?? '未起動')); home.append(card);
       } else if (index === 1) renderProjects(result.value as Project[]);
-      else { const card = el('article', '', 'stat'); card.append(el('span', 'Remote AI', 'muted'), el('strong', (result.value as { state: string }).state)); home.append(card); }
+      else if (index === 2) { const card = el('article', '', 'stat'); card.append(el('span', 'Remote AI', 'muted'), el('strong', (result.value as { state: string }).state)); home.append(card); }
+      else { const configuration = result.value as {configured: boolean; tunnel_id: string | null}; configuredTunnel.textContent = configuration.configured ? `コネクタで選択するTunnel ID: ${configuration.tunnel_id}` : 'APIキー・接続設定は未登録です。'; }
     });
     notice.textContent = errors.join('\n');
     if (selected) await refreshDetail();
@@ -163,6 +165,7 @@ async function tick() {
     connection.textContent = connected ? 'Hostに接続済み' : 'Hostに未接続 · 自動再接続中';
     connection.classList.toggle('offline', !connected);
     submit.disabled = !connected || mutationPending || !!pendingOperation;
+    configure.disabled = !connected || setupPending;
     if (!connected) notice.textContent = 'Hostの状態を確認できません。表示は最後に取得した情報です。';
     if (connected && observation.revision !== lastRevision && !refreshBusy) {
       lastRevision = observation.revision; void refresh();
@@ -171,4 +174,21 @@ async function tick() {
   } catch (error) { connection.textContent = 'Desktop接続エラー'; notice.textContent = errorText(error); }
   finally { window.setTimeout(() => { void tick(); }, 1000); }
 }
+const setup = el('section', '', 'panel');
+setup.append(el('h2', 'AIに接続する'), el('p', 'Tunnel IDと実行用APIキーを保存すると接続を開始します。キーはWindowsの専用画面へ入力します。'));
+const configuredTunnel = el('p', '接続設定を確認しています…', 'path'); setup.append(configuredTunnel);
+const setupStatus = el('p'); setupStatus.setAttribute('role','status');
+let setupPending=false;
+const configure=button('APIキー・接続設定',()=>{
+  if(setupPending || !connected) return;
+  setupPending=true; configure.disabled=true;
+  void invoke<{cancelled?:boolean}>('configure_remote').then(result=>{
+    setupStatus.textContent=result.cancelled ? '設定をキャンセルしました。' : '設定を保存し、接続を開始しました。Remote AIの状態を確認してください。';
+    void refresh();
+  }).catch((error:unknown)=>{setupStatus.textContent=errorText(error);})
+  .finally(()=>{setupPending=false;configure.disabled=false;});
+});
+setup.append(configure,button('接続を再開',()=>{void call('remote_access.start').then(()=>refresh()).catch((error:unknown)=>{setupStatus.textContent=errorText(error);});}),button('AI接続を停止',()=>{void call('remote_access.stop').then(()=>refresh()).catch((error:unknown)=>{setupStatus.textContent=errorText(error);});}),setupStatus);
+setup.append(el('p','ChatGPT側でこのトンネルをコネクタとして追加してください。接続後はAIがProject作成、依存パッケージ追加、ノートブック作成・実行を行えます。','muted'));
+content.insertBefore(setup,projects);
 void tick();

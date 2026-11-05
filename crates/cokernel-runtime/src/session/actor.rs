@@ -382,9 +382,8 @@ struct BoundedExecutionCapture {
 impl BoundedExecutionCapture {
     fn push(&mut self, frame: &WorkerFrame) {
         if self.error.is_some() { return; }
-        if let WorkerFrame::Event { event, .. } = frame {
-            if matches!(event.as_str(), worker::event::HEARTBEAT | worker::event::WORKER_WARNING) { return; }
-        }
+        if let WorkerFrame::Event { event, .. } = frame
+            && matches!(event.as_str(), worker::event::HEARTBEAT | worker::event::WORKER_WARNING) { return; }
         let size = match serde_json::to_vec(frame) {
             Ok(bytes) => bytes.len(),
             Err(_) => { self.error = Some("execution capture encoding failed".into()); self.frames.clear(); return; }

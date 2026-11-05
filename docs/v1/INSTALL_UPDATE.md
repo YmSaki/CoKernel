@@ -117,8 +117,8 @@ includes known Python/uv/worker/tunnel tools; it never copies a user's whole hom
 Hash receipts establish development integrity, not signed release provenance.
 
 The development payload must also supply the public CA bundle from Ubuntu
-`ca-certificates 20260601~24.04.1`, SHA-256
-`9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd`.
+`ca-certificates 20260816ubuntu0.24.04.1`, SHA-256
+`64e7c24b0536b525fb19b145768bd5e6e12ced0df3db837c34553ea789acd143`.
 The builder verifies this independent pin and installs a root-owned 0644 copy at
 `/etc/ssl/certs/ca-certificates.crt` and `/etc/ssl/cert.pem` before boot (the latter
 is bundled Python/OpenSSL's default file). Finalization checks both copies.
@@ -369,3 +369,68 @@ Mandatory:
 - v1-to-v1 update preserves Project notebooks/locks;
 - repair of corrupted runtime payload preserves user Project files;
 - partial Host/Runtime version mismatch yields repair/update error, not undefined behavior.
+
+## 20. Candidate.8 lifecycle contract
+
+Requirements R-UPD-001..004 and section 10 are realized by the following bounded
+maintenance path. These are implementation decisions, not a claim of actual
+Windows/GPU acceptance.
+
+- New installations use `%LOCALAPPDATA%/CoKernel` and the dedicated `CoKernel`
+  WSL name. Existing candidate.7 `CoKernelV1` data roots and unique validation
+  distro names remain in place. Moving the Host state directory would change the
+  Credential Manager target, so updates never rename it. Both roots present is
+  an ambiguity error; a pre-existing unrelated `CoKernel` distro is not adopted.
+- Windows binaries are installed under `Programs/CoKernel/versions/<version>`.
+  Older binaries remain available for failure recovery. Routine Linux updates
+  replace only `/opt/cokernel`, its manifest, and the bundled public CA files.
+  Projects, registry, caches, Python environments, WSL registration and virtual
+  disk stay in place. This release supports the same pinned Ubuntu base and
+  state/protocol schema; a base/schema transition needs an explicit migration.
+- Interactive installation asks the user to save edits and approve loss of live
+  computations/variables before stopping Desktop/Host. Unattended destructive
+  maintenance is refused. A failed graceful stop may terminate only processes
+  whose executable paths are under the selected product installation.
+- A current-user exclusive file lock serializes maintenance. An atomic Windows
+  journal preserves desired state, remote-access intent, prior application
+  metadata and login registration. Login startup is removed while changing files.
+  Remote AI is disabled during new-runtime health checks, then prior intent is
+  restored. STOPPED remains STOPPED after the temporary health check.
+- A root-owned Linux staging directory retains the previous product payload.
+  The image hash is checked before extraction; extraction selects only product
+  paths. Root finalization re-verifies payload hashes/policy/permissions and
+  reestablishes Runtime capabilities. Failed or interrupted pre-commit changes
+  restore the old payload. The next installer invocation recovers its journal
+  before attempting a new update. Successful health validation commits metadata
+  before removing rollback files. No automatic user-data schema migration occurs.
+- The uninstaller offers Cancel, preserve all compute data, or erase all compute
+  data. Erase requires an additional confirmation. Before WSL termination or
+  unregister, installation receipts, configured identity and the current user's
+  WSL registry BasePath must agree. Foreign or ambiguous registrations fail closed.
+  An already absent registration may be accepted only for explicit removal.
+- Full removal deletes the application-scoped Credential Manager entry using the
+  original canonical Host state directory, unregisters only the owned distro,
+  and removes product state/log/cache storage. WSL itself, NVIDIA drivers,
+  WebView2 and other distributions are not uninstalled. Default uninstall keeps
+  compute data and credentials; reinstall detects and reuses that environment.
+
+Verification: `packaging/test-lifecycle.ps1` covers root selection, candidate.7
+ownership, foreign-distro refusal, interrupted-import identification and atomic
+journal replacement. `packaging/test-runtime-maintenance.py` executes real
+filesystem switches and injects failures at six boundaries to verify rollback
+and notebook preservation. `packaging/test-image-lifecycle.py` additionally runs the shipped Linux bootstrap
+in a disposable root chroot, changes a manifested worker payload, verifies
+capability finalization, rollback and commit while retaining Project files.
+These fixtures do not substitute for actual Windows
+installation, reboot, update, uninstall and GPU acceptance.
+
+## Candidate.9 installation confirmation
+
+Prepare decides under the maintenance lock before stopping processes or
+recovering a journal. A fresh root (including an earlier setup log or lock file)
+continues directly to installation. A verified configured runtime, including
+retained data after uninstall, requires confirmation. An interrupted update of
+an owned runtime requires confirmation before recovery. Cancel leaves the runtime
+and journal untouched. Partial, ambiguous and foreign installations stop with a
+diagnostic. Fresh installation rechecks state before provisioning; RunOnce
+preserves whether maintenance was explicitly accepted across reboot.

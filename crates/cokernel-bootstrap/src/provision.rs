@@ -11,7 +11,8 @@ fn regular(path: &Path, mode: u32, uid: u64, gid: u64) -> Result<()> {
             && meta.uid() as u64 == uid
             && meta.gid() as u64 == gid
             && meta.mode() & 0o7777 == mode,
-        "CK-SETUP-PERMISSION: invalid protected file"
+        "CK-SETUP-PERMISSION: invalid protected file: {}",
+        path.display()
     );
     Ok(())
 }
@@ -110,7 +111,7 @@ pub fn inspect() -> Result<Manifest> {
                 && meta.uid() as u64 == uid
                 && meta.gid() as u64 == gid
                 && meta.mode() & 0o7777 == mode,
-            "CK-SETUP-PERMISSION: invalid product directory"
+            "CK-SETUP-PERMISSION: invalid product directory: {path}"
         );
     }
     for (name, expected) in &manifest.files {

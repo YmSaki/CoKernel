@@ -20,6 +20,17 @@ async fn main() -> Result<()> {
                     .await?
             );
         }
+        #[cfg(windows)]
+        [command, image, destination] if command == "install" => {
+            println!(
+                "{}",
+                cokernel_bootstrap::windows::import_product(
+                    Path::new(image),
+                    Path::new(destination)
+                )
+                .await?
+            );
+        }
         [command, base, payload, output] if command == "image" => {
             let manifest = image::build(Path::new(base), Path::new(payload), Path::new(output))?;
             let digest = image::hash_file(&mut std::fs::File::open(output)?)?;

@@ -206,11 +206,14 @@ async fn sdk_interoperates_and_auth_origin_limits_restart_preserve_runtime() {
     );
     let sdk = ().serve(transport).await.unwrap();
     let tools = sdk.list_all_tools().await.unwrap();
-    assert_eq!(tools.len(), 15);
+    assert_eq!(tools.len(), 23);
     for tool in tools {
         assert_eq!(
             tool.annotations.unwrap().open_world_hint,
-            Some(tool.name == "execute_cell")
+            Some(matches!(
+                tool.name.as_ref(),
+                "execute_cell" | "create_project" | "add_packages" | "sync_environment"
+            ))
         );
         assert_eq!(
             tool.input_schema.get("additionalProperties"),
@@ -338,8 +341,8 @@ async fn malformed_and_fragmented_unix_clients_do_not_block_other_requests() {
     assert_eq!(reply.request_id, "fragmented");
     for method in [
         "bridge.shutdown",
-        "projects.create",
-        "notebooks.apply_edits",
+        "projects.remove_from_registry",
+        "remote_access.configure",
     ] {
         assert_eq!(
             client
@@ -350,6 +353,23 @@ async fn malformed_and_fragmented_unix_clients_do_not_block_other_requests() {
                 .unwrap()
                 .code,
             "CK-RUN-NO-METHOD"
+        );
+    }
+    // Authoring passes the transport allowlist. This minimal fixture has no
+    // NotebookRuntime, so notebook admission reports unavailable (not forbidden).
+    for (method, expected) in [
+        ("projects.create", "CK-RUN-BAD-PARAMS"),
+        ("notebooks.apply_edits", "CK-RUN-404"),
+    ] {
+        assert_eq!(
+            client
+                .call(method, json!({}))
+                .await
+                .unwrap()
+                .error
+                .unwrap()
+                .code,
+            expected
         );
     }
     api.shutdown().await.unwrap();
